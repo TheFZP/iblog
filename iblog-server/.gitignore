@@ -1,0 +1,28 @@
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# 旧 Maven 产物
+target/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### VS Code ###
+.vscode/
+
+### 日志 ###
+logs/
+*.log

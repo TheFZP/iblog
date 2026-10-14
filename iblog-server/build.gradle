@@ -1,0 +1,88 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.4'
+    id 'io.spring.dependency-management' version '1.1.6'
+}
+
+group = 'com.iblog'
+version = '1.0.0'
+description = 'iblog 个人博客后端服务'
+
+java {
+    // 用任意 JDK 17+ 编译，产物字节码目标为 17
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+// 清空并重建仓库列表。
+// 原因：机器级配置文件（如 GRADLE_USER_HOME/init.gradle）可能通过 allprojects 往所有项目
+// 注入公司内网 Nexus，这里先 clear() 掉继承来的仓库，保证本项目只从公网镜像解析依赖。
+repositories.clear()
+repositories {
+    // 阿里云公共仓库：完整镜像 Maven Central，国内直连速度快
+    maven { url = uri('https://maven.aliyun.com/repository/public') }
+    // 公网兜底（阿里云缺失个别构件时使用）；若处于严格内网环境可删除此行
+    mavenCentral()
+}
+
+ext {
+    mybatisPlusVersion = '3.5.7'
+    jjwtVersion = '0.12.6'
+    springdocVersion = '2.6.0'
+}
+
+dependencies {
+    // ---------- Spring Boot ----------
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.apache.commons:commons-pool2'
+
+    // ---------- 持久层 ----------
+    implementation "com.baomidou:mybatis-plus-spring-boot3-starter:${mybatisPlusVersion}"
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    // ---------- 密码加密（只取 spring-security 的加密工具，不引入完整安全框架）----------
+    implementation 'org.springframework.security:spring-security-crypto'
+
+    // ---------- JWT ----------
+    implementation "io.jsonwebtoken:jjwt-api:${jjwtVersion}"
+    runtimeOnly "io.jsonwebtoken:jjwt-impl:${jjwtVersion}"
+    runtimeOnly "io.jsonwebtoken:jjwt-jackson:${jjwtVersion}"
+
+    // ---------- 接口文档 ----------
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+    // ---------- Lombok ----------
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    // ---------- 测试 ----------
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+springBoot {
+    mainClass = 'com.iblog.IblogApplication'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    // Spring Boot 3.2+ 需要保留方法参数名，否则 @RequestParam 等注解推导不出参数名
+    options.compilerArgs << '-parameters'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// 产出固定的 jar 名，方便 Dockerfile 与部署脚本引用
+tasks.named('bootJar') {
+    archiveFileName = 'iblog-server.jar'
+}
+
+tasks.named('jar') {
+    enabled = false
+}

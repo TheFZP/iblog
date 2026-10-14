@@ -1,0 +1,118 @@
+# =============================================================
+#  iblog 一键部署编排
+#  使用：
+#    1. cp .env.example .env 并修改密码、密钥
+#    2. docker compose up -d --build
+#  访问：
+#    官网       http://<服务器IP>/
+#    管理后台   http://<服务器IP>:81/
+#    后端接口   http://<服务器IP>:8080/api
+#    接口文档   http://<服务器IP>:8080/swagger-ui.html
+# =============================================================
+
+name: iblog
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: iblog-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-iblog@2026}
+      MYSQL_DATABASE: iblog
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --lower_case_table_names=1
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动会自动执行这里面的 SQL
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - iblog-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: iblog-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - iblog-net
+
+  iblog-server:
+    build:
+      context: ../iblog-server
+      dockerfile: Dockerfile
+    image: iblog-server:1.0.0
+    container_name: iblog-server
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: iblog
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-iblog@2026}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      IBLOG_JWT_SECRET: ${IBLOG_JWT_SECRET:-iblog-personal-blog-jwt-secret-key-please-change-me-2026}
+      TZ: Asia/Shanghai
+      JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m -XX:+UseG1GC}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    networks:
+      - iblog-net
+
+  iblog-admin:
+    build:
+      context: ../iblog-admin
+      dockerfile: Dockerfile
+    image: iblog-admin:1.0.0
+    container_name: iblog-admin
+    restart: always
+    depends_on:
+      - iblog-server
+    ports:
+      - "${ADMIN_PORT:-81}:80"
+    networks:
+      - iblog-net
+
+  iblog-web:
+    build:
+      context: ../iblog-web
+      dockerfile: Dockerfile
+    image: iblog-web:1.0.0
+    container_name: iblog-web
+    restart: always
+    depends_on:
+      - iblog-server
+    ports:
+      - "${WEB_PORT:-80}:80"
+    networks:
+      - iblog-net
+
+volumes:
+  mysql-data:
+  redis-data:
+
+networks:
+  iblog-net:
+    driver: bridge

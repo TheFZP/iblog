@@ -1,0 +1,10 @@
+pluginManagement {
+    repositories {
+        // 只走公网镜像，避免被机器级 init.gradle 指到公司内网 Nexus
+        maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+        maven { url = uri('https://maven.aliyun.com/repository/public') }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'iblog-server'

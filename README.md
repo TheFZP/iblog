@@ -1,1 +1,248 @@
 # iblog
+
+一个前后端分离的个人博客：**管理后台**（Java 17 + Vue3）与 **公开官网**（Vue3 SPA）共用同一套后端 API，可一键部署到阿里云。
+
+---
+
+## 一、技术栈
+
+| 模块 | 技术 | 说明 |
+| --- | --- | --- |
+| `iblog-server` | Java 17 · Spring Boot 3.3 · **Gradle 8.10** · MyBatis-Plus 3.5 · MySQL 8 · Redis · JWT | 后端服务，后台 + 官网共用 |
+| `iblog-admin` | Vue 3 · Vite · TypeScript · Element Plus · Pinia · Vue Router · **pnpm** | 管理后台 |
+| `iblog-web` | Vue 3 · Vite · TypeScript · marked | 官网前台（公开访问） |
+| `deploy` | Docker Compose · MySQL 8 · Redis 7 · Nginx | 部署编排 |
+
+### 官网为什么选 Vue3 + Vite SPA
+
+按你的选择，官网使用与后台一致的 Vue3 技术栈，好处是**只有一套心智模型、构建产物纯静态、服务器零额外运行时**。
+
+需要如实提醒一点：SPA 是客户端渲染，搜索引擎爬虫默认拿不到页面正文，**对 SEO 不友好**。个人博客如果希望文章被百度/Google 收录，有两条低成本的补救路径（都不需要重写业务代码）：
+
+1. **预渲染**：给 `iblog-web` 加 `vite-plugin-prerender`，把首页、归档、关于等固定路由在构建时生成静态 HTML；
+2. **升级 Nuxt 3**：路由、API 封装、组件几乎可直接复用，SSR/SSG 一步到位。
+
+当前骨架已经把数据获取都收口在 `src/api/portal.ts`，无论走哪条路都只是构建层的改造。
+
+---
+
+## 二、目录结构
+
+```
+iblog/
+├── iblog-server/                    # 后端（Spring Boot 3 + Gradle）
+│   ├── src/main/java/com/iblog/
+│   │   ├── common/                  # 统一响应 R、业务异常、全局异常处理
+│   │   ├── config/                  # MyBatis-Plus、Redis、Web、JWT 配置
+│   │   ├── security/                # JWT 工具、登录拦截器、用户上下文
+│   │   └── module/
+│   │       ├── entity/ mapper/ service/ dto/ vo/
+│   │       ├── controller/admin/    # 后台接口  /api/admin/**
+│   │       ├── controller/portal/   # 官网接口  /api/portal/**
+│   │       └── runner/              # 首次启动初始化管理员
+│   ├── src/main/resources/          # application.yml / dev / prod
+│   ├── build.gradle                 # 依赖与构建配置
+│   ├── settings.gradle
+│   ├── gradlew / gradlew.bat        # Gradle Wrapper（无需本机装 Gradle）
+│   └── Dockerfile
+├── iblog-admin/                     # 管理后台（Vue3 + Element Plus）
+│   ├── src/{api,layout,router,stores,views,styles}
+│   ├── nginx.conf
+│   └── Dockerfile
+├── iblog-web/                       # 官网前台（Vue3 SPA）
+│   ├── src/{api,components,composables,layout,router,views,utils,styles}
+│   ├── nginx.conf
+│   └── Dockerfile
+├── deploy/
+│   ├── docker-compose.yml           # mysql + redis + server + admin + web
+│   ├── .env.example                 # 密码 / 密钥 / 端口
+│   ├── mysql/init/01-init.sql       # 建表 + 种子数据
+│   └── DEPLOY.md                    # 阿里云部署手册
+└── README.md
+```
+
+---
+
+## 三、功能清单
+
+**管理后台**
+
+- 登录 / 退出（JWT + Redis 会话，可服务端主动注销）
+- 仪表盘：文章数、发布/草稿数、分类标签数、评论数、待审核数、累计阅读
+- 文章管理：新增、编辑、删除、发布/下架、置顶、Markdown 正文、分类与标签、封面、摘要、slug
+- 分类 / 标签管理：增删改查，带文章数统计，删除分类时校验占用
+- 评论管理：列表筛选、审核通过、驳回、删除（自动回写文章评论数）
+- 站点设置：站点信息、作者信息、评论开关、分页条数（带 Redis 缓存）
+
+**官网前台（公开访问，无需登录）**
+
+- 首页：文章列表 + 分页 + 分类/标签/热门文章侧边栏
+- 文章详情：Markdown 渲染、浏览量统计、上下篇导航
+- 评论：展示已通过评论、提交评论（默认待审核）
+- 分类 / 标签 / 关键词检索列表
+- 归档页（按年月分组）
+- 关于页（作者信息 + 技术栈）
+
+---
+
+## 四、本地启动
+
+### 1. 准备 MySQL 与 Redis
+
+```bash
+# MySQL 8：执行建表脚本
+mysql -uroot -p < deploy/mysql/init/01-init.sql
+
+# Redis：本地启动即可
+redis-server
+```
+
+也可以用 Docker 只跑这两个依赖：
+
+```bash
+docker run -d --name iblog-mysql -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=root -e TZ=Asia/Shanghai \
+  -v "$PWD/deploy/mysql/init:/docker-entrypoint-initdb.d:ro" mysql:8.0
+
+docker run -d --name iblog-redis -p 6379:6379 redis:7-alpine
+```
+
+### 2. 启动后端
+
+```bash
+cd iblog-server
+./gradlew bootRun          # Windows 用 gradlew.bat bootRun
+```
+
+常用构建命令：
+
+```bash
+./gradlew bootRun          # 本地启动（dev 环境）
+./gradlew clean build      # 编译 + 测试 + 打 jar
+./gradlew bootJar -x test  # 跳过测试，只打可执行 jar → build/libs/iblog-server.jar
+./gradlew dependencies     # 查看依赖树
+```
+
+> 项目自带 Gradle Wrapper，**本机不需要预装 Gradle**（首次运行会自动下载 8.10.2）。
+> 如果本地已有 Gradle，也可以直接用 `gradle bootRun`。
+
+**依赖来源（全部走公网镜像，不使用公司内网）**
+
+| 内容 | 来源 |
+| --- | --- |
+| Gradle 发行包 | `mirrors.aliyun.com/macports/distfiles/gradle` |
+| Maven 依赖 | `maven.aliyun.com/repository/public`（公网兜底 mavenCentral） |
+| Gradle 插件 | `maven.aliyun.com/repository/gradle-plugin` |
+| pnpm / npm | `registry.npmmirror.com`（写在 `iblog-admin/.npmrc`） |
+
+`build.gradle` 里显式调用了 `repositories.clear()`，会清掉机器级 `init.gradle` 往所有项目注入的内网 Nexus，因此**离开公司内网也能正常构建**。
+
+- 默认 `dev` 环境，连接 `localhost:3306/iblog`（root / root），Redis `localhost:6379`
+- 数据库账号密码在 `src/main/resources/application-dev.yml` 中修改
+- 首次启动会自动创建管理员账号：**admin / admin123**
+- 接口文档：<http://localhost:8080/swagger-ui.html>
+
+### 在 IntelliJ IDEA 中打开
+
+仓库是「聚合 Gradle 工程」：根目录 `settings.gradle` 通过 `include 'iblog-server'` 把后端纳入同一个构建。**直接用 IDEA 打开仓库根目录即可，不需要手动新建模块。**
+
+1. `File → Open` 选择仓库根目录 `iblog`
+2. IDEA 检测到 `settings.gradle` 后提示导入，选择 **Load Gradle Project / Reload Gradle Project**
+3. 等待同步完成，`iblog-server/src/main/java` 会被标记为 Sources Root，`IblogApplication.java` 左侧出现绿色运行三角
+
+没有弹提示时，用右侧 Gradle 工具面板点 **Reload All Gradle Projects**（🔄），
+或右键根目录的 `build.gradle` → **Link Gradle Project**。
+
+Gradle JVM 在 `Settings → Build Tools → Gradle → Gradle JVM` 里选 **JDK 17 或更高版本**。
+
+> 两种构建入口都可用：仓库根目录 `./gradlew :iblog-server:bootRun`，或进入 `iblog-server` 执行 `./gradlew bootRun`。
+> `iblog-admin` / `iblog-web` 是前端工程（pnpm / npm），在 IDEA 里不会成为 Gradle 模块，属正常现象。
+
+### 3. 启动管理后台
+
+`iblog-admin` 使用 **pnpm** 管理依赖：
+
+```bash
+cd iblog-admin
+pnpm install
+pnpm dev           # http://localhost:5173
+```
+
+> 没装 pnpm 的话，用 Node 自带的 corepack 一行启用：`corepack enable pnpm`
+> （或 `npm i -g pnpm`）。`package.json` 里的 `packageManager` 字段已锁定版本，corepack 会自动使用该版本。
+
+### 4. 启动官网前台
+
+```bash
+cd iblog-web
+npm install
+npm run dev        # http://localhost:5174
+```
+
+两个前端的 `/api` 请求都由 Vite 代理到 `http://localhost:8080`（见各自 `vite.config.ts`）。
+
+---
+
+## 五、接口约定
+
+统一响应体：
+
+```json
+{ "code": 200, "msg": "操作成功", "data": {} }
+```
+
+`code`：`200` 成功，`400` 参数/业务错误，`401` 未登录或登录失效，`403` 无权限，`500` 系统异常。
+
+鉴权：除 `/api/admin/auth/login` 外，所有 `/api/admin/**` 需带请求头
+
+```
+Authorization: Bearer <token>
+```
+
+主要接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/admin/auth/login` | 登录 |
+| POST | `/api/admin/auth/logout` | 退出 |
+| GET | `/api/admin/dashboard` | 仪表盘统计 |
+| GET/POST/PUT/DELETE | `/api/admin/articles` | 文章增删改查 |
+| PUT | `/api/admin/articles/{id}/status?status=1` | 发布 / 下架 |
+| GET/POST/PUT/DELETE | `/api/admin/categories` | 分类管理 |
+| GET/POST/PUT/DELETE | `/api/admin/tags` | 标签管理 |
+| GET | `/api/admin/comments` | 评论列表 |
+| PUT | `/api/admin/comments/{id}/approve` | 审核通过 |
+| GET/PUT | `/api/admin/site/config` | 站点配置 |
+| GET | `/api/portal/articles` | 文章列表（`pageNum/pageSize/categoryId/tagId/keyword`）|
+| GET | `/api/portal/articles/{id}` | 文章详情（累加浏览量）|
+| GET/POST | `/api/portal/articles/{id}/comments` · `/api/portal/comments` | 评论查询 / 提交 |
+| GET | `/api/portal/categories` · `/tags` · `/archive` · `/hot-articles` · `/site` | 官网公共数据 |
+
+---
+
+## 六、部署到阿里云
+
+完整步骤见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)，速览：
+
+```bash
+cd deploy
+cp .env.example .env      # 改数据库密码、JWT 密钥
+docker compose up -d --build
+```
+
+| 地址 | 说明 |
+| --- | --- |
+| `http://<IP>/` | 官网 |
+| `http://<IP>:81/` | 管理后台 |
+| `http://<IP>:8080/api` | 后端接口 |
+| `http://<IP>:8080/swagger-ui.html` | 接口文档 |
+
+---
+
+## 七、后续可以加什么
+
+- 文章 Markdown 富文本编辑器（如 `md-editor-v3`）与图片上传到 OSS
+- 评论邮件/微信通知、防刷限流
+- 全文检索（MySQL 全文索引 或 Elasticsearch）
+- 文章草稿自动保存、版本历史
+- 官网预渲染 / Nuxt 3 改造以提升 SEO

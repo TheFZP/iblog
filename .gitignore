@@ -1,24 +1,47 @@
-# Compiled class file
-*.class
-
-# Log file
+# ========= 通用 =========
 *.log
+logs/
+.DS_Store
+Thumbs.db
 
-# BlueJ files
-*.ctxt
+# ========= 环境变量 =========
+.env
+.env.local
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+# ========= Node / 前端 =========
+node_modules/
+dist/
+dist-ssr/
+.vite/
+.pnpm-store/
+*.local
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Package Files #
+# ========= Java / Gradle =========
+.gradle/
+build/
+target/
+*.class
 *.jar
 *.war
-*.nar
 *.ear
-*.zip
-*.tar.gz
-*.rar
-
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# Gradle Wrapper 的 jar 必须提交，否则别人 clone 后无法构建
+!gradle/wrapper/gradle-wrapper.jar
 hs_err_pid*
 replay_pid*
+
+# ========= IDE =========
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+.apt_generated
+.factorypath
+.springBeans
+.sts4-cache

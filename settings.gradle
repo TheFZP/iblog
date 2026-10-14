@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories {
+        // 只走公网镜像，避免被机器级 init.gradle 指到公司内网 Nexus
+        maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+        maven { url = uri('https://maven.aliyun.com/repository/public') }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'iblog'
+
+// 聚合后端 Gradle 工程，这样用 IDEA 打开仓库根目录即可被识别为 Gradle 项目。
+// 前端（iblog-admin / iblog-web）是 npm 工程，不参与 Gradle 构建。
+include 'iblog-server'

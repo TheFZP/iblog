@@ -1,0 +1,9 @@
+# pnpm 10+ 的配置中心（pnpm 11 起不再读取 package.json 里的 "pnpm" 字段）
+#
+# allowBuilds：显式声明允许执行安装脚本的依赖，不批准的话 pnpm 会因
+# “存在未批准的构建脚本”而直接让 `pnpm install` / `pnpm build` 失败。
+#   - esbuild    Vite 的底层打包器，postinstall 需要落平台二进制
+#   - vue-demi   pinia 的依赖，postinstall 负责按 Vue 版本切换实现
+allowBuilds:
+  esbuild: true
+  vue-demi: true

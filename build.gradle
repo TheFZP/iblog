@@ -1,0 +1,14 @@
+// iblog 聚合工程。
+// 根项目本身不做具体构建，后端的依赖与构建逻辑全部在 iblog-server/build.gradle。
+//
+// 常用命令（在仓库根目录执行）：
+//   ./gradlew :iblog-server:bootRun             本地启动后端
+//   ./gradlew :iblog-server:bootJar -x test     打包 → iblog-server/build/libs/iblog-server.jar
+//   ./gradlew :iblog-server:dependencies        查看依赖树
+//
+// 也可以直接进入子模块执行：cd iblog-server && ./gradlew bootRun
+
+allprojects {
+    group = 'com.iblog'
+    version = '1.0.0'
+}
