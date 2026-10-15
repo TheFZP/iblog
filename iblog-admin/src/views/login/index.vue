@@ -22,7 +22,6 @@
           </el-button>
         </el-form-item>
       </el-form>
-      <div class="tip">默认账号：admin / admin123（首次登录后请及时修改）</div>
     </el-card>
   </div>
 </template>
@@ -98,11 +97,5 @@ async function onSubmit() {
 
 .submit {
   width: 100%;
-}
-
-.tip {
-  text-align: center;
-  color: #a8abb2;
-  font-size: 12px;
 }
 </style>
