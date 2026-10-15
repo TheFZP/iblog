@@ -2,7 +2,7 @@
   <div class="login-page">
     <el-card class="login-card">
       <div class="title">iblog 管理后台</div>
-      <div class="subtitle">请登录后开始写作</div>
+      <div class="subtitle">只有帅哥才能登录</div>
       <el-form ref="formRef" :model="form" :rules="rules" @keyup.enter="onSubmit">
         <el-form-item prop="username">
           <el-input v-model="form.username" size="large" placeholder="用户名" clearable />
