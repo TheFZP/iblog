@@ -117,3 +117,37 @@
 - **目标服务器 `8.138.105.59`（hostname `iZkbazda5mew26Z`）不是空机器**，详见
   `.workbuddy/memory/2026-10-15.md`：它上面跑着一个与本项目无关的 `json-parse`（占着 8080），
   2G 内存下两者共存会顶到上限 —— 部署前必须先决定端口和内存怎么分。
+  该项目**已于 2026-10-15 部署上线**（`/opt/iblog/deploy`，模式 B 预构建）。
+
+## 网络与安全的硬教训（都踩过）
+
+- **安全组：加规则只用「手动添加 / 快速添加」，绝不要走会替换整个列表的入口。**
+  真发生过一次：加 80/81 时把 SSH(22) 一起弄没了，于是彻底连不上。
+- **判断端口不通是安全组还是服务的问题**：
+  **超时（被静默丢弃）= 安全组没放行**；**connection refused = 服务本身没监听**。
+  再配合在服务器上排除本机因素：`ss -lntp`（是否 0.0.0.0 监听）、
+  `iptables -t nat -S DOCKER`（DNAT 规则在不在）、`firewalld`/`nftables` 是否 inactive、
+  `iptables -S INPUT` 策略。全都正常 → 只可能是云安全组。
+- **官网 nginx 只放行 `/api/portal/`，其余 `/api/**` 一律 `return 404`。**
+  `iblog-web` 前端本来就只调 `/api/portal/**`；若把整个 `/api/` 反代出去，
+  `/api/admin/**`（含登录接口）就会从公网 80 端口暴露，管理后台的 IP 白名单形同虚设
+  （本仓库曾有这个问题，2026-10-15 修）。**不要回落到 index.html** ——
+  否则爆破者拿到 200 的 HTML，不易察觉也不利于排查。
+- **管理后台登录接口有 `limit_req` 防爆破**（每 IP 10 次/分钟，突发 10，超限返回 JSON 429）。
+  `limit_req_zone` / `limit_req_status` 属于 **http 上下文**，写在 `conf.d/*.conf` 顶部可以，
+  但不能挪进 `server{}`，否则 nginx 起不来。
+
+## 工具链的坑（Windows 侧）
+
+- **PowerShell 5.1 会把 `-d '{"k":"v"}'` 里的双引号吃掉**，curl 发出去变成非法 JSON，
+  后端回 `{"code":500,"msg":"系统繁忙，请稍后重试"}`，害我误判成应用 bug。
+  → **给接口发 JSON body 一律写进文件 + `--data-binary @file`**，或者把测试脚本写成 `.sh`
+  丢到服务器上用 bash 跑。**别在 PowerShell 命令行里拼 JSON。**
+- **PowerShell 会把传给 `ssh` 的内层引号吃掉**（`grep -E ":(80|81)"` 到远端变成
+  `unexpected token '('`）。→ 要跑的东西写成 `.sh`，`scp` 上去再 `ssh "bash /tmp/x.sh"`。
+- **`Get-Content pubkey | ssh ... "cat >> authorized_keys"` 装公钥会失败**（Windows OpenSSH
+  在 stdin 被管道占用时，密码提示读不到键盘输入）。→ 先交互式 ssh 进去，再用 `<<'KEY'` here-doc。
+- **`nginx -t` 校验不能裸跑**：临时容器不在 compose 网络里会报
+  `host not found in upstream "iblog-server"`，那是环境问题不是配置错。
+  → `docker run --rm --network iblog_iblog-net -v <conf>:/etc/nginx/conf.d/default.conf:ro
+  nginx:1.27-alpine nginx -t`。另外 `set -e` 管不到管道里非末位的命令，校验失败也不会中断。
