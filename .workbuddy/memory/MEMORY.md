@@ -91,16 +91,29 @@
     本机跑 `bash deploy/build-local.sh` 生成 `deploy/dist/`（~45MB：jar、前端产物、db SQL、
     运行时 Dockerfile 模板来自 `deploy/runtime/`），上传整个 `deploy/` 目录即可
   - 本机没有 Docker，所以**不要**设计需要本地 `docker build` 的流程；产物文件路线才走得通
-- **AL4 事实（2026-10-15 修正，别再照抄 CentOS 教程）**：服务器系统是 **Alibaba Cloud Linux 4 LTS**，
-  它基于龙蜥 **Anolis OS 23**，`$releasever` = `alnx4`，官方文档明说**不再承载 CentOS 兼容替代**
-  （这点和 AL3 不同）。所以 docker-ce 的 centos/rhel 源不能直接套用，**pin `$releasever=9` 是错的**
-  （AL3 时代的老经验；AL4 上可能因 `container-selinux` 之类依赖装到一半失败）。
-  AL4 仓库自带 **moby 28.x**（含 docker/dockerd，但**不含** compose 插件），正确路线：
-  `dnf install -y moby` → 再从阿里云 docker-ce 镜像源取 compose 静态二进制放进
-  `/usr/libexec/docker/cli-plugins/`（两个插件目录都放一份，不同打包默认路径不一致）
-- **Docker 镜像加速器**：`docker.mirrors.ustc.edu.cn`（中科大，2024-06-06 起停服）和
-  `hub-mirror.c.163.com`（网易公共加速，已停用）**都不能用**，`daemon.json` 里留着只会卡死拉取。
-  阿里云走账号专属 `https://<ID>.mirror.aliyuncs.com`（控制台 → ACR → 镜像工具 → 镜像加速器）
-- 服务器初始化脚本 `deploy/server-init.sh`：`sudo bash deploy/server-init.sh --mirror <加速地址>`，
-  幂等，做四件事 —— 2G Swap（写 fstab）→ 装 moby（失败退 docker-ce rhel/9 源）→
-  装 compose 插件 → 写 `daemon.json`（加速器 + 容器日志 `20m×3`，不给上限 40G 盘会被日志吃满）
+- **AL4 事实（2026-10-15 在真机上核实过，别再照抄 CentOS 教程）**：系统是
+  **Alibaba Cloud Linux 4.0.3（OpenAnolis Edition）**，内核 `6.6.102-5.3.4.alnx4`，
+  `$releasever` = `alnx4`。它基于龙蜥 **Anolis OS 23**，官方定位**不再承载 CentOS 兼容替代**
+  （这点和 AL3 不同）。所以 docker-ce 的 centos/rhel 源不能套用，**pin `$releasever=9` 是错的**
+  （AL3 时代的老经验，AL4 上可能因 `container-selinux` 之类依赖装到一半失败）。
+- **AL4 仓库里 Docker 包是全的（真机 `dnf list` 实测）**：`moby`/`moby-engine`/`moby-client`
+  `3:29.5.1-2.alnx4`、`docker`/`docker-client` `3:24.0.9-9.alnx4`、`containerd 1.7.34-2.alnx4`、
+  **`docker-compose-plugin 2.26.1-1.alnx4`（13MB）**。所以正确动作就两条：
+  `dnf -y install moby`（已有 docker 则跳过）+ `dnf -y install docker-compose-plugin`。
+  `docker` 与 `moby` 并存、提供同一套命令，二选一即可。
+  ⚠️ 之前记录里写「AL4 仓库不带 compose、要从 docker-ce 的 RPM 里 `rpm2cpio` 抠静态二进制」
+  **是错的**，那条路只留作兜底。别再从公网找 compose 二进制。
+- **Docker Hub 直连在阿里云 ECS 上是被重置的**（实测 `read: connection reset by peer`），
+  `registry-mirrors` 必须配。`docker.mirrors.ustc.edu.cn`（中科大，2024-06-06 起停服）和
+  `hub-mirror.c.163.com`（网易公共加速，已停用）都不能用。
+- **教训：改 `/etc/docker/daemon.json` 必须「合并」，不能「覆盖」。** 生产机上往往已经配了
+  能用的 `registry-mirrors`（这台就有 daocloud / 1ms.run / xuanyuan.me 三个，实测能拉通），
+  直接整体覆盖会把人家能用的镜像源弄丢。`server-init.sh` 现已改用 python3 做真正的 JSON 合并，
+  并且只在**没有运行中容器**时才自动重启 docker，否则只警告。
+- 服务器初始化脚本 `deploy/server-init.sh`：`sudo bash deploy/server-init.sh [--mirror <地址>]`，
+  幂等，做四件事 —— 2G Swap（写 fstab）→ 装 Docker 引擎（已有则跳过）→ 装 compose 插件
+  （优先走 AL4 仓库，失败才退 rpm2cpio）→ **合并**写 `daemon.json`（保留原 registry-mirrors +
+  容器日志 `20m×3`，不给上限 40G 盘会被日志吃满）。
+- **目标服务器 `8.138.105.59`（hostname `iZkbazda5mew26Z`）不是空机器**，详见
+  `.workbuddy/memory/2026-10-15.md`：它上面跑着一个与本项目无关的 `json-parse`（占着 8080），
+  2G 内存下两者共存会顶到上限 —— 部署前必须先决定端口和内存怎么分。

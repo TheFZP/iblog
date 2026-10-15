@@ -69,19 +69,14 @@ free -h
 log "[2/4] 安装 Docker 引擎"
 if command -v docker >/dev/null 2>&1; then
   log "已安装，跳过：$(docker --version)"
-elif dnf -y install moby; then
-  log "已安装 AL4 自带的 moby"
 else
-  warn "仓库里没有 moby，改用 Docker CE（rhel/9 源）"
-  cat > /etc/yum.repos.d/docker-ce.repo <<EOF
-[docker-ce-stable]
-name=Docker CE Stable - \$basearch
-baseurl=${DOCKER_CE_BASE}/\$basearch
-enabled=1
-gpgcheck=1
-gpgkey=https://mirrors.aliyun.com/docker-ce/linux/rhel/gpg
-EOF
-  dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+  # AL4 仓库自带 moby（实测 3:29.5.1-2.alnx4，连带装 moby-client / moby-engine / libcgroup）。
+  # AL4 上**不要**用 CentOS/RHEL 的 docker-ce 源：它基于龙蜥 Anolis OS 23，官方已不承载
+  # CentOS 兼容替代，$releasever 是 alnx4 而不是 9。
+  #
+  # AL4 仓库里 docker（3:24.0.9，旧）与 moby（3:29.5.1，新）并存，提供同一套命令，二选一即可。
+  # 已经装了 docker 的机器，上面那个 if 会直接跳过这里。
+  dnf -y install moby
 fi
 systemctl enable --now docker
 docker --version
@@ -91,21 +86,24 @@ log "[3/4] 安装 Docker Compose v2 插件"
 if docker compose version >/dev/null 2>&1; then
   log "已可用：$(docker compose version --short 2>/dev/null || echo ok)"
 else
-  dnf -y install cpio curl
-  tmp="$(mktemp -d)"
-  rpm_name="docker-compose-plugin-${COMPOSE_VERSION}-1.el9.x86_64.rpm"
-  log "从阿里云镜像源取 ${rpm_name}"
-  curl -fsSL -o "$tmp/$rpm_name" "${DOCKER_CE_BASE}/Packages/${rpm_name}" \
-    || die "下载 compose 插件失败；可到 ${DOCKER_CE_BASE}/Packages/ 挑一个更新版本，改脚本里的 COMPOSE_VERSION 再跑"
-  ( cd "$tmp" && rpm2cpio "$rpm_name" | cpio -idm --quiet )
-  bin="$(find "$tmp" -type f -name docker-compose -print -quit)"
-  [ -n "$bin" ] || die "RPM 里没找到 docker-compose 二进制"
-  # 不同发行版打包的 docker CLI，默认插件目录不一致，两个位置都放一份（无副作用）
-  mkdir -p /usr/libexec/docker/cli-plugins /usr/lib/docker/cli-plugins
-  install -m 0755 "$bin" /usr/libexec/docker/cli-plugins/docker-compose
-  install -m 0755 "$bin" /usr/lib/docker/cli-plugins/docker-compose
-  rm -rf "$tmp"
-  docker compose version || die "compose 插件装完仍不可用，把这里上面的输出发我"
+  # AL4 仓库自带 docker-compose-plugin（实测 2.26.1-1.alnx4），直接装最省事。
+  if ! dnf -y install docker-compose-plugin; then
+    warn "仓库里没有 docker-compose-plugin，退回从 RPM 里抠静态二进制"
+    dnf -y install cpio curl
+    tmp="$(mktemp -d)"
+    rpm_name="docker-compose-plugin-${COMPOSE_VERSION}-1.el9.x86_64.rpm"
+    curl -fsSL -o "$tmp/$rpm_name" "${DOCKER_CE_BASE}/Packages/${rpm_name}" \
+      || die "compose 插件两条路都不通；请把上面输出发我"
+    ( cd "$tmp" && rpm2cpio "$rpm_name" | cpio -idm --quiet )
+    bin="$(find "$tmp" -type f -name docker-compose -print -quit)"
+    [ -n "$bin" ] || die "RPM 里没找到 docker-compose 二进制"
+    # 不同发行版打包的 docker CLI，默认插件目录不一致，两个位置都放一份（无副作用）
+    mkdir -p /usr/libexec/docker/cli-plugins /usr/lib/docker/cli-plugins
+    install -m 0755 "$bin" /usr/libexec/docker/cli-plugins/docker-compose
+    install -m 0755 "$bin" /usr/lib/docker/cli-plugins/docker-compose
+    rm -rf "$tmp"
+  fi
+  docker compose version || die "compose 插件装完仍不可用，把上面输出发我"
 fi
 
 # ---------- 4. 镜像加速器 + 日志轮转 ----------
@@ -115,29 +113,71 @@ if [ -f /etc/docker/daemon.json ]; then
   cp -a /etc/docker/daemon.json "/etc/docker/daemon.json.bak.$(date +%s)"
   warn "原有 daemon.json 已备份为 /etc/docker/daemon.json.bak.<时间戳>"
 fi
-if [ -n "$MIRROR" ]; then
-  cat > /etc/docker/daemon.json <<EOF
+
+# 关键：**合并**而不是覆盖。服务器上原有的 daemon.json 可能已经配了 registry-mirrors
+# （第三方加速源很常见），直接覆盖会把人家能用的镜像源弄丢。这里用 python3 做真正的
+# JSON 合并：--mirror 给的地址排到最前面，原有镜像源保留在后面当兜底。
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$MIRROR" <<'PY'
+import json, sys
+path = "/etc/docker/daemon.json"
+mirror = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        cfg = {}
+except Exception:
+    cfg = {}
+if mirror:
+    old = [m for m in cfg.get("registry-mirrors", []) if m != mirror]
+    cfg["registry-mirrors"] = [mirror] + old
+cfg["log-driver"] = "json-file"
+cfg["log-opts"] = {"max-size": "20m", "max-file": "3"}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
+  log "已合并写入（保留原有的 registry-mirrors 等配置）"
+else
+  warn "服务器上没有 python3，无法安全合并，改为整体覆盖（原文件已备份）"
+  if [ -n "$MIRROR" ]; then
+    cat > /etc/docker/daemon.json <<EOF
 {
   "registry-mirrors": ["${MIRROR}"],
   "log-driver": "json-file",
   "log-opts": { "max-size": "20m", "max-file": "3" }
 }
 EOF
-  log "已写入加速器：${MIRROR}"
-else
-  cat > /etc/docker/daemon.json <<'EOF'
+  else
+    cat > /etc/docker/daemon.json <<'EOF'
 {
   "log-driver": "json-file",
   "log-opts": { "max-size": "20m", "max-file": "3" }
 }
 EOF
-  warn "未指定 --mirror，本次只配了日志轮转。"
-  warn "Docker Hub 国内直连基本拉不动，请到：阿里云控制台 → 容器镜像服务 ACR → 镜像工具 → 镜像加速器"
-  warn "取到 https://<你的ID>.mirror.aliyuncs.com 后重跑本脚本并加上 --mirror <该地址>"
+  fi
 fi
-systemctl restart docker
-sleep 1
-docker info 2>/dev/null | grep -A3 'Registry Mirrors' || true
+
+echo "--- 最终 /etc/docker/daemon.json ---"
+cat /etc/docker/daemon.json
+if [ -z "$MIRROR" ]; then
+  warn "本次没给 --mirror。Docker Hub 国内直连基本拉不动（实测 connection reset by peer）。"
+  warn "如果原文件里已有可用的 registry-mirrors（见上面的输出），那就够了，不用再加。"
+  warn "否则到阿里云控制台 → 容器镜像服务 ACR → 镜像工具 → 镜像加速器 取专属地址后重跑："
+  warn "  sudo bash $0 --mirror https://<你的ID>.mirror.aliyuncs.com"
+fi
+
+# daemon.json 要重启 docker 才生效。但如果机器上已经有在跑的容器，重启会中断业务，
+# 这里只警告不自动重启，把决定权交给人。
+if [ -n "$(docker ps -q 2>/dev/null)" ]; then
+  warn "检测到 Docker 里还有运行中的容器，已跳过自动重启。"
+  warn "确认可以中断后再手动执行：sudo systemctl restart docker"
+else
+  systemctl restart docker
+  sleep 1
+fi
+docker info 2>/dev/null | grep -A4 'Registry Mirrors' || true
 
 # ---------- 自检 ----------
 log "自检"

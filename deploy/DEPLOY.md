@@ -19,39 +19,34 @@
 
 ### 2. 安装 Docker
 
-**先把 AL4 的坑说清楚**：Alibaba Cloud Linux 4 基于龙蜥 Anolis OS 23，定位上**不再是 CentOS 兼容替代**
-（这点和 AL3 不同），`$releasever` 是 `alnx4` 而不是 `9`。直接照抄网上给 CentOS/RHEL 的 Docker 官方源，
+**先把 AL4 的坑说清楚**：Alibaba Cloud Linux 4 基于龙蜥 Anolis OS 23，官方定位**不再是 CentOS 兼容替代**
+（这点和 AL3 不同），`$releasever` 是 `alnx4` 而不是 `9`，内核 6.6。照抄网上给 CentOS/RHEL 的 Docker 官方源，
 轻则找不到包，重则因 `container-selinux` 之类依赖装到一半失败。
 
-AL4 仓库里已经内置 **moby（Docker 开源引擎）28.x**，用它最省事，也不会踩 cgroup v2 / nftables 的兼容坑：
+**AL4 自己的仓库里 Docker 相关包是全的，引擎和 Compose 都不用出仓库。** 下面是真机 `dnf list` 实测结果：
+
+| 包 | AL4 仓库里的版本 | 说明 |
+| --- | --- | --- |
+| `moby` / `moby-engine` / `moby-client` | `3:29.5.1-2.alnx4` | 新引擎（dockerd + docker CLI） |
+| `docker` / `docker-client` | `3:24.0.9-9.alnx4` | 旧引擎，有些镜像预装的就是这个 |
+| `containerd` | `1.7.34-2.alnx4` | |
+| `docker-compose-plugin` | `2.26.1-1.alnx4` | **`docker compose` 就是它，13MB** |
 
 ```bash
-# 1) 引擎（AL4 自带，包含 docker / dockerd）
-sudo dnf -y install moby
+sudo dnf -y install moby                    # 引擎；已经装了 docker 的机器跳过
+sudo dnf -y install docker-compose-plugin   # compose v2 插件
 sudo systemctl enable --now docker
-docker --version            # 期望 Docker version 28.x
+docker --version && docker compose version
 ```
 
-moby 包不带 `docker compose`，需要单独补 Compose 插件。
-官方插件是纯静态 Go 二进制，从阿里云 docker-ce 镜像源里取出来即可（不用解依赖，最稳）：
-
-```bash
-# 2) Docker Compose v2 插件
-sudo dnf -y install cpio curl
-cd /tmp
-sudo curl -fsSLO https://mirrors.aliyun.com/docker-ce/linux/rhel/9/x86_64/stable/Packages/docker-compose-plugin-2.33.0-1.el9.x86_64.rpm
-rpm2cpio docker-compose-plugin-*.rpm | cpio -idm --quiet
-sudo mkdir -p /usr/libexec/docker/cli-plugins /usr/lib/docker/cli-plugins
-sudo install -m 0755 usr/libexec/docker/cli-plugins/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
-sudo install -m 0755 usr/libexec/docker/cli-plugins/docker-compose /usr/lib/docker/cli-plugins/docker-compose
-docker compose version
-```
-
-> 两个插件目录都放一份，是因为不同发行版打包的 docker CLI 默认查找路径不一致，多放一份没有副作用。
-> 想换更新版本，去 `mirrors.aliyun.com/docker-ce/linux/rhel/9/x86_64/stable/Packages/` 里挑一个。
+> `docker` 和 `moby` 在仓库里并存、提供同一套命令，**二选一即可**，没必要都装。
 >
-> **以上两步，加上加 Swap、配镜像加速器、配容器日志轮转，仓库里已封装好，一条命令搞定**：
-> `sudo bash deploy/server-init.sh --mirror https://<你的ID>.mirror.aliyuncs.com`
+> ⚠️ 本文件早前版本写过「AL4 仓库不带 compose，要从 docker-ce 的 RPM 里 `rpm2cpio` 抠静态二进制」——
+> **那是错的**，AL4 仓库里就有 `docker-compose-plugin`，直接 `dnf install` 即可。
+> 抠 RPM 那条路只在仓库里真的没有时才需要（`server-init.sh` 里留作兜底）。
+>
+> **上面两步，加上 2G Swap、镜像加速器、容器日志轮转，仓库里已封装好，一条命令搞定**：
+> `sudo bash deploy/server-init.sh`
 
 Ubuntu：
 
@@ -60,18 +55,33 @@ curl -fsSL https://get.docker.com | sudo sh
 sudo systemctl enable --now docker
 ```
 
-**配镜像加速器（阿里云 ECS 必做）**：Docker Hub 国内直连基本拉不动，本项目要拉
-`mysql:8.0`、`redis:7-alpine`、`eclipse-temurin:17-jre`、`nginx:1.27-alpine` 四个镜像。
+**配镜像加速器**：本项目要拉 `mysql:8.0`、`redis:7-alpine`、`eclipse-temurin:17-jre`、`nginx:1.27-alpine`
+四个镜像。**在阿里云 ECS 上实测 Docker Hub 直连是被重置的**：
+
+```
+Error response from daemon: Get "https://registry-1.docker.io/v2/":
+  read tcp ...:443: read: connection reset by peer
+```
 
 > ⚠️ 不少老教程还在写 `docker.mirrors.ustc.edu.cn` 和 `hub-mirror.c.163.com`，
-> **这两个都已停服**（中科大 2024-06-06 起关闭、网易公共加速早已停用）。
-> `daemon.json` 里留着它们只会拖慢甚至卡死拉取，务必删掉。
+> **这两个都已停服**（中科大 2024-06-06 起关闭、网易公共加速早已停用），留着只会拖慢甚至卡死拉取。
 
-阿里云对**同账号 ECS** 提供专属加速地址，走内网、最稳：
-控制台 → 容器镜像服务 ACR → 镜像工具 → **镜像加速器**，复制形如 `https://xxxx.mirror.aliyuncs.com` 的地址：
+所以 `registry-mirrors` 必须配。**先看服务器上是不是已经配好了**：
 
 ```bash
-sudo mkdir -p /etc/docker
+docker info | grep -A5 'Registry Mirrors'
+```
+
+已经有能用的源就别动。要新配的话，阿里云对**同账号 ECS** 提供专属加速地址，走内网、最稳 ——
+控制台 → 容器镜像服务 ACR → 镜像工具 → **镜像加速器**，复制形如 `https://xxxx.mirror.aliyuncs.com` 的地址。
+
+> `server-init.sh` 是**合并**写入而不是覆盖：它用 python3 读现有的 `daemon.json`，
+> 把你原有的 `registry-mirrors` 原样保留，只追加日志轮转配置，并在动手前留备份。
+> 第三方公共加速源（daocloud、1ms.run 等）能用但不是生产首选 —— 你的拉取请求会经过第三方。
+
+```bash
+# 手工配的话（注意别把已有的 registry-mirrors 覆盖掉）
+sudo cp -a /etc/docker/daemon.json /etc/docker/daemon.json.bak
 sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
 {
   "registry-mirrors": ["https://把这里换成你的专属加速地址"],
@@ -80,7 +90,7 @@ sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
 }
 EOF
 sudo systemctl restart docker
-docker info | grep -A3 'Registry Mirrors'
+docker info | grep -A5 'Registry Mirrors'
 ```
 
 > `log-opts` 是给小磁盘兜底的：不加的话容器日志会一直涨，40G 系统盘迟早被吃满。
@@ -97,6 +107,47 @@ docker info | grep -A3 'Registry Mirrors'
 | 8080 | 后端接口（可选，正式环境建议只在内网暴露） |
 
 > 443 端口留给你配置 HTTPS 证书时使用。
+
+### 4. 服务器上已经有别的应用时（端口 / 内存冲突）
+
+**先别急着 `up`，先看这两件事**，否则一定失败或把现有服务搞慢：
+
+```bash
+# a) 80 / 81 / 8080 是不是已经被别人占了
+ss -lntp | grep -E ':(80|81|8080)\b'
+
+# b) 还有多少内存真的可用（看 available 那一列，别看 free）
+free -h
+```
+
+**端口冲突**：iblog 默认要 **80（官网）、81（后台）、8080（后端）** 三个宿主机端口。
+其中 80/81 是必须的；**8080 其实不是必须的** —— 两个前端容器是通过 Docker 网络里的服务名
+`iblog-server:8080` 反代后端接口的，宿主机上的 8080 映射只是为了让你能直接开 Swagger 页面。
+所以如果 8080 已被占用，最省事的做法是改 `deploy/.env`：
+
+```ini
+SERVER_PORT=18080     # 随便挑一个没被占用的
+```
+
+改完 `docker compose up -d` 重新拉起即可，官网和后台照常工作。
+
+**内存冲突**：整套服务的运行期占用大致是
+
+| 容器 | 内存 |
+| --- | --- |
+| MySQL 8（buffer pool 128M） | 400～500M |
+| 后端 JVM（`-Xmx384m`） | 300～400M |
+| Redis（`maxmemory 128mb`） | 30～50M |
+| 两个 Nginx | ~20M |
+| **合计** | **约 800M～1G** |
+
+2G 的机器如果已经跑了别的 Java 应用（比如动辄 255M 的 Spring Boot），**两边加起来会顶到物理内存上限**，
+只能靠 Swap 硬扛，MySQL 的 buffer pool 被换出去会让整站明显变慢。
+这种时候要么把旧应用停掉，要么把它迁到别的机器，不建议硬挤。
+
+> `server-init.sh` 只做加 Swap、装 Docker/Compose、写 `daemon.json`（**合并**，不覆盖你原有的
+> `registry-mirrors`）这几件**纯新增**的事，不会去动已经在跑的应用。但 `daemon.json` 生效
+> 需要重启 docker —— 脚本检测到已有运行中的容器时会跳过重启并提示你手工确认。
 
 ---
 
