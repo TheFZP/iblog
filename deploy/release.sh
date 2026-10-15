@@ -144,6 +144,16 @@ need db     && upload "$DIST/db"     "dist/db"
 scp "${SSH_OPTS[@]}" "$ROOT/deploy/docker-compose.yml" "$SERVER:$REMOTE_DIR/docker-compose.yml"
 echo "  上传 docker-compose.yml ✓"
 
+# 部署侧脚本一并同步。这些脚本服务器上要直接执行（比如 crontab 调 backup-db.sh），
+# 不同步就会出现「本机修好了、服务器还是旧的」这种漂移。
+for f in backup-db.sh server-init.sh; do
+  if [ -f "$ROOT/deploy/$f" ]; then
+    scp "${SSH_OPTS[@]}" "$ROOT/deploy/$f" "$SERVER:$REMOTE_DIR/$f"
+    ssh "${SSH_OPTS[@]}" "$SERVER" "chmod +x '$REMOTE_DIR/$f'"
+    echo "  上传 $f ✓"
+  fi
+done
+
 # ---------- 重建容器 ----------
 SERVICES=()
 need server && SERVICES+=(iblog-server)

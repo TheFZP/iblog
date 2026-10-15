@@ -147,6 +147,37 @@
   `views/article/edit.vue` 的 `author: 'admin'` 默认值 —— 而库里两篇文章的
   `author` 字段确实都是 `admin`，改前端默认值反而会造成新旧文章不一致。
 
+## 发布与备份（日常运维）
+
+- **发布只能在本机跑 `deploy/release.sh`，绝不能在服务器上 `git pull`**：线上跑的是
+  `deploy/dist/` 里的构建产物和容器镜像，而 `deploy/dist/` 在 `.gitignore` 里 ——
+  服务器上既没有源码也没有产物，`git pull` 什么都拿不到。
+  本项目真实发生过：改了登录页文案、提交并推送，线上依旧。
+  ```bash
+  # 本机（bash 不在 PATH 上，用 Git Bash 的绝对路径）
+  & "D:\develop\Git\bin\bash.exe" deploy/release.sh [server|admin|web|db]
+  ```
+  需要 `IBLOG_SERVER=root@<IP>`，或写进 `deploy/.release.env`（已 gitignore）。
+  本机构建工具齐备：node v24 / pnpm 11.5 / `JAVA_HOME=Zulu 21` / `gradlew` 可执行，
+  Git Bash 在 **`D:\develop\Git\bin\bash.exe`（5.2.26）**（`Program Files` 下没有，别找错）。
+  脚本只上传 `dist/<目标>`、`docker-compose.yml`、`backup-db.sh`、`server-init.sh`，
+  **从不触碰服务器上的 `deploy/.env`**，自检里带一条回归守卫（80 端口碰
+  `/api/admin/auth/login` 必须 404）。
+- **备份已自动化**：root crontab 每天 03:00 跑 `backup-db.sh`，每周日 04:30 跑
+  `backup-db.sh verify` —— 后者会把最新 dump **真的导入临时库 `iblog_verify`**，
+  逐表比对行数，再删库。只备份不验证等于不知道备份能不能用。
+  产出在 `/opt/backup/iblog/`（目录 700 / 文件 600，保留 14 天）：
+  `iblog_<日期>.sql` + `env_<日期>.bak`(deploy/.env) + `docker-compose_<日期>.yml`。
+  日志 `/var/log/iblog-backup.log`。
+- ⚠️ **AL4 用 `logrotate.timer`（systemd timer）调度轮转，不是 `/etc/cron.daily/logrotate`**
+  —— 后者在这台机器上不存在。别据此判断「轮转配置没生效」。
+- ⚠️ 备份与数据库**在同一台机器的同一块盘**上，磁盘损坏或误删会一起丢。
+  要防灾得把 `/opt/backup/iblog/` 同步到 OSS 或另一台机器，**这一步还没做**。
+- 恢复：`docker exec -i iblog-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" iblog' < <dump>`。
+  密码由容器自己的环境变量提供，**宿主机上不需要也不应该知道明文密码**。
+- mysqldump 会往 stderr 打一条「Using a password on the command line」告警，无害但会污染
+  cron 日志。既要抓退出码又要让 stdout 干净地进文件的写法是 **`2>&1 >"$tmp"`（顺序不能反）**。
+
 ## 网络与安全的硬教训（都踩过）
 
 - **安全组：加规则只用「手动添加 / 快速添加」，绝不要走会替换整个列表的入口。**

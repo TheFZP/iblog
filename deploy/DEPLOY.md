@@ -483,19 +483,65 @@ docker compose down -v
 
 ### 数据备份
 
-```bash
-# 备份数据库
-docker exec iblog-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" iblog > iblog_$(date +%F).sql
-
-# 恢复
-docker exec -i iblog-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" iblog < iblog_2026-01-01.sql
-```
-
-建议用 `crontab -e` 加一条每日备份：
+**已经自动配好了，不需要手工做。** 服务器上 `root` 的 crontab 有两条：
 
 ```cron
-0 3 * * * cd /opt/iblog/deploy && docker exec iblog-mysql mysqldump -uroot -p'你的密码' iblog > /opt/backup/iblog_$(date +\%F).sql
+# 每天 03:00 全量备份
+0 3 * * * /opt/iblog/deploy/backup-db.sh >> /var/log/iblog-backup.log 2>&1
+# 每周日 04:30 把最新备份真的还原到临时库、逐表比对行数，然后删掉临时库
+30 4 * * 0 /opt/iblog/deploy/backup-db.sh verify >> /var/log/iblog-backup.log 2>&1
 ```
+
+脚本是 [`deploy/backup-db.sh`](backup-db.sh)，产出在 `/opt/backup/iblog/`（目录 700、文件 600）：
+
+| 文件 | 说明 |
+| --- | --- |
+| `iblog_<日期>.sql` | 数据库全量（`--single-transaction`，不锁表） |
+| `env_<日期>.bak` | `deploy/.env` —— 里面有 MySQL 密码和 JWT 密钥，**丢了就算有 sql 也还原不回去** |
+| `docker-compose_<日期>.yml` | 编排文件，便于在全新机器上重建 |
+
+保留 **14 天**，超期自动删除；`/var/log/iblog-backup.log` 由 logrotate 每周轮转、保留 8 份。
+
+常用操作：
+
+```bash
+bash /opt/iblog/deploy/backup-db.sh          # 立刻备份一次
+bash /opt/iblog/deploy/backup-db.sh verify   # 验证最新备份能否真正还原（强烈建议定期做）
+bash /opt/iblog/deploy/backup-db.sh list     # 看现有备份
+tail -50 /var/log/iblog-backup.log           # 看历史（备份失败会记在这里）
+```
+
+> ⚠️ **只备份不验证，等于不知道备份能不能用。** 所以 `verify` 会把 dump 真的导入一个临时库
+> `iblog_verify`，逐表比对行数，再删库 —— 这才是「备份有效」的证据。
+>
+> ⚠️ **备份和数据库在同一台机器的同一块盘上**，磁盘损坏或误删会一起丢。
+> 要防灾得把 `/opt/backup/iblog/` 同步到 OSS 或另一台机器，例如：
+> ```bash
+> # 装 ossutil 后，在 crontab 里追加一条
+> 0 4 * * * ossutil cp -r -f /opt/backup/iblog/ oss://<bucket>/iblog-backup/ >/dev/null 2>&1
+> ```
+
+#### 真出事时怎么恢复
+
+```bash
+cd /opt/iblog/deploy
+
+# 1) 停掉后端，避免恢复过程中有人写入
+docker compose stop iblog-server
+
+# 2) 导入备份（注意 -i，且密码用容器自己的环境变量，宿主机上不需要知道密码）
+docker exec -i iblog-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" iblog' < /opt/backup/iblog/iblog_2026-10-15.sql
+
+# 3) 拉起后端
+docker compose start iblog-server
+docker compose logs --tail=20 iblog-server
+```
+
+> 上面这条导入命令是**覆盖式**的：备份里是 `DROP TABLE IF EXISTS` + `CREATE TABLE`，会重建表。
+> 想先确认备份内容再动手，可以先按 `backup-db.sh verify` 的做法导进一个临时库看一眼。
+>
+> 如果连 `.env` 也没了，从 `env_<日期>.bak` 恢复回去（`cp` 后 `docker compose up -d` 重建容器），
+> 否则数据库密码和 JWT 密钥对不上，整站起不来。
 
 ---
 
