@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `iblog-server` | Java 17 · Spring Boot 3.3 · **Gradle 8.10** · MyBatis-Plus 3.5 · MySQL 8 · Redis · JWT | 后端服务，后台 + 官网共用 |
 | `iblog-admin` | Vue 3 · Vite · TypeScript · Element Plus · Pinia · Vue Router · **pnpm** | 管理后台 |
-| `iblog-web` | Vue 3 · Vite · TypeScript · marked | 官网前台（公开访问） |
+| `iblog-web` | Vue 3 · Vite · TypeScript · marked · **pnpm** | 官网前台（公开访问） |
 | `deploy` | Docker Compose · MySQL 8 · Redis 7 · Nginx | 部署编排 |
 
 ### 官网为什么选 Vue3 + Vite SPA
@@ -158,7 +158,7 @@ cd iblog-server
 | Gradle 发行包 | `mirrors.aliyun.com/macports/distfiles/gradle` |
 | Maven 依赖 | `maven.aliyun.com/repository/public`（公网兜底 mavenCentral） |
 | Gradle 插件 | `maven.aliyun.com/repository/gradle-plugin` |
-| pnpm / npm | `registry.npmmirror.com`（写在 `iblog-admin/.npmrc`） |
+| pnpm | `registry.npmmirror.com`（写在 `iblog-admin/.npmrc` 与 `iblog-web/.npmrc`） |
 
 `build.gradle` 里显式调用了 `repositories.clear()`，会清掉机器级 `init.gradle` 往所有项目注入的内网 Nexus，因此**离开公司内网也能正常构建**。
 
@@ -181,7 +181,7 @@ cd iblog-server
 Gradle JVM 在 `Settings → Build Tools → Gradle → Gradle JVM` 里选 **JDK 17 或更高版本**。
 
 > 两种构建入口都可用：仓库根目录 `./gradlew :iblog-server:bootRun`，或进入 `iblog-server` 执行 `./gradlew bootRun`。
-> `iblog-admin` / `iblog-web` 是前端工程（pnpm / npm），在 IDEA 里不会成为 Gradle 模块，属正常现象。
+> `iblog-admin` / `iblog-web` 是前端工程（均用 pnpm），在 IDEA 里不会成为 Gradle 模块，属正常现象。
 
 ### 3. 启动管理后台
 
@@ -200,9 +200,12 @@ pnpm dev           # http://localhost:5173
 
 ```bash
 cd iblog-web
-npm install
-npm run dev        # http://localhost:5174
+pnpm install
+pnpm dev           # http://localhost:5174
 ```
+
+> 没装 pnpm 的话，用 Node 自带的 corepack 一行启用：`corepack enable pnpm`（或 `npm i -g pnpm`）。
+> `package.json` 里的 `packageManager` 字段已锁定版本，corepack 会自动使用该版本。
 
 两个前端的 `/api` 请求都由 Vite 代理到 `http://localhost:8080`（见各自 `vite.config.ts`）。
 

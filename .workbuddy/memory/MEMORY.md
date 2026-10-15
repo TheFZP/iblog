@@ -18,9 +18,10 @@
 - **依赖源必须全部走公网镜像，禁止使用公司内网 Nexus**（`192.168.0.244:8081`）。
   `build.gradle` 里用 `repositories.clear()` 剥离机器级 init.gradle 注入的内网仓库，不要删掉这行
 - 官网前台**固定用 Vue3 + Vite SPA**（用户明确选择，已知 SEO 弱，不要擅自改成 Nuxt）
-- **`iblog-admin` 用 pnpm**（`packageManager: pnpm@11.5.0`），`iblog-web` 仍用 npm。
-  pnpm 11 的配置写在 `iblog-admin/pnpm-workspace.yaml`（**不是** package.json 的 pnpm 字段），
-  允许执行构建脚本的字段是 `allowBuilds`（map），漏配会让 `pnpm build` 因 ERR_PNPM_IGNORED_BUILDS 失败
+- **两个前端都用 pnpm**（`packageManager: pnpm@11.5.0`）：`iblog-admin` 与 `iblog-web` 统一。
+  pnpm 11 的配置写在各自的 `pnpm-workspace.yaml`（**不是** package.json 的 pnpm 字段），
+  允许执行构建脚本的字段是 `allowBuilds`（map），漏配会让 `pnpm build` 因 ERR_PNPM_IGNORED_BUILDS 失败。
+  iblog-admin 批准 `esbuild` + `vue-demi`；iblog-web 只需 `esbuild`（无 pinia/element-plus 故无 vue-demi）
 - 后端统一响应体 `R<T>`：`{ code, msg, data }`，200 成功 / 401 未登录 / 400 业务参数 / 500 异常
 - 鉴权方案：JWT 签名 + Redis 保存会话（key 前缀 `iblog:login:token:`），支持服务端注销
 - 接口分域：`/api/admin/**` 需登录（login 接口除外），`/api/portal/**` 公开
@@ -62,6 +63,12 @@
 - 前端 npm 建议加 `--registry=https://registry.npmmirror.com`
 - 本机 MySQL 8 为**原生安装**（非 Docker），监听 3306；root 密码**不是** `root`，CLI 直连会 1045，
   别再重复试探；能用的凭据在 `iblog-server/src/main/resources/application-dev.yml`（该文件含敏感信息）
+- **Redis 已安装**（2026-10-15）：redis-windows 社区构建 **8.10.2**，位于
+  `D:\develop\redis\Redis-8.10.2-Windows-x64-msys2-with-Service\`；已注册 Windows 服务 `Redis`
+  （自启动，`RedisService.exe` 包装，数据目录 `D:\develop\redis\data`，监听 127.0.0.1:6379 无密码）。
+  操作服务用 `RedisService.exe install/uninstall`，**不要用 `sc.exe`**（被本机安全策略拉黑）
+- **Redis 是 iblog 的硬依赖**：站点配置缓存的读操作没有兜底（Redis 挂 → `/api/portal/site` 500），
+  登录态也完全靠 Redis；启动阶段不报错只是因为连接懒加载
 - 验证启动期初始化逻辑的省事办法：`gradle bootRun --args="--spring.main.web-application-type=none"`，
   跑完自动退出，不占 8080 端口。命令行验证记得加 `--gradle-user-home C:/Users/Administrator/.workbuddy/tools/gradle-home`
 

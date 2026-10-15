@@ -8,7 +8,7 @@
         <img v-if="site.author_avatar" :src="site.author_avatar" alt="avatar" class="avatar" />
         <div>
           <div class="name">{{ site.author_name || '博主' }}</div>
-          <div class="intro">{{ site.author_intro || '一个正在认真写代码的人。' }}</div>
+          <div class="intro">{{ site.author_intro || '一个正在认真让AI写代码的人。' }}</div>
         </div>
       </div>
 
