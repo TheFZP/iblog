@@ -171,8 +171,19 @@
   日志 `/var/log/iblog-backup.log`。
 - ⚠️ **AL4 用 `logrotate.timer`（systemd timer）调度轮转，不是 `/etc/cron.daily/logrotate`**
   —— 后者在这台机器上不存在。别据此判断「轮转配置没生效」。
-- ⚠️ 备份与数据库**在同一台机器的同一块盘**上，磁盘损坏或误删会一起丢。
-  要防灾得把 `/opt/backup/iblog/` 同步到 OSS 或另一台机器，**这一步还没做**。
+- ⚠️ 备份与数据库**在同一台机器的同一块盘**上，磁盘损坏、误删或整台 ECS 出问题会一起丢。
+  **这一步用户 2026-10-15 主动决定「先不做，再想想」**，别擅自推进。已勘察清楚、随时可续：
+  - ECS 在 **`cn-guangzhou`**（可用区 `cn-guangzhou-a`，实例 `i-7xv0nbx4kbazda5mew26`）；
+    同地域可用**内网 endpoint** `oss-cn-guangzhou-internal.aliyuncs.com`（流量免费更快）
+  - **未挂载实例 RAM 角色**（元数据 `/latest/meta-data/ram/security-credentials/` 返回 404）。
+    ⚠️ 判断这个要用 HTTP 状态码，不能只看输出非空 —— 我当时就是把 404 的 HTML 当成了角色名
+  - **`ossutil v1.7.18` 已装在 `/usr/local/bin/ossutil`**，未配置（1.7.19 的下载地址已 404，
+    1.7.18 可用）。它的 `--mode` 实测支持 `AK|StsToken|RamRoleArn|EcsRamRole`，
+    配 `--ecs-role-name` 即可走实例角色、**不落任何长期密钥**
+  - 用户已选定用**实例 RAM 角色**方案（而非 AccessKey），只差去控制台建 bucket + 建角色 + 授予实例
+  - 完整的可执行步骤已写进 `deploy/DEPLOY.md`「异地备份（尚未实施）」一节，续做时照抄即可
+  - 替代方案：用户 known_hosts 里还有另外两台阿里云服务器（`101.200.235.184`、`8.134.55.236`），
+    直接 `scp -r` 过去即可，零凭证零控制台操作；缺点是容灾等级低一档
 - 恢复：`docker exec -i iblog-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" iblog' < <dump>`。
   密码由容器自己的环境变量提供，**宿主机上不需要也不应该知道明文密码**。
 - mysqldump 会往 stderr 打一条「Using a password on the command line」告警，无害但会污染

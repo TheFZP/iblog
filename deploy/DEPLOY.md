@@ -514,12 +514,45 @@ tail -50 /var/log/iblog-backup.log           # 看历史（备份失败会记在
 > ⚠️ **只备份不验证，等于不知道备份能不能用。** 所以 `verify` 会把 dump 真的导入一个临时库
 > `iblog_verify`，逐表比对行数，再删库 —— 这才是「备份有效」的证据。
 >
-> ⚠️ **备份和数据库在同一台机器的同一块盘上**，磁盘损坏或误删会一起丢。
-> 要防灾得把 `/opt/backup/iblog/` 同步到 OSS 或另一台机器，例如：
-> ```bash
-> # 装 ossutil 后，在 crontab 里追加一条
-> 0 4 * * * ossutil cp -r -f /opt/backup/iblog/ oss://<bucket>/iblog-backup/ >/dev/null 2>&1
-> ```
+> ⚠️ **备份和数据库在同一台机器的同一块盘上**，磁盘损坏、误删或整台 ECS 出问题，数据和备份会一起丢。
+> 这一步**尚未做**，属于当前已知的最大缺口。
+
+#### 异地备份（尚未实施，以下是已验证的做法）
+
+已勘察清楚的现状（2026-10-15）：ECS 在 **`cn-guangzhou`**（可用区 `cn-guangzhou-a`，实例
+`i-7xv0nbx4kbazda5mew26`），**未挂载实例 RAM 角色**；服务器上 `ossutil v1.7.18` 已安装但未配置。
+
+推荐做法是**实例 RAM 角色**：ossutil 通过 ECS 元数据服务自动换取小时级轮换的临时凭证，
+服务器磁盘和 crontab 里都不会出现 AccessKey。
+
+1. OSS 控制台建 bucket，地域选**华南1（广州）**，读写权限**私有**。
+   同地域可以用内网 endpoint `oss-cn-guangzhou-internal.aliyuncs.com` —— 流量免费且更快。
+2. RAM 控制台建权限策略 `iblog-oss-backup`（把 `<bucket名>` 换掉）：
+   ```json
+   {
+     "Version": "1",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": ["oss:PutObject","oss:GetObject","oss:ListObjects","oss:ListParts","oss:AbortMultipartUpload"],
+       "Resource": ["acs:oss:*:*:<bucket名>", "acs:oss:*:*:<bucket名>/*"]
+     }]
+   }
+   ```
+3. RAM 控制台建房角色，可信实体选「阿里云服务 → ECS 云服务器」，授权上面的策略。
+4. ECS 控制台 → 实例 → 更多 → 实例设置 → **授予/收回 RAM 角色**。**不需要重启实例。**
+5. 服务器上配置并加法：
+   ```bash
+   ossutil config --mode EcsRamRole --ecs-role-name iblog-oss-backup-role \
+     -e oss-cn-guangzhou-internal.aliyuncs.com -c /root/.ossutilconfig
+   ossutil -c /root/.ossutilconfig cp -r -f /opt/backup/iblog/ oss://<bucket名>/iblog-backup/   # 先手工验一次
+   # 验证通过后加进 crontab：
+   # 0 4 * * * ossutil -c /root/.ossutilconfig cp -r -f /opt/backup/iblog/ oss://<bucket名>/iblog-backup/ >> /var/log/iblog-backup.log 2>&1
+   ```
+   > `--mode` 的取值在 ossutil 1.7.18 的 help 里确认过是 `AK|StsToken|RamRoleArn|EcsRamRole`。
+
+**更省事的替代方案**：如果手上还有另一台长期在线的服务器，直接
+`scp -r /opt/backup/iblog/ root@<另一台>:/opt/iblog-backup/` 就行 —— 零凭证、零控制台操作，
+今天就能做。缺点是同账号同地域的话容灾等级低一档，且需要在那台机器上留公钥。
 
 #### 真出事时怎么恢复
 
