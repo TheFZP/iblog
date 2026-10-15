@@ -28,6 +28,20 @@
 - 站点配置在 `blog_site_config` 表以 kv 形式存储，读取带 Redis 缓存，写后必须清缓存
 - 默认管理员 admin / admin123，由 `DataInitializer` 运行时 BCrypt 生成
 
+## 数据库初始化（建表 SQL 只有一份）
+
+- 表结构 + 种子数据固定在 `iblog-server/src/main/resources/db/`：
+  `01-schema.sql`（`CREATE TABLE IF NOT EXISTS`）与 `02-data.sql`（`INSERT IGNORE` + 显式主键），
+  **两个脚本都必须保持幂等**，重复执行不能清空或重复写数据
+- 后端启动自举由 `DatabaseBootstrap` 负责（注册在 `IblogApplication.main` 的 listener，
+  监听 `ApplicationEnvironmentPreparedEvent`，在 DataSource 创建之前执行）：
+  库不存在则建库、表不存在则建表写种子数据；总开关是 `iblog.db.auto-init`
+  （`application.yml` 里 dev 为 `true`，`application-prod.yml` 里为 `false`，生产只自检不改结构）
+- 部署时 `docker-compose.yml` 把同一个目录挂进 `/docker-entrypoint-initdb.d`，
+  **不要**再单独放一份 init SQL 到 deploy 下
+- 启动期所有数据库类异常（Unknown database / Access denied / 连不上 / 超时）
+  统一由 `DatabaseBootstrap.translate()` 翻译成中文提示块，不要再让原始堆栈直接抛给用户
+
 ## 构建布局（重要，勿随意改动）
 
 - 仓库是**聚合 Gradle 工程**：根 `settings.gradle` 用 `include 'iblog-server'` 把后端纳入同一构建，
@@ -46,6 +60,10 @@
 - 编译需设置 `JAVA_HOME=/c/Program Files/Zulu/zulu-21`
 - **本机 `GRADLE_USER_HOME=D:\develop\gradle_user_home` 有坑**：journal 锁常被守护进程占用会报"拒绝访问"，且全局 `init.gradle` 会重定向到内网 Nexus。命令行验证时建议用独立目录 `--gradle-user-home` 覆盖
 - 前端 npm 建议加 `--registry=https://registry.npmmirror.com`
+- 本机 MySQL 8 为**原生安装**（非 Docker），监听 3306；root 密码**不是** `root`，CLI 直连会 1045，
+  别再重复试探；能用的凭据在 `iblog-server/src/main/resources/application-dev.yml`（该文件含敏感信息）
+- 验证启动期初始化逻辑的省事办法：`gradle bootRun --args="--spring.main.web-application-type=none"`，
+  跑完自动退出，不占 8080 端口。命令行验证记得加 `--gradle-user-home C:/Users/Administrator/.workbuddy/tools/gradle-home`
 
 ## 部署
 

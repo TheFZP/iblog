@@ -22,6 +22,9 @@ spring:
           min-idle: 4
 
 iblog:
+  db:
+    # 生产环境不动库结构，只做启动自检；建表交给 deploy 里的初始化脚本
+    auto-init: false
   jwt:
     secret: ${IBLOG_JWT_SECRET:iblog-personal-blog-jwt-secret-key-please-change-me-2026}
     expire: ${IBLOG_JWT_EXPIRE:86400}

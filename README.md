@@ -41,6 +41,7 @@ iblog/
 │   │       ├── controller/portal/   # 官网接口  /api/portal/**
 │   │       └── runner/              # 首次启动初始化管理员
 │   ├── src/main/resources/          # application.yml / dev / prod
+│   │   └── db/                       # 01-schema.sql（建表）+ 02-data.sql（种子数据）
 │   ├── build.gradle                 # 依赖与构建配置
 │   ├── settings.gradle
 │   ├── gradlew / gradlew.bat        # Gradle Wrapper（无需本机装 Gradle）
@@ -56,10 +57,12 @@ iblog/
 ├── deploy/
 │   ├── docker-compose.yml           # mysql + redis + server + admin + web
 │   ├── .env.example                 # 密码 / 密钥 / 端口
-│   ├── mysql/init/01-init.sql       # 建表 + 种子数据
 │   └── DEPLOY.md                    # 阿里云部署手册
 └── README.md
 ```
+
+> 建表 SQL 只有一份，放在 `iblog-server/src/main/resources/db/`：后端启动时读它自动建库建表，
+> 部署时由 `docker-compose.yml` 把同一个目录挂进 MySQL 容器执行，不会出现两处不一致。
 
 ---
 
@@ -89,11 +92,33 @@ iblog/
 
 ### 1. 准备 MySQL 与 Redis
 
-```bash
-# MySQL 8：执行建表脚本
-mysql -uroot -p < deploy/mysql/init/01-init.sql
+**MySQL 8 不需要手工建库。** 后端启动时会自己检查：库不存在就建库、表不存在就建表并写入种子数据
+（由 `iblog.db.auto-init` 控制，开发环境默认 **开启**，生产环境默认关闭）。所以只需要保证
+**MySQL 服务已启动，并且 `application-dev.yml` 里的账号密码是对的**即可。
 
-# Redis：本地启动即可
+启动后如果还是连不上，控制台会给出一段中文提示块（而不是几百行堆栈），照着改就行：
+
+```
+==========================================================
+  数据库账号或密码不正确（Access denied）。
+  请核对 iblog-server/src/main/resources/application-dev.yml 里的 datasource 配置。
+  环境准备详见 README「四、本地启动」
+==========================================================
+```
+
+想手工执行建表脚本（或在生产环境初始化）时：
+
+```bash
+mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS iblog DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+mysql -uroot -p iblog < iblog-server/src/main/resources/db/01-schema.sql
+mysql -uroot -p iblog < iblog-server/src/main/resources/db/02-data.sql
+```
+
+两个脚本都是幂等的（`CREATE TABLE IF NOT EXISTS` / `INSERT IGNORE`），**重复执行不会清空或重复写入已有数据**。
+
+Redis 本地启动即可：
+
+```bash
 redis-server
 ```
 
@@ -101,8 +126,8 @@ redis-server
 
 ```bash
 docker run -d --name iblog-mysql -p 3306:3306 \
-  -e MYSQL_ROOT_PASSWORD=root -e TZ=Asia/Shanghai \
-  -v "$PWD/deploy/mysql/init:/docker-entrypoint-initdb.d:ro" mysql:8.0
+  -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=iblog -e TZ=Asia/Shanghai \
+  -v "$PWD/iblog-server/src/main/resources/db:/docker-entrypoint-initdb.d:ro" mysql:8.0
 
 docker run -d --name iblog-redis -p 6379:6379 redis:7-alpine
 ```
@@ -137,8 +162,8 @@ cd iblog-server
 
 `build.gradle` 里显式调用了 `repositories.clear()`，会清掉机器级 `init.gradle` 往所有项目注入的内网 Nexus，因此**离开公司内网也能正常构建**。
 
-- 默认 `dev` 环境，连接 `localhost:3306/iblog`（root / root），Redis `localhost:6379`
-- 数据库账号密码在 `src/main/resources/application-dev.yml` 中修改
+- 默认 `dev` 环境，连接 `localhost:3306/iblog`，Redis `localhost:6379`（账号密码以 `application-dev.yml` 为准）
+- 数据库或表不存在时**自动创建**（`iblog.db.auto-init: true`）；生产环境为 `false`，只做自检不改结构
 - 首次启动会自动创建管理员账号：**admin / admin123**
 - 接口文档：<http://localhost:8080/swagger-ui.html>
 

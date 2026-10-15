@@ -27,8 +27,8 @@ services:
       - --lower_case_table_names=1
     volumes:
       - mysql-data:/var/lib/mysql
-      # 首次启动会自动执行这里面的 SQL
-      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+      # 首次启动自动执行这里的 SQL；与后端共用同一份脚本（01-schema.sql / 02-data.sql），避免两处维护
+      - ../iblog-server/src/main/resources/db:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s

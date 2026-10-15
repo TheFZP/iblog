@@ -103,6 +103,13 @@ docker compose up -d --build
 
 首次构建会编译 Gradle 依赖和前端依赖（管理后台用 pnpm、官网用 npm），视网络情况约 5～15 分钟。
 
+数据库**不需要手工初始化**：MySQL 容器第一次启动时会自动执行
+`iblog-server/src/main/resources/db/` 下的 `01-schema.sql`（建表）与 `02-data.sql`（种子数据）。
+这两个文件同时被后端启动自举复用，全项目只有一份建表 SQL。
+
+> 生产环境后端的 `iblog.db.auto-init` 是 `false`，只做连接自检、不会去改库结构；
+> 如果数据库是空的，后端会在启动日志里打印一段中文提示块而不是几百行堆栈。
+
 > 依赖来源已固定为公网镜像：Gradle 发行包走阿里云 `mirrors.aliyun.com`，
 > Maven 依赖走 `maven.aliyun.com/repository/public`，pnpm / npm 走 `registry.npmmirror.com`。
 > 在阿里云 ECS 上构建时这些源都是同地域就近访问，速度很快，不依赖任何公司内网服务。
