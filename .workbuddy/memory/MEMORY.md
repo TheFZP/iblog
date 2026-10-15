@@ -222,6 +222,28 @@
    -o PreferredAuthentications=password` 测密码确实被拒。
 5. **两项都过了再取消定时器**，并确认回滚日志没被写入（= 从未触发）。
 
+## 系统安全更新（2026-10-15 打过一次）
+
+- 登录横幅报「50 Security notice(s) / 19 Important」，实际 `dnf updateinfo list --security`
+  是 **156 行**（行数 = 公告×包，与「公告数」不是一回事，别混淆）。
+  当时事务是 **98 个包升级 + 3 个新装、203MB**，内含 `kernel`、`containerd`(Important)、
+  `docker`、`openssh`、`curl`/`gnutls`。打完 `待打安全更新行数 = 0`。
+- **打补丁必须把 dnf 放进分离进程**：`setsid nohup bash -c "dnf -y upgrade-minimal --security
+  > $LOG 2>&1; echo UPGRADE_EXIT=\$? >> $LOG" &`，然后轮询日志。
+  原因：升级 openssh/docker/containerd 时 scriptlet 会重启服务，若 dnf 挂在 SSH 会话上，
+  SIGHUP 可能**打断事务留下半升级状态**。
+- 用 `upgrade-minimal --security` 而非全量 `upgrade`，只取修复安全问题的最小版本。
+  打 `kernel` 后必须重启才生效 —— **`needs-restarting -r` 说「不需要重启」指的是当前状态，
+  别被误导**（那次它确实说不需要，但打完内核就必须重启）。
+- 那次内核从 `6.6.102-5.3.4` → **`-7`**（不是横幅里的 -8；`upgrade-minimal` 只取最小修复版本）。
+- **重启自愈已实测（86 天来第一次重启）**：30 秒恢复 SSH、42 秒后端就绪、6 项 HTTP 自检全中、
+  五容器全自动回来、swap/journald 限流/SSH 加固 drop-in 全部保留。
+  依赖链：容器 `restart: always` + docker `enabled` + containerd 由 docker 的 `Wants` 拉起 +
+  swap 在 `/etc/fstab` + sshd/crond `enabled`。
+- ⚠️ **`depends_on: service_healthy` 只在 compose 启动时生效，Docker 守护进程重启后不保证顺序。**
+  开机瞬间 `iblog-server` 可能先于 MySQL 就绪而失败，靠 `restart: always` 重试自愈 —— 正常现象。
+- 打完后可 `docker image prune -f` 清清重建留下的悬空镜像（那次显示已无悬空镜像）。
+
 ## 网络与安全的硬教训（都踩过）
 
 - **安全组：加规则只用「手动添加 / 快速添加」，绝不要走会替换整个列表的入口。**

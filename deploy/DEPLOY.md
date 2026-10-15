@@ -613,6 +613,51 @@ sshd -T | grep -iE 'passwordauthentication|permitrootlogin|pubkeyauthentication'
    IP 一变就连不上；现在没有密码可爆破，安全组里 22 的授权对象改成 `0.0.0.0/0` 也不会有
    实质风险（仍然建议只在需要时放宽）。
 
+### 系统安全更新（2026-10-15 打过一次，之后建议定期做）
+
+登录横幅会提示待打的安全更新。查一下有多少：
+
+```bash
+dnf updateinfo list --security | wc -l        # 行数 = 公告×包
+dnf updateinfo list --security | awk '{print $2}' | sort | uniq -c   # 按严重级别
+```
+
+**打补丁必须把 dnf 放进分离进程**，不能挂在 SSH 会话上：升级 `openssh`/`docker`/`containerd`
+时它们的 scriptlet 会重启服务，万一 SSH 断掉，SIGHUP 可能**打断事务、留下半升级状态**。
+
+```bash
+LOG=/var/log/iblog-upgrade.log
+setsid nohup bash -c "dnf -y upgrade-minimal --security > $LOG 2>&1; echo UPGRADE_EXIT=\$? >> $LOG" \
+  >/dev/null 2>&1 < /dev/null &
+# 然后用 `grep UPGRADE_EXIT $LOG` 轮询到结束；期望 UPGRADE_EXIT=0 且日志里没有 error/failed
+```
+
+用 `upgrade-minimal --security`（而不是全量 `upgrade`）只取修复安全问题的**最小版本**，
+避免顺带引入非安全变更。打完 `kernel` 之后**必须重启**才生效
+（`needs-restarting -r` 在打之前说「不需要重启」指的是当前状态，别被误导）：
+
+```bash
+nohup sh -c 'sleep 5; systemctl reboot' >/dev/null 2>&1 &     # 分离式触发，避免卡住
+```
+
+#### 重启自愈已实测验证（2026-10-15，86 天来第一次重启）
+
+| 依赖 | 机制 |
+| --- | --- |
+| 容器 | 五个全是 `restart: always`，docker 起来后自动拉起 |
+| docker | `enabled`；containerd 是 `disabled` 但 docker 的 `Wants=containerd.service` 会拉起它 |
+| swap | `/swapfile` 写在 `/etc/fstab`，自动挂载 |
+| sshd / crond | 都 `enabled` |
+| 各项加固 | `sshd_config.d/` 的 drop-in、journald 的 `journald.conf.d/` 都是文件，重启后仍在 |
+
+**实测数据**：重启后 **30 秒**恢复 SSH，**42 秒**后端就绪，6 项 HTTP 自检全中，
+`ipeng` 登录正常，备份 cron 与 SSH 加固均未丢失。
+
+> ⚠️ 一个容易误判的点：`docker compose` 的 `depends_on: service_healthy` **只在 compose 启动时生效**，
+> Docker 守护进程重启后**不保证启动顺序**。所以开机瞬间 `iblog-server` 可能先于 MySQL 就绪而启动失败，
+> 靠 `restart: always` 反复重试直到成功。**这属于正常现象**，等一两分钟即可，不用手动干预。
+
+
 ---
 
 ## 五、常见问题
