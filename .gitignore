@@ -7,6 +7,8 @@ Thumbs.db
 # ========= 环境变量 =========
 .env
 .env.local
+# 发布脚本的目标服务器配置（含服务器地址，不要提交）
+.release.env
 
 # ========= Node / 前端 =========
 node_modules/

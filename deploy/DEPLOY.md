@@ -434,6 +434,34 @@ server {
 
 ## 四、日常运维
 
+### 发布更新：在本机跑 `deploy/release.sh`
+
+线上跑的是 `deploy/dist/` 里的构建产物和容器镜像，**不是 `src/`**。只改源码、只提交、
+只推送，生产环境不会有任何变化。所以更新一律走这个脚本：
+
+```bash
+# 本机 Git Bash（bash 不在 PATH 上时用：
+#   & "D:\develop\Git\bin\bash.exe" deploy/release.sh admin）
+export IBLOG_SERVER=root@<服务器IP>       # 或写进 deploy/.release.env（已在 .gitignore）
+bash deploy/release.sh                    # 全部：后端 + 管理后台 + 官网 + 建库 SQL
+bash deploy/release.sh admin              # 只发管理后台（几秒）
+bash deploy/release.sh web server         # 可给多个目标
+bash deploy/release.sh --build-only       # 只在本机构建组装 dist，不上传
+```
+
+它会依次完成「构建 → 组装 `deploy/dist` → 上传 → 重建容器 → 自检」，
+自检里带一条回归守卫：`http://<服务器>/api/admin/auth/login` 必须是 **404**
+（即官网 80 端口碰不到管理后台接口，见「一、3」）。
+
+> ⚠️ **不要用 `git pull` + `docker compose up -d --build` 更新线上。**
+> `deploy/dist/` 在 `.gitignore` 里，服务器上既没有源码也没有构建产物，
+> `git pull` 什么也拿不到 —— 这正是必须有 `release.sh` 的原因。
+>
+> ✅ `release.sh` **只上传 `dist/<目标>` 与 `docker-compose.yml`，永远不会碰服务器上的
+> `deploy/.env`**（那里面有数据库密码和 JWT 密钥，被覆盖会导致整站起不来）。
+
+### 服务器上的日常操作
+
 ```bash
 cd /opt/iblog/deploy
 
@@ -442,10 +470,6 @@ docker compose ps
 
 # 查看某个服务日志
 docker compose logs -f --tail=200 iblog-server
-
-# 更新代码后重新部署（只重建变化的部分）
-git pull
-docker compose up -d --build
 
 # 只重启后端
 docker compose restart iblog-server
