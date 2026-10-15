@@ -241,6 +241,43 @@
   纯 IP 访问目前不需要备案（现有 http://8.138.105.59/ 就是实证）。
 - 完整方案已写进 `deploy/DEPLOY.md`「三、4. 不用域名也能上 HTTPS：IP 地址证书」。
 - **用户明确说「先不做」**，别擅自推进。
+  → **2026-10-15 后来改主意了，IP 证书方案已完整实施上线**，见下。
+
+### HTTPS（IP 证书）已实施上线（2026-10-15）
+
+- **线上地址**：官网 `https://<IP>/`（80 端口 301 跳过来）、管理后台 `https://<IP>:81/`。
+  外网实测 `curl -w '%{ssl_verify_result}'` 全为 **0**（证书被信任，不是 `-k` 跳过）。
+- **证书**：`/etc/letsencrypt/live/iblog/`。用 `--cert-name iblog` 而非 IP 当名字 ——
+  **故意避免服务器 IP 出现在公开仓库的 nginx 配置里**。
+- **certbot**：装在独立 venv `/opt/certbot`（版本 5.8.0）。AL4 仓库没有 certbot，必须 pip 装。
+  `--ip-address` 是 5.3 引入、**webroot 支持 IP 需要 5.4+**；`certonly --help` 默认只显示参数子集，
+  要看 `--help all` 才 grep 得到（我第一次就因此误判成"不支持"）。
+- **校验方式**：`webroot`，目录 `/opt/iblog/deploy/acme`，挂进 `iblog-web`
+  （`./acme/.well-known/acme-challenge:/usr/share/nginx/html/.well-known/acme-challenge:ro`）。
+  IP 证书**只支持 webroot/manual/standalone**，nginx/apache 插件不支持；`--standalone`
+  每次续期都要停官网容器，所以选 webroot。
+- **证书目录必须整目录挂**（`/etc/letsencrypt:/etc/letsencrypt:ro`）：`live/` 下全是软链
+  指向 `../../archive/…`，只挂 `live/` 会断链导致 nginx 起不来。
+- **自动续期**：crontab 每天 03:20 / 15:20 跑 `certbot renew --quiet
+  --deploy-hook /opt/iblog/deploy/reload-tls.sh`；`reload-tls.sh` 会 `docker exec nginx -s reload`
+  两个容器（Certbot 不负责安装 IP 证书，不重载 nginx 就一直在用旧证书）。
+  `check-cert.sh` 每天 03:40 自检，剩余 <48h 在日志里打醒目告警。日志 `/var/log/iblog-certbot.log`
+  （logrotate 每周，保留 8 份）。
+- **三个刻意决定，改动前须理解**：
+  1. **不开 HSTS** —— 6 天期证书一旦续期失败，HSTS 会把浏览器钉死在 https 上，
+     用户连「继续访问」都点不了，站点彻底不可达。
+  2. **管理后台改成 HTTPS-only**（容器内监听 443，宿主机仍 81）—— 81 上 TLS 的意义就是
+     让登录密码不再明文；老书签 `http://<IP>:81` 因此失效。
+  3. **80 端口不能关也不能整体跳转** —— 续期靠 80 做 HTTP-01。nginx 里有一条
+     `location ^~ /.well-known/acme-challenge/` 例外，优先于 `return 301`，且文件不存在直接 404
+     （不再回落到 index.html —— 回落会返回 200+HTML，让 ACME 报「内容不对」，更难排查）。
+- **实施时的安全顺序（值得复用）**：443 还没在安全组放行前，**不要**先做 80→443 跳转，
+  否则会出现「80 跳到一个被墙的 443」导致站点外网不可达。分两阶段：先 80 照常服务 +
+  新增 443，验证外网 443 通（`ssl_verify_result=0`）后再把 80 改成跳转。
+- **验证方式**：强制真续期一次（`certbot renew --force-renewal`），**磁盘证书序列号与两个容器
+  实际吐出的序列号一致** → 证明「ACME 签发 → deploy-hook → nginx 重载」整条链路通。
+  这比只跑 `--dry-run` 有力得多。
+- 新脚本 `deploy/reload-tls.sh`、`deploy/check-cert.sh` 已加入 `release.sh` 的同步清单。
 
 ### 域名 + 备案（2026-10-15 查清，用户也选择先不做）
 

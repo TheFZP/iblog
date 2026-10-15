@@ -105,7 +105,12 @@ services:
     depends_on:
       - iblog-server
     ports:
-      - "${ADMIN_PORT:-81}:80"
+      # 容器内是 443/TLS，对外仍是 81（IP 证书无主机名，无法用 SNI 在同一端口分站点）
+      - "${ADMIN_PORT:-81}:443"
+    volumes:
+      # 证书目录必须**整个**挂进来：live/ 下面全是软链，指向 ../../archive/…，
+      # 只挂 live/ 会断链导致 nginx 起不来。只读即可。
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
       - iblog-net
 
@@ -120,6 +125,13 @@ services:
       - iblog-server
     ports:
       - "${WEB_PORT:-80}:80"
+      - "${WEB_TLS_PORT:-443}:443"
+    volumes:
+      # Let's Encrypt 的 HTTP-01 校验目录（IP 证书走 webroot 模式，见 DEPLOY.md「三、4」）。
+      # 挂到 nginx 的根目录下，certbot 写的校验文件就能被 http://<IP>/.well-known/acme-challenge/<token> 访问到。
+      - ./acme/.well-known/acme-challenge:/usr/share/nginx/html/.well-known/acme-challenge:ro
+      # 证书目录（同样必须整目录挂，理由见上面 iblog-admin）
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
       - iblog-net
 

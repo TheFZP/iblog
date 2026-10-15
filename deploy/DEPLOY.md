@@ -97,13 +97,18 @@ docker info | grep -A5 'Registry Mirrors'
 
 ### 3. 安全组放行
 
-在 ECS 控制台 → 安全组 → 入方向，放行这三条：
+在 ECS 控制台 → 安全组 → 入方向，放行这四条：
 
 | 端口 | 用途 | 来源建议 |
 | --- | --- | --- |
 | 22 | SSH | 你的固定出口 IP；若 IP 不固定，用 `0.0.0.0/0` 但**务必关掉密码登录只留密钥** |
-| 80 | 官网 | `0.0.0.0/0` |
-| 81 | 管理后台 | **只放你的 IP**（`x.x.x.x/32`） |
+| 80 | 官网（现在只做 ACME 校验 + 301 跳 443） | `0.0.0.0/0`，**不能关**（见下） |
+| 443 | 官网 HTTPS | `0.0.0.0/0` |
+| 81 | 管理后台（HTTPS） | **只放你的 IP**（`x.x.x.x/32`） |
+
+> ⚠️ **80 端口即使已经全站跳 https 了也不能关**：Let's Encrypt 的 IP 证书只有 6 天有效期，
+> certbot 每 6 天都要靠 80 端口做一次 HTTP-01 校验。关了 80，续期就会失败，
+> 最多 6 天后站点变成浏览器报警告状态。详见「三、4」。
 
 **8080 不要放行。** 两个前端容器是通过 Docker 网络里的服务名 `iblog-server:8080` 反代后端的，
 宿主机上的 8080 映射只是为了让你能直接开 Swagger —— 要看接口文档用 SSH 隧道就够：
@@ -438,61 +443,63 @@ server {
 }
 ```
 
-### 4. 不用域名也能上 HTTPS：IP 地址证书（尚未实施，方案已勘察）
+### 4. 不用域名也能上 HTTPS：IP 地址证书（**已实施，2026-10-15**）
 
-**`https://<服务器IP>/` 现在是可以做到浏览器不报警告的**，而且不需要域名、不需要 ICP 备案。
+**`https://<服务器IP>/` 现在浏览器不会报警告**，而且不需要域名、不需要 ICP 备案。
 Let's Encrypt 从 **2026-01-15** 起正式对纯 IP 地址签发公信证书
 （[官方公告](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability)；
 [Certbot 支持说明](https://letsencrypt.org/2026/03/11/shorter-certs-certbot.html)）。
 
-**2026-10-15 在这台机器上勘察到的前提条件：**
+**现在线上的实际状态：**
 
-| 前提 | 结果 |
+| 项 | 值 |
 | --- | --- |
-| 到 LE 的网络 | `acme-v02.api.letsencrypt.org` 返回 **HTTP 200，2.5s** ✓（不少国内 ECS 到 LE 不通，这台通） |
-| certbot | AL4 仓库里**没有**，需 pip 装；`pip 23.3.1` / `python3.11` 可用 |
-| 443 端口 | 空闲 |
-| 80 端口 | 由 `iblog-web` 容器占用且对外全开（HTTP-01 校验必须走 80，已具备） |
-| webroot | 容器目前**无任何 bind mount**，要新增一个挂载点放校验文件 |
+| 地址 | 官网 **https://\<IP\>/**（80 会 301 跳过来）；管理后台 **https://\<IP\>:81/** |
+| 证书 | `/etc/letsencrypt/live/iblog/`（`--cert-name iblog`，**故意不用 IP 当名字**，避免 IP 进公开仓库） |
+| certbot | `/opt/certbot`（独立 venv，版本 5.8.0；AL4 仓库没有 certbot） |
+| 校验方式 | `webroot`，目录 `/opt/iblog/deploy/acme`（挂进 `iblog-web` 容器） |
+| 自动续期 | crontab 每天 **03:20 / 15:20** 各跑一次 `certbot renew` |
+| 续期后重载 | `deploy/reload-tls.sh` 作为 `--deploy-hook`，`docker exec nginx -s reload` 两个容器 |
+| 到期自检 | `deploy/check-cert.sh` 每天 03:40，剩余 < 48 小时会在日志里打醒目告警 |
+| 日志 | `/var/log/iblog-certbot.log`（logrotate 每周轮转，保留 8 份） |
 
-**必须接受的硬约束：IP 证书的有效期只有 6 天**（160 小时），这是 LE 对 IP 证书的
-**强制要求**（IP 比域名易变，所以要更频繁地验证），不能选长有效期。
+**几个刻意做的决定，改动前请先理解：**
 
-> ⚠️ 这带来一个**新的故障模式**：续期一旦静默失败，**一周内**站点就会变成浏览器报警告的状态 ——
-> 不是你手动改坏的，很容易想不到。相比之下域名证书是 90 天（LE 未来降到 45 天），容错空间大得多。
+1. **不开 HSTS。** 证书只有 6 天有效期，一旦续期失败，HSTS 会把浏览器钉死在 https 上，
+   用户连「继续访问」都点不了，站点彻底不可达。等换成 90 天期的域名证书再考虑。
+2. **管理后台改成 HTTPS-only**（容器内监听 443，宿主机仍是 81）。81 上 TLS 的全部意义
+   就是让登录密码不再明文传输，所以没有保留 HTTP 入口 —— 老书签 `http://<IP>:81` 会失效。
+3. **80 端口不能关、也不能整体跳转**：certbot 每 6 天续期都要靠 80 做 HTTP-01 校验。
+   所以 nginx 里有一条 `location ^~ /.well-known/acme-challenge/` 的例外，
+   它优先于 `return 301`，且文件不存在时直接 404（不再回落到 index.html —— 回落会返回
+   200 + HTML，让 ACME 报「内容不对」，反而更难排查）。
+4. **证书目录必须整目录挂进容器**（`/etc/letsencrypt:/etc/letsencrypt:ro`）：
+   `live/` 下面全是软链指向 `../../archive/…`，只挂 `live/` 会断链导致 nginx 起不来。
 
-**架构上的一个硬限制**：IP 证书里没有主机名，**无法用 SNI 在同一端口区分多个站点**。所以只能是
-「官网走 443、管理后台走 `https://<IP>:81/`」，不能两个都挂 443。
+**已做过的验证（不是靠推理）：**
 
-**实施步骤（到时候照这个做）：**
+- 两台容器分别在临时容器里跑过 `nginx -t` 才重建线上
+- 强制真续期一次（`certbot renew --force-renewal`），**磁盘上的证书序列号与两个容器
+  实际吐出的序列号完全一致** —— 证明「ACME 签发 → deploy-hook → nginx 重载」整条链路通
+- 外网验证 `curl -w '%{ssl_verify_result}'` 全为 **0**（证书被信任，不是靠 `-k` 跳过）
+- 外网验证 80 上的校验路径返回**精确内容且未被跳转**
+
+**日常排查：**
 
 ```bash
-# 1) certbot 装在独立 venv 里，不污染系统 python（AL4 仓库没有 certbot）
-python3 -m venv /opt/certbot && /opt/certbot/bin/pip install -U pip certbot
-/opt/certbot/bin/certbot --version          # 需要 >= 5.4（--ip-address 是 5.3 引入、5.4 才支持 webroot）
+bash /opt/iblog/deploy/check-cert.sh     # 看剩余有效期（< 48h 会告警并返回非 0）
+tail -50 /var/log/iblog-certbot.log      # 续期与自检的历史
 
-# 2) docker-compose.yml 给 iblog-web 加挂载（校验文件目录），然后重建该容器
-#    volumes:
-#      - /opt/iblog/acme/.well-known/acme-challenge:/usr/share/nginx/html/.well-known/acme-challenge:ro
-
-# 3) 先拿 staging 证书试通（避免烧掉生产环境的失败次数配额）
-/opt/certbot/bin/certbot certonly --staging \
-  --preferred-profile shortlived --webroot --webroot-path /opt/iblog/acme \
-  --ip-address <服务器IP> --agree-tos -m <你的邮箱> --non-interactive
-# 成功后去掉 --staging 再来一次
-
-# 4) nginx 加 TLS server block（证书挂进容器），80 端口保留校验路径、其余 301 到 443
-#    ssl_certificate     /etc/letsencrypt/live/<IP>/fullchain.pem;
-#    ssl_certificate_key /etc/letsencrypt/live/<IP>/privkey.pem;
-
-# 5) 自动续期 + 重载（Certbot 不负责安装 IP 证书，必须自己给 --deploy-hook）
-#    certbot renew 由 systemd timer 或 cron 每天跑两次；deploy-hook 里 docker exec 重载 nginx
+# 万一续期失败，手工来一次（会真的重新签发）
+/opt/certbot/bin/certbot renew --force-renewal --deploy-hook /opt/iblog/deploy/reload-tls.sh
 ```
 
-> 已知限制（来自 LE/Certbot 文档）：IP 证书只支持 `webroot`／`manual`／`standalone` 三种校验，
-> **`nginx` 和 `apache` 插件不支持**；Certbot **不会**帮你把证书装进 Web 服务器，
-> 必须自己写 nginx 配置和 `--deploy-hook`。
-> `--standalone` 需要临时占用 80 端口（也就是**每次续期都要停掉官网容器**），所以选 `webroot`。
+> ⚠️ 已知限制（LE/Certbot 文档）：IP 证书只支持 `webroot`／`manual`／`standalone` 校验，
+> **`nginx` 和 `apache` 插件不支持**；Certbot **不会**帮你把证书装进 Web 服务器，必须自己写
+> nginx 配置和 `--deploy-hook`。`--standalone` 要临时占用 80（每次续期都得停官网容器），所以选 `webroot`。
+>
+> ⚠️ 续期依赖 crontab 里的 `certbot renew`。**这是整条链路上唯一的自动化依赖**：
+> 它静默失败的话，最多 6 天后站点就会变成浏览器报警告状态。`check-cert.sh` 就是为这个准备的。
 
 ### 5. 走域名路线的话，备案有哪些坑
 
