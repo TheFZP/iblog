@@ -222,6 +222,26 @@
    -o PreferredAuthentications=password` 测密码确实被拒。
 5. **两项都过了再取消定时器**，并确认回滚日志没被写入（= 从未触发）。
 
+## HTTPS / 证书（2026-10-15 勘察完，用户选择「先不做」）
+
+- **`https://<服务器IP>/` 现在是可行的、且不需要域名和 ICP 备案**：Let's Encrypt 自
+  **2026-01-15** 起对纯 IP 地址签发公信证书（`--preferred-profile shortlived --ip-address <IP>`，
+  Certbot ≥5.4；`--ip-address` 是 5.3 引入、5.4 才支持 webroot）。
+- **硬约束：IP 证书有效期只有 6 天**（160 小时），是 LE 的强制要求，不能选长的。
+  → 新增一个故障模式：续期静默失败后**一周内**站点就变浏览器警告状态。评估时务必把这个讲清楚。
+- 这台机器已勘察的前提：**LE 可达（`acme-v02.api.letsencrypt.org` HTTP 200 / 2.5s）**、
+  pip 23.3.1 可用、**AL4 仓库里没有 certbot**（要 venv + pip 装）、443 空闲、
+  80 由 iblog-web 占用且对外全开（HTTP-01 走 80）、**容器无 bind mount**（要新增 webroot 挂载）。
+- **IP 证书没有主机名 → 无法用 SNI 在同一端口分站点**。所以只能「官网 443 + 后台 :81 带 TLS」，
+  不能都挂 443。
+- Certbot 的限制：IP 证书只支持 `webroot`/`manual`/`standalone`（**nginx/apache 插件不支持**），
+  且**不负责安装**，必须自己写 nginx 配置 + `--deploy-hook` 重载。
+  `--standalone` 要临时占 80（每次续期都得停官网容器），所以选 `webroot`。
+- 另一条路是域名 + 90 天证书（容错大得多），但国内服务器用域名对外提供网站服务**要 ICP 备案**。
+  纯 IP 访问目前不需要备案（现有 http://8.138.105.59/ 就是实证）。
+- 完整方案已写进 `deploy/DEPLOY.md`「三、4. 不用域名也能上 HTTPS：IP 地址证书」。
+- **用户明确说「先不做」**，别擅自推进。
+
 ## 系统安全更新（2026-10-15 打过一次）
 
 - 登录横幅报「50 Security notice(s) / 19 Important」，实际 `dnf updateinfo list --security`

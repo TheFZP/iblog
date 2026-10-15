@@ -358,6 +358,14 @@ curl http://localhost:8080/api/portal/site
 
 ## 三、绑定域名 + HTTPS（可选）
 
+> 上 HTTPS 有两条路，先看哪条适合你：
+>
+> - **有域名**：往下走（本节的 1～3）。国内服务器用域名对外提供网站服务**需要 ICP 备案**
+>   （约 1～2 周），但证书是 90 天期、生态最成熟，官网和后台都能挂 443。
+> - **不想备案、不买域名**：直接看 **「4. 不用域名也能上 HTTPS：IP 地址证书」**。
+>   现在（2026 年起）可以让 `https://<服务器IP>/` 拿到公信证书、浏览器不报警告，
+>   **代价是证书只有 6 天有效期**，必须靠可靠的自动续期撑着。
+
 ### 1. 域名解析
 
 在阿里云 DNS 添加 A 记录指向 ECS 公网 IP：
@@ -429,6 +437,62 @@ server {
     }
 }
 ```
+
+### 4. 不用域名也能上 HTTPS：IP 地址证书（尚未实施，方案已勘察）
+
+**`https://<服务器IP>/` 现在是可以做到浏览器不报警告的**，而且不需要域名、不需要 ICP 备案。
+Let's Encrypt 从 **2026-01-15** 起正式对纯 IP 地址签发公信证书
+（[官方公告](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability)；
+[Certbot 支持说明](https://letsencrypt.org/2026/03/11/shorter-certs-certbot.html)）。
+
+**2026-10-15 在这台机器上勘察到的前提条件：**
+
+| 前提 | 结果 |
+| --- | --- |
+| 到 LE 的网络 | `acme-v02.api.letsencrypt.org` 返回 **HTTP 200，2.5s** ✓（不少国内 ECS 到 LE 不通，这台通） |
+| certbot | AL4 仓库里**没有**，需 pip 装；`pip 23.3.1` / `python3.11` 可用 |
+| 443 端口 | 空闲 |
+| 80 端口 | 由 `iblog-web` 容器占用且对外全开（HTTP-01 校验必须走 80，已具备） |
+| webroot | 容器目前**无任何 bind mount**，要新增一个挂载点放校验文件 |
+
+**必须接受的硬约束：IP 证书的有效期只有 6 天**（160 小时），这是 LE 对 IP 证书的
+**强制要求**（IP 比域名易变，所以要更频繁地验证），不能选长有效期。
+
+> ⚠️ 这带来一个**新的故障模式**：续期一旦静默失败，**一周内**站点就会变成浏览器报警告的状态 ——
+> 不是你手动改坏的，很容易想不到。相比之下域名证书是 90 天（LE 未来降到 45 天），容错空间大得多。
+
+**架构上的一个硬限制**：IP 证书里没有主机名，**无法用 SNI 在同一端口区分多个站点**。所以只能是
+「官网走 443、管理后台走 `https://<IP>:81/`」，不能两个都挂 443。
+
+**实施步骤（到时候照这个做）：**
+
+```bash
+# 1) certbot 装在独立 venv 里，不污染系统 python（AL4 仓库没有 certbot）
+python3 -m venv /opt/certbot && /opt/certbot/bin/pip install -U pip certbot
+/opt/certbot/bin/certbot --version          # 需要 >= 5.4（--ip-address 是 5.3 引入、5.4 才支持 webroot）
+
+# 2) docker-compose.yml 给 iblog-web 加挂载（校验文件目录），然后重建该容器
+#    volumes:
+#      - /opt/iblog/acme/.well-known/acme-challenge:/usr/share/nginx/html/.well-known/acme-challenge:ro
+
+# 3) 先拿 staging 证书试通（避免烧掉生产环境的失败次数配额）
+/opt/certbot/bin/certbot certonly --staging \
+  --preferred-profile shortlived --webroot --webroot-path /opt/iblog/acme \
+  --ip-address <服务器IP> --agree-tos -m <你的邮箱> --non-interactive
+# 成功后去掉 --staging 再来一次
+
+# 4) nginx 加 TLS server block（证书挂进容器），80 端口保留校验路径、其余 301 到 443
+#    ssl_certificate     /etc/letsencrypt/live/<IP>/fullchain.pem;
+#    ssl_certificate_key /etc/letsencrypt/live/<IP>/privkey.pem;
+
+# 5) 自动续期 + 重载（Certbot 不负责安装 IP 证书，必须自己给 --deploy-hook）
+#    certbot renew 由 systemd timer 或 cron 每天跑两次；deploy-hook 里 docker exec 重载 nginx
+```
+
+> 已知限制（来自 LE/Certbot 文档）：IP 证书只支持 `webroot`／`manual`／`standalone` 三种校验，
+> **`nginx` 和 `apache` 插件不支持**；Certbot **不会**帮你把证书装进 Web 服务器，
+> 必须自己写 nginx 配置和 `--deploy-hook`。
+> `--standalone` 需要临时占用 80 端口（也就是**每次续期都要停掉官网容器**），所以选 `webroot`。
 
 ---
 
