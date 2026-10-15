@@ -41,7 +41,7 @@ iblog:
     # 本地开发：库或表不存在时自动建库建表并写入种子数据（生产环境已关闭）
     auto-init: true
   jwt:
-    # 生产环境请务必通过环境变量 IBLG_JWT_SECRET 覆盖（长度需 >= 32 字符）
+    # 生产环境请务必通过环境变量 IBLOG_JWT_SECRET 覆盖（长度需 >= 32 字符）
     secret: iblog-personal-blog-jwt-secret-key-please-change-me-2026
     expire: 86400
     header: Authorization

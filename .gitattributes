@@ -1,0 +1,37 @@
+# =============================================================
+#  换行符策略
+#
+#  本机 gitconfig（D:/develop/Git/etc/gitconfig）里 core.autocrlf=true，
+#  默认会在 checkout 时把文本文件写成 CRLF —— 仓库里 gradlew.bat 和 .gitignore
+#  的工作区副本已经被写成 CRLF，就是这个原因。
+#
+#  但 deploy/ 下的 .sh / Dockerfile / compose 配置是要拿到 Linux 服务器和容器里
+#  执行的：一旦 git pull 后 server-init.sh 变成 CRLF，服务器上执行就会报
+#  "$'\r': command not found" 或 "bad interpreter"。
+#  所以这里显式锁死：该 LF 的永远 LF，该 CRLF 的永远 CRLF。
+# =============================================================
+
+# 自身也必须 LF：本文件若被写成 CRLF，下面所有通配模式都会带上 \r 而全部失效
+.gitattributes  text eol=lf
+
+# 服务器 / 容器 / Git Bash 里执行的脚本，必须 LF
+*.sh          text eol=lf
+gradlew       text eol=lf
+
+# Dockerfile 里的 RUN 是 shell 命令，CRLF 会把 \r 一起带进命令
+Dockerfile    text eol=lf
+*.Dockerfile  text eol=lf
+
+# 被容器 / 构建工具解析的文本配置
+*.conf        text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.sql         text eol=lf
+*.properties  text eol=lf
+
+# docker compose 读的 .env：CRLF 会让密码末尾多一个 \r
+.env.example  text eol=lf
+
+# Windows 批处理保持 CRLF
+*.bat         text eol=crlf
+*.cmd         text eol=crlf

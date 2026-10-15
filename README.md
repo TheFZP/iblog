@@ -258,6 +258,10 @@ cp .env.example .env      # 改数据库密码、JWT 密钥
 docker compose up -d --build
 ```
 
+> **2 核 2G 等低配服务器**：先在本地执行 `bash deploy/build-local.sh` 打好产物（jar + 前端静态文件），
+> 把 `deploy/` 整个上传到服务器，再把 `.env` 的构建模式切到 B —— 服务器只做 COPY、不编译，
+> 构建几秒完成且几乎不吃内存。详见 `deploy/DEPLOY.md`「二、4. 小内存服务器」。
+
 | 地址 | 说明 |
 | --- | --- |
 | `http://<IP>/` | 官网 |

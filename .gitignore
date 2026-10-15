@@ -13,6 +13,8 @@ node_modules/
 node_modules.*.bak/
 dist/
 dist-ssr/
+# 本地预构建产物（由 deploy/build-local.sh 生成，不要提交）
+deploy/dist/
 .vite/
 .pnpm-store/
 *.local
@@ -22,6 +24,8 @@ pnpm-debug.log*
 
 # ========= Java / Gradle =========
 .gradle/
+# build-local.sh 在默认 GRADLE_USER_HOME 不可用时的兜底缓存目录
+.gradle-local-home/
 build/
 target/
 *.class

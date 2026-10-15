@@ -8,6 +8,12 @@
 #    管理后台   http://<服务器IP>:81/
 #    后端接口   http://<服务器IP>:8080/api
 #    接口文档   http://<服务器IP>:8080/swagger-ui.html
+#
+#  构建有两种模式，由 .env 里的 *_BUILD_CONTEXT / *_DOCKERFILE / DB_INIT_DIR 切换：
+#    A) 源码构建（默认）：在服务器上编译 Gradle + pnpm，需要 4G 内存或 2G+Swap
+#    B) 本地预构建      ：本机跑 deploy/build-local.sh 产出 deploy/dist/ 后上传，
+#                        服务器只做 COPY，几秒完成且几乎不吃内存（2 核 2G 首选）
+#  两种模式只需改 .env，不用动本文件。
 # =============================================================
 
 name: iblog
@@ -25,10 +31,16 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci
       - --lower_case_table_names=1
+      # 小内存优化：默认 buffer pool + performance_schema 在 2G 机器上偏重
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=50
     volumes:
       - mysql-data:/var/lib/mysql
-      # 首次启动自动执行这里的 SQL；与后端共用同一份脚本（01-schema.sql / 02-data.sql），避免两处维护
-      - ../iblog-server/src/main/resources/db:/docker-entrypoint-initdb.d:ro
+      # 首次启动自动执行这里的 SQL。
+      # 源码模式指向 iblog-server 里的脚本（与后端启动自举共用同一份，避免两处维护）；
+      # 预构建模式指向 ./dist/db（由 build-local.sh 拷过来）。
+      - ${DB_INIT_DIR:-../iblog-server/src/main/resources/db}:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
@@ -42,7 +54,8 @@ services:
     image: redis:7-alpine
     container_name: iblog-redis
     restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    # maxmemory 给个上限防止 Redis 无节制占用；本站数据量很小（令牌 + 站点配置缓存），128M 远够
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -55,8 +68,8 @@ services:
 
   iblog-server:
     build:
-      context: ../iblog-server
-      dockerfile: Dockerfile
+      context: ${SERVER_BUILD_CONTEXT:-../iblog-server}
+      dockerfile: ${SERVER_DOCKERFILE:-Dockerfile}
     image: iblog-server:1.0.0
     container_name: iblog-server
     restart: always
@@ -75,7 +88,8 @@ services:
       REDIS_PORT: "6379"
       IBLOG_JWT_SECRET: ${IBLOG_JWT_SECRET:-iblog-personal-blog-jwt-secret-key-please-change-me-2026}
       TZ: Asia/Shanghai
-      JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m -XX:+UseG1GC}
+      # 小内存机器用 -Xmx384m + SerialGC（比 G1 更省内存）；配置够大时可换回 -Xmx512m -XX:+UseG1GC
+      JAVA_OPTS: ${JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseSerialGC}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     networks:
@@ -83,8 +97,8 @@ services:
 
   iblog-admin:
     build:
-      context: ../iblog-admin
-      dockerfile: Dockerfile
+      context: ${ADMIN_BUILD_CONTEXT:-../iblog-admin}
+      dockerfile: ${ADMIN_DOCKERFILE:-Dockerfile}
     image: iblog-admin:1.0.0
     container_name: iblog-admin
     restart: always
@@ -97,8 +111,8 @@ services:
 
   iblog-web:
     build:
-      context: ../iblog-web
-      dockerfile: Dockerfile
+      context: ${WEB_BUILD_CONTEXT:-../iblog-web}
+      dockerfile: ${WEB_DOCKERFILE:-Dockerfile}
     image: iblog-web:1.0.0
     container_name: iblog-web
     restart: always
