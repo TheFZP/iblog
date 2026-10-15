@@ -119,6 +119,34 @@
   2G 内存下两者共存会顶到上限 —— 部署前必须先决定端口和内存怎么分。
   该项目**已于 2026-10-15 部署上线**（`/opt/iblog/deploy`，模式 B 预构建）。
 
+## 管理员账号（2026-10-15 已从 admin 改为 ipeng）
+
+- 登录用户名 **`ipeng`**，密码由用户指定、**不记录在仓库与记忆里**。
+  改密码只能走数据库（前后端都没有改密码功能，用户明确说不做）。
+- ⚠️ **绝对不能删 `sys_user` 里 `username='admin'` 那一行。**
+  `DataInitializer.run()` 的判断是 `if (userService.getByUsername("admin") != null) return;`——
+  **只认 `admin` 这个字符串**。所以现在库里保留了一行 id=2、`status=0`、
+  nickname「已停用（占位）」、密码为随机不可猜哈希的**废弃占位行**，专门用来让这个判断提前 return。
+  一旦删掉（或再次改名），**下次后端重启就会自动重建 `admin` / `admin123`**，
+  而且是在日志里悄悄重建，极难排查。
+  根因修复应改 `DataInitializer`：要么「存在任意管理员就跳过」，要么把默认口令改成从
+  环境变量读（如 `IBLOG_ADMIN_PASSWORD`）。用户目前选择了不改代码。
+- 服务器上没有 BCrypt 生成工具（python3 无 `bcrypt` 模块、无 `htpasswd`；
+  **`openssl passwd -6` 是 SHA-512 crypt，不能用**）。已装 `httpd-tools`，
+  用法：`htpasswd -bnB -C 10 '' '<password>' | tr -d ':\n'`。
+- **BCrypt 版本前缀实测**：库里原本是 `$2a$`，htpasswd 生成的是 `$2y$`，
+  **Spring 的 `BCryptPasswordEncoder` 接受 2y**（改完真实登录成功验证过）。
+  形状正则：`^\$2[aby]\$[0-9]{2}\$[./0-9A-Za-z]{53}$`，长度 60。
+- 改库前的全表备份留在服务器 `/root/sys_user-backup-*.sql`。
+- 改完密码记得踢掉 Redis 旧会话：`docker exec iblog-redis redis-cli DEL iblog:login:token:<userId>`
+  （key 前缀见 `CacheKeys.LOGIN_TOKEN = "iblog:login:token:"`）。
+- 登录页曾写死 `username: 'admin'` 作为表单初值，已改成空串 —— 否则改名后打开登录页
+  会预填一个已停用的账号名，直接输密码必然报「用户名或密码错误」。
+- 另有 3 处写死的 `'admin'` **保留未改**，它们与登录无关：
+  `layout/index.vue` 的昵称兜底 `userStore.nickname || 'admin'`；
+  `views/article/edit.vue` 的 `author: 'admin'` 默认值 —— 而库里两篇文章的
+  `author` 字段确实都是 `admin`，改前端默认值反而会造成新旧文章不一致。
+
 ## 网络与安全的硬教训（都踩过）
 
 - **安全组：加规则只用「手动添加 / 快速添加」，绝不要走会替换整个列表的入口。**

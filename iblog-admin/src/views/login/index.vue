@@ -39,7 +39,7 @@ const userStore = useUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive({
-  username: 'admin',
+  username: '',
   password: ''
 })
 
