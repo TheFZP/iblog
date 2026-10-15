@@ -178,6 +178,39 @@
 - mysqldump 会往 stderr 打一条「Using a password on the command line」告警，无害但会污染
   cron 日志。既要抓退出码又要让 stdout 干净地进文件的写法是 **`2>&1 >"$tmp"`（顺序不能反）**。
 
+## SSH 访问（2026-10-15 起只允许密钥）
+
+- **服务器 SSH 密码认证已关闭，只能用公钥登录。** 配置在
+  `/etc/ssh/sshd_config.d/00-iblog-no-password.conf`：
+  `PasswordAuthentication no` / `KbdInteractiveAuthentication no` /
+  `PermitRootLogin prohibit-password` / `GSSAPIAuthentication no` / `GSSAPIKeyExchange no`。
+  实测服务器对外声明的认证方式收窄为**仅 `publickey`**。
+- **为什么放 drop-in 而不是改主配置**：`/etc/ssh/sshd_config` 第 15 行是
+  `Include /etc/ssh/sshd_config.d/*.conf`，而 sshd 对多数指令取「**首个**获得的值」，
+  所以 drop-in 先被读到 → 覆盖主配置第 133 行的 `PasswordAuthentication yes`。
+  （这台机器的 `sshd_config.d/` 里原本只有 `40-redhat-crypto-policies.conf` 和
+  `50-redhat.conf`，**都没有**设 PasswordAuthentication，所以没有云镜像覆盖的坑。）
+- **核对生效值只认 `sshd -T`**，别只看配置文件：
+  `sshd -T | grep -iE 'passwordauthentication|permitrootlogin|pubkeyauthentication'`。
+  密码被拒时的报错也会列出剩余可用方式，看到只有 `(publickey)` 就说明彻底关干净了。
+- **本机已装私钥，`ssh root@<IP>` 直接免密。换设备必须先把 `~/.ssh/id_ed25519` 拷过去**
+  （PuTTY 可用 `id_ed25519.ppk`）。
+- **万一私钥丢了**：SSH 进不去，只能用阿里云控制台的「远程连接（VNC）」或「云助手发送命令」，
+  执行服务器上留着的 `/root/ssh-restore-password.sh`（它会删掉 drop-in 并重载 sshd）。
+- 22 端口现在**可以放宽来源**了：之前为防爆破只能限单个 IP，而宽带 IP 是动态的，IP 一变就连不上；
+  现在没有密码可爆破，`0.0.0.0/0` 也无实质风险。
+
+### 可复用的安全改动模式（改 SSH 这类「错了就失联」的配置时）
+
+1. **先把自动回滚挂上，再动手**（顺序绝对不能反）。这台机器没有 `at`，用 systemd 的：
+   `systemd-run --on-active=20min --unit=<名字> <回滚脚本>`
+   回滚脚本要能自己 `sshd -t` 校验后 reload/restart，并写一条日志便于事后确认是否触发过。
+2. 改完先 `sshd -t` 校验语法，**不通过就撤销、不 reload**。
+3. 用 `systemctl reload`（不断开现有连接），不要 `restart`。
+4. **必须用「新连接」验证**：一条测密钥仍可登录，另一条 `-o PubkeyAuthentication=no
+   -o PreferredAuthentications=password` 测密码确实被拒。
+5. **两项都过了再取消定时器**，并确认回滚日志没被写入（= 从未触发）。
+
 ## 网络与安全的硬教训（都踩过）
 
 - **安全组：加规则只用「手动添加 / 快速添加」，绝不要走会替换整个列表的入口。**

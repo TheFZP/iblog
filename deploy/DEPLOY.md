@@ -543,6 +543,43 @@ docker compose logs --tail=20 iblog-server
 > 如果连 `.env` 也没了，从 `env_<日期>.bak` 恢复回去（`cp` 后 `docker compose up -d` 重建容器），
 > 否则数据库密码和 JWT 密钥对不上，整站起不来。
 
+### SSH 登录：只允许密钥（2026-10-15 已改）
+
+服务器的 SSH **密码认证已经关闭**，只能用公钥登录。配置在
+`/etc/ssh/sshd_config.d/00-iblog-no-password.conf`：
+
+```
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+GSSAPIAuthentication no
+GSSAPIKeyExchange no
+```
+
+> 放 `sshd_config.d/` 而不是改主配置，是因为 `sshd_config` 第 15 行有
+> `Include /etc/ssh/sshd_config.d/*.conf`，而 sshd 对多数指令取「**首个**获得的值」——
+> drop-in 会先被读到，从而覆盖主配置里的 `PasswordAuthentication yes`。
+> 这样也好回滚，且不会被系统升级覆盖。
+
+生效值可以随时用 **`sshd -T`** 核对（这是唯一权威，别只看配置文件）：
+
+```bash
+sshd -T | grep -iE 'passwordauthentication|permitrootlogin|pubkeyauthentication'
+# 期望：passwordauthentication no / permitrootlogin without-password
+```
+
+**几个必须知道的后果：**
+
+1. **密码从此不能用于 SSH 了。** 在你自己电脑上 `ssh root@<IP>` 会直接用 `~/.ssh/id_ed25519`
+   免密登录；如果换一台设备，必须先把私钥拷过去（或用 PuTTY 加载 `id_ed25519.ppk`）。
+2. **万一私钥丢了**，SSH 进不去 —— 只能用阿里云控制台的
+   **实例 → 远程连接（VNC）** 或 **云助手发送命令** 把
+   `/etc/ssh/sshd_config.d/00-iblog-no-password.conf` 删掉后 `systemctl reload sshd`。
+   （服务器上留了现成的回滚脚本 `/root/ssh-restore-password.sh`，在控制台里直接执行它即可。）
+3. **22 端口现在可以放心放宽来源了。** 之前为了防爆破只能限单个 IP，而宽带 IP 是动态的，
+   IP 一变就连不上；现在没有密码可爆破，安全组里 22 的授权对象改成 `0.0.0.0/0` 也不会有
+   实质风险（仍然建议只在需要时放宽）。
+
 ---
 
 ## 五、常见问题
