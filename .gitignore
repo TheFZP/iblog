@@ -9,6 +9,9 @@ Thumbs.db
 .env.local
 # 发布脚本的目标服务器配置（含服务器地址，不要提交）
 .release.env
+# 本地开发私密配置：application-local.yml 里写着线上库地址与密码。
+# 注意 *.local 匹配不到 *.local.yml（后缀是 .yml 不是 .local），必须单独写一行。
+application-local.yml
 
 # ========= Node / 前端 =========
 node_modules/
