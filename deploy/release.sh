@@ -168,18 +168,23 @@ else
 fi
 
 # ---------- 自检 ----------
+# ⚠️ 站点已全量走 HTTPS：80/81 上都挂了「HTTP → HTTPS」跳转，且管理后台容器内
+#    本身就是 443/TLS（宿主机 81 → 容器 443）。所以自检必须打 https，
+#    再用 -L 跟随跳转；否则只会看到 301/400，把真实故障掩盖过去。
 log "自检（在服务器上打本机回环，不受安全组影响）"
 check() { # $1=url  $2=期望码  $3=说明
   local code
-  code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -s -o /dev/null -m 10 -w '%{http_code}' '$1'" 2>/dev/null || echo 000)"
+  code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -skL -o /dev/null -m 10 -w '%{http_code}' '$1'" 2>/dev/null || echo 000)"
   if [ "$code" = "$2" ]; then printf '  ✓ %-42s HTTP %s（期望 %s）\n' "$3" "$code" "$2"
   else                          printf '  ✗ %-42s HTTP %s（期望 %s）\n' "$3" "$code" "$2"; fi
 }
 check 'http://127.0.0.1:8080/api/portal/site' '200' '后端 /api/portal/site'
-check 'http://127.0.0.1/'                    '200' '官网首页'
-check 'http://127.0.0.1:81/'                 '200' '管理后台首页'
-# 回归守卫：官网 80 端口不应该能碰到管理后台接口（见 iblog-web/nginx.conf）
-check 'http://127.0.0.1/api/admin/auth/login' '404' '官网 80 碰 admin 接口（应 404）'
+check 'https://127.0.0.1/'                   '200' '官网首页（https）'
+check 'https://127.0.0.1:81/'                '200' '管理后台首页（https:81）'
+# 回归守卫：官网端口不应该能碰到管理后台接口（见 iblog-web/nginx.conf）
+check 'https://127.0.0.1/api/admin/auth/login' '404' '官网碰 admin 接口（应 404）'
+# 跳转守卫：80 应当是 301 到 https，而不是把明文内容直接吐出来
+check 'http://127.0.0.1/'                    '200' '官网 80 → HTTPS 跳转（跟随）'
 
 log "容器状态"
 ssh "${SSH_OPTS[@]}" "$SERVER" "cd '$REMOTE_DIR' && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
