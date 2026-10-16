@@ -788,3 +788,64 @@ A：Docker Hub 直连的问题。先 `docker info | grep -A3 'Registry Mirrors'`
 **Q：报 `docker: 'compose' is not a docker command`**
 A：引擎装上了但 Compose 插件没装（AL4 的 moby 包不含 compose）。按「一、2」的第 2 步补插件，
 或直接 `sudo bash deploy/server-init.sh` 让它自动补。装完 `docker compose version` 应当有输出。
+
+---
+
+## 六、本地开发直连线上库
+
+个人博客只有一份数据，线上线下保持一致，这样本地调试看到的就是真实数据。
+
+线上 MySQL 的 3306 只挂在 docker 内网（宿主机没有做端口映射，公网也取不到），
+所以本地不能直连 IP，要走 SSH 隧道。
+
+### 1. 起隧道
+
+```bash
+bash deploy/db-tunnel.sh -d      # 后台起：127.0.0.1:3307 -> iblog-mysql:3306
+bash deploy/db-tunnel.sh --status
+bash deploy/db-tunnel.sh --stop
+```
+
+不带 `-d` 就是前台运行，`Ctrl+C` 断开。脚本会自动去服务器上解析 mysql 容器的内网 IP
+（compose 重建后 IP 会变，所以每次启动现查），并防止重复启动。
+
+数据库密码按 `deploy/.env` → 环境变量 `MYSQL_ROOT_PASSWORD` → ssh 读服务器 `.env`
+的顺序获取，**本地不需要存一份线上密码**。
+
+### 2. 起后端
+
+`application-dev.yml` 默认连 `127.0.0.1:3307`，但**密码不在仓库里**，
+放在 `iblog-server/src/main/resources/application-local.yml`（已被 `.gitignore` 忽略）。
+
+```bash
+java -jar iblog-server/build/libs/iblog-server.jar --spring.profiles.active=dev,local
+```
+
+或者在 IDE 的 Active profiles 里填 `dev,local`。
+
+想临时切回本地库，用环境变量覆盖即可，不用改文件：
+
+```bash
+IBLOG_DB_HOST=localhost IBLOG_DB_PORT=3306 IBLOG_DB_PASSWORD=123456 \
+  java -jar iblog-server.jar --spring.profiles.active=dev,local
+```
+
+### 3. 前后端一起
+
+```bash
+bash deploy/db-tunnel.sh -d
+# 后端（见上）
+# 前端
+cd iblog-web && node node_modules/vite/bin/vite.js    # http://localhost:5174
+```
+
+前端 dev server 已经把 `/api` 代理到 `localhost:8080`，不用额外配置。
+
+### 注意
+
+- **Redis 保持本地**。它只存登录态和站点配置缓存，连线上会让本地登录覆盖线上
+  token，把浏览器里的线上登录态挤掉。
+- 本地改数据就是**直接改线上库**，没有第二份兜底。要动结构或批量改数据前，
+  先 `bash deploy/backup-db.sh`。
+- 隧道断了后端不会立刻报错（连接池里还留着连接），要等下次取连接才会失败。
+  重启隧道后连接池会自动恢复，不用重启后端。
