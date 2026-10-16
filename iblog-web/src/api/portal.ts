@@ -95,3 +95,30 @@ export function getArchive() {
 export function getHotArticles() {
   return get<ArticleItem[]>('/portal/hot-articles')
 }
+
+/** 美食探店记录 */
+export interface FoodItem {
+  id: number
+  name: string
+  cuisine: string | null
+  dishes: string | null
+  address: string | null
+  longitude: number | null
+  latitude: number | null
+  poiId: string | null
+  avgPrice: number | null
+  rating: number | null
+  cover: string | null
+  remark: string | null
+  visitedAt: string | null
+  sort: number
+  status: number
+}
+
+export function listFoods(params?: { cuisine?: string; keyword?: string }) {
+  return get<FoodItem[]>('/portal/foods', params)
+}
+
+export function listFoodCuisines() {
+  return get<string[]>('/portal/foods/cuisines')
+}

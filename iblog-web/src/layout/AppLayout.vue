@@ -173,6 +173,7 @@ const navs = [
   { path: '/', label: '首页' },
   { path: '/list', label: '文章' },
   { path: '/archive', label: '归档' },
+  { path: '/food', label: '美食' },
   { path: '/about', label: '关于' }
 ]
 

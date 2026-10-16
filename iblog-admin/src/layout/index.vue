@@ -19,6 +19,10 @@
           <el-icon><ChatDotRound /></el-icon>
           <span>评论管理</span>
         </el-menu-item>
+        <el-menu-item index="/foods">
+          <el-icon><Food /></el-icon>
+          <span>美食管理</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>站点设置</span>
@@ -62,6 +66,7 @@ import {
   Collection,
   DataLine,
   Document,
+  Food,
   Setting
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
