@@ -139,7 +139,6 @@ CREATE TABLE IF NOT EXISTS `blog_food`
     `rating`      TINYINT       DEFAULT NULL COMMENT '推荐度 1-5 星',
     `cover`       VARCHAR(500)  DEFAULT NULL COMMENT '封面图',
     `remark`      VARCHAR(500)  DEFAULT NULL COMMENT '备注：招牌、排队情况、停车等',
-    `visited_at`  DATE          DEFAULT NULL COMMENT '最近一次去的时间',
     `sort`        INT          NOT NULL DEFAULT 0 COMMENT '排序值，越小越靠前',
     `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '1 展示 0 隐藏',
     `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',

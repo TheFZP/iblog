@@ -14,7 +14,6 @@ export interface FoodItem {
   rating: number | null
   cover: string | null
   remark: string | null
-  visitedAt: string | null
   sort: number
   status: number
 }

@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS `blog_food`
     `rating`      TINYINT       DEFAULT NULL COMMENT '推荐度 1-5 星',
     `cover`       VARCHAR(500)  DEFAULT NULL COMMENT '封面图',
     `remark`      VARCHAR(500)  DEFAULT NULL COMMENT '备注：招牌、排队情况、停车等',
-    `visited_at`  DATE          DEFAULT NULL COMMENT '最近一次去的时间',
     `sort`        INT          NOT NULL DEFAULT 0 COMMENT '排序值，越小越靠前',
     `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '1 展示 0 隐藏',
     `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
@@ -38,3 +37,17 @@ CREATE TABLE IF NOT EXISTS `blog_food`
     KEY `idx_status_sort` (`status`, `deleted`, `sort`),
     KEY `idx_cuisine` (`cuisine`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='美食探店记录';
+
+-- -------------------------------------------------------------
+-- 已有 blog_food 表的库：删掉不再使用的 visited_at 列
+-- MySQL 8.0 不支持 DROP COLUMN IF EXISTS，用 information_schema 判断后动态执行。
+-- 这段可重复执行。
+-- -------------------------------------------------------------
+SET @has_col := (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'blog_food' AND column_name = 'visited_at'
+);
+SET @sql := IF(@has_col > 0, 'ALTER TABLE `blog_food` DROP COLUMN `visited_at`', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

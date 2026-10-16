@@ -38,7 +38,6 @@ public class AdminFoodController {
                               @RequestParam(required = false) String cuisine) {
         LambdaQueryWrapper<Food> wrapper = new LambdaQueryWrapper<Food>()
                 .orderByAsc(Food::getSort)
-                .orderByDesc(Food::getVisitedAt)
                 .orderByDesc(Food::getId);
         if (StringUtils.hasText(cuisine)) {
             wrapper.eq(Food::getCuisine, cuisine.trim());

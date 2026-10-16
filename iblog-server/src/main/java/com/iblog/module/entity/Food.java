@@ -9,7 +9,6 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -57,9 +56,6 @@ public class Food {
 
     /** 备注 */
     private String remark;
-
-    /** 最近一次去的时间 */
-    private LocalDate visitedAt;
 
     /** 排序值，越小越靠前 */
     private Integer sort;

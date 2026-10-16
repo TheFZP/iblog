@@ -79,7 +79,6 @@
             <span v-if="item.rating" class="food__rating" :aria-label="`推荐度 ${item.rating} 星`">
               <span aria-hidden="true">{{ '★'.repeat(item.rating) }}</span>
             </span>
-            <span v-if="item.visitedAt" class="food__date">{{ item.visitedAt }}</span>
           </div>
         </div>
 
@@ -378,10 +377,6 @@ onMounted(async () => {
 .food__rating {
   color: var(--c-accent);
   letter-spacing: 0.08em;
-}
-
-.food__date {
-  font-variant-numeric: tabular-nums;
 }
 
 .food__actions {

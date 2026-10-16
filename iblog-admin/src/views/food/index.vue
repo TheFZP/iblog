@@ -108,15 +108,6 @@
           <el-input v-model="dialog.form.cover" placeholder="图片地址，可留空" />
         </el-form-item>
 
-        <el-form-item label="最近去过">
-          <el-date-picker
-            v-model="dialog.form.visitedAt"
-            type="date"
-            value-format="YYYY-MM-DD"
-            placeholder="选择日期"
-          />
-        </el-form-item>
-
         <el-form-item label="备注">
           <el-input
             v-model="dialog.form.remark"
@@ -168,7 +159,6 @@ function emptyForm(): Partial<FoodItem> {
     rating: 0,
     cover: '',
     remark: '',
-    visitedAt: null,
     sort: 0,
     status: 1
   }

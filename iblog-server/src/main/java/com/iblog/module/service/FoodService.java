@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
 public class FoodService extends ServiceImpl<FoodMapper, Food> {
 
     /**
-     * 官网展示用列表：只取 status=1，按 sort 升序、最近去过的排前面。
+     * 官网展示用列表：只取 status=1，按 sort 升序，同序按 id 倒序（新增的排前面）。
      *
      * @param cuisine 菜系筛选，为空表示全部
      * @param keyword 关键词，匹配店名 / 特色菜 / 地址
@@ -26,7 +26,6 @@ public class FoodService extends ServiceImpl<FoodMapper, Food> {
         LambdaQueryWrapper<Food> wrapper = new LambdaQueryWrapper<Food>()
                 .eq(Food::getStatus, 1)
                 .orderByAsc(Food::getSort)
-                .orderByDesc(Food::getVisitedAt)
                 .orderByDesc(Food::getId);
 
         if (StringUtils.hasText(cuisine)) {
