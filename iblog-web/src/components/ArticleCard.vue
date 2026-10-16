@@ -395,9 +395,17 @@ withDefaults(
   color: var(--c-brand);
 }
 
-/* 无封面时不留空洞：撑起一个纯文字版式 */
+/* 无封面时不留空洞：撑起一个纯文字版式。
+   注意必须补上封面占掉的高度（190px 图 + 16px gap），否则同一行的
+   另一张有封面卡片会把文字推到下方，两张卡的文字起点错开一整张图。 */
 .card--grid:not(:has(.cover)) .card-link {
   gap: 0;
+  padding-top: calc(190px + var(--s-4));
+}
+
+.card--grid:not(:has(.cover)) .body {
+  border-left: 2px solid var(--c-border-strong);
+  padding-left: var(--s-5);
 }
 
 /* =============================================================
@@ -462,6 +470,11 @@ withDefaults(
 
   .card--grid .cover {
     height: 168px;
+  }
+
+  /* 移动端封面高度变了，无封面卡片的补位高度要跟着改 */
+  .card--grid:not(:has(.cover)) .card-link {
+    padding-top: 0;
   }
 
   .card--grid .title {
