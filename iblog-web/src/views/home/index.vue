@@ -211,7 +211,9 @@ onMounted(() => {
 .masthead__author-text small {
   font-size: var(--t-xs);
   color: var(--c-text-faint);
-  max-width: 20ch;
+  /* 20ch 会把「一个正在认真让AI写代码的人。」截成「一个正在认真让AI写代…」，
+     刊头右上角放得下，给到 26ch 并允许两行，避免为了一个省略号丢掉半句话。 */
+  max-width: 26ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

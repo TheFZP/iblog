@@ -7,7 +7,8 @@
         <span v-else class="avatar avatar--fallback" aria-hidden="true">{{ initial }}</span>
         <div class="author-info">
           <div class="author-name">{{ site.author_name }}</div>
-          <div class="author-role">博主</div>
+          <!-- 站点作者名本身就叫「博主」时这行会变成「博主 / 博主」，等于没信息，直接省掉 -->
+          <div v-if="site.author_name !== '博主'" class="author-role">博主</div>
         </div>
       </div>
       <p v-if="site.author_intro" class="author-intro">{{ site.author_intro }}</p>
