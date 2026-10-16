@@ -3,6 +3,9 @@
 # 重定向日志会带上 .out/.err 后缀，*.log 匹配不到
 *.log.*
 logs/
+# 临时工作目录（走查脚本、数据库导出等，含线上数据，绝不提交）
+.workbuddy/
+.shots/
 .DS_Store
 Thumbs.db
 
@@ -20,6 +23,9 @@ node_modules/
 node_modules.*.bak/
 dist/
 dist-ssr/
+# 同步脚本的备份目录（含线上数据，不要提交）
+deploy/.sync-backup/
+
 # 本地预构建产物（由 deploy/build-local.sh 生成，不要提交）
 deploy/dist/
 .vite/

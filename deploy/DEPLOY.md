@@ -791,61 +791,103 @@ A：引擎装上了但 Compose 插件没装（AL4 的 moby 包不含 compose）�
 
 ---
 
-## 六、本地开发直连线上库
+## 六、本地开发与数据同步
 
-个人博客只有一份数据，线上线下保持一致，这样本地调试看到的就是真实数据。
+开发流程：**先在本地库改，确认没问题，再同步到线上。**
 
-线上 MySQL 的 3306 只挂在 docker 内网（宿主机没有做端口映射，公网也取不到），
-所以本地不能直连 IP，要走 SSH 隧道。
+本地库跑在 `localhost:3306`（`application-dev.yml` 的默认配置），线上是 docker 里的
+`iblog-mysql`。两边都是独立的库，靠 `deploy/sync-db.sh` 单向同步。
 
-### 1. 起隧道
-
-```bash
-bash deploy/db-tunnel.sh -d      # 后台起：127.0.0.1:3307 -> iblog-mysql:3306
-bash deploy/db-tunnel.sh --status
-bash deploy/db-tunnel.sh --stop
-```
-
-不带 `-d` 就是前台运行，`Ctrl+C` 断开。脚本会自动去服务器上解析 mysql 容器的内网 IP
-（compose 重建后 IP 会变，所以每次启动现查），并防止重复启动。
-
-数据库密码按 `deploy/.env` → 环境变量 `MYSQL_ROOT_PASSWORD` → ssh 读服务器 `.env`
-的顺序获取，**本地不需要存一份线上密码**。
-
-### 2. 起后端
-
-`application-dev.yml` 默认连 `127.0.0.1:3307`，但**密码不在仓库里**，
-放在 `iblog-server/src/main/resources/application-local.yml`（已被 `.gitignore` 忽略）。
+### 1. 日常开发
 
 ```bash
-java -jar iblog-server/build/libs/iblog-server.jar --spring.profiles.active=dev,local
-```
+# 后端（默认就是本地库）
+java -jar iblog-server/build/libs/iblog-server.jar --spring.profiles.active=dev
 
-或者在 IDE 的 Active profiles 里填 `dev,local`。
-
-想临时切回本地库，用环境变量覆盖即可，不用改文件：
-
-```bash
-IBLOG_DB_HOST=localhost IBLOG_DB_PORT=3306 IBLOG_DB_PASSWORD=123456 \
-  java -jar iblog-server.jar --spring.profiles.active=dev,local
-```
-
-### 3. 前后端一起
-
-```bash
-bash deploy/db-tunnel.sh -d
-# 后端（见上）
 # 前端
 cd iblog-web && node node_modules/vite/bin/vite.js    # http://localhost:5174
 ```
 
-前端 dev server 已经把 `/api` 代理到 `localhost:8080`，不用额外配置。
+前端 dev server 已把 `/api` 代理到 `localhost:8080`，不用额外配置。
+
+**Redis 保持本地**：它只存登录态和站点配置缓存，连线上会让本地登录覆盖线上 token，
+把浏览器里的线上登录态挤掉。
+
+### 2. 同步：本地 -> 线上
+
+```bash
+bash deploy/sync-db.sh --dry-run    # 先看两边差异，不写任何东西
+bash deploy/sync-db.sh              # 真正同步（会要求输入 yes 确认）
+bash deploy/sync-db.sh --yes        # 跳过确认（给脚本用）
+```
+
+脚本按顺序做这几件事：
+
+1. **先备份线上**，存到 `deploy/.sync-backup/`（保留最近 10 份）
+2. 导出本地库，校验 dump 完整性
+3. 用 SSH 管道导入线上（中转文件不落地）
+4. 逐表比对行数，不一致就报错并给出回滚命令
+
+备份和导出都会校验 `-- Dump completed` 标记 —— 中断的 dump 也会留下一个非空文件，
+只看「文件存在」不够。
+
+**回滚**：脚本会把回滚命令打在最后一行，形如：
+
+```bash
+ssh root@8.138.105.59 "docker exec -i iblog-mysql sh -c 'mysql -uroot -p\$MYSQL_ROOT_PASSWORD iblog'" \
+  < deploy/.sync-backup/remote-before-sync-<时间戳>.sql
+```
+
+### 3. 反向：线上 -> 本地
+
+换机器、或本地库搞乱了想重新拉一份：
+
+```bash
+bash deploy/sync-db.sh --pull
+```
+
+会用线上覆盖本地（**本地先自动备份**）。
+
+### 4. 用 Navicat 之类的图形客户端连本地
+
+本地库直接连 `localhost:3306`，root / 123456，不需要隧道。
+
+**要连线上库**，先起隧道再连 `127.0.0.1:3307`：
+
+```bash
+bash deploy/db-tunnel.sh -d
+bash deploy/db-tunnel.sh --status
+bash deploy/db-tunnel.sh --stop
+```
+
+连的时候注意：填了 `127.0.0.1:3307` 就**不要再勾「使用 SSH 隧道」**。
+隧道脚本本身已经是一层 SSH，客户端再加一层，会变成
+「先 SSH 到 3307、在 MySQL 端口上发 SSH 握手」，报 `Socket error: disconnected (-1)`。
+两个方案选一个：
+
+| | 主机 / 端口 | SSH 隧道勾选 |
+|---|---|---|
+| **方案 A（推荐）** | `127.0.0.1` / `3307` | **不勾** |
+| 方案 B | 容器内网 IP / `3306` | 勾上，填 `8.138.105.59:22` |
+
+方案 B 的容器 IP 会随 `docker compose up -d --build` 变化（现查：
+`ssh root@8.138.105.59 "docker inspect iblog-mysql --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'"`），
+所以推荐方案 A。
+
+**绝对不要把线上 3306 映射到公网**。线上 MySQL 的 root 是 `root@%`，
+只要网络能通就能连，安全性完全靠「3306 没有暴露」。日常查数据建议建个只读账号：
+
+```sql
+CREATE USER 'iblog_ro'@'%' IDENTIFIED BY '<强密码>';
+GRANT SELECT ON iblog.* TO 'iblog_ro'@'%';
+FLUSH PRIVILEGES;
+```
 
 ### 注意
 
-- **Redis 保持本地**。它只存登录态和站点配置缓存，连线上会让本地登录覆盖线上
-  token，把浏览器里的线上登录态挤掉。
-- 本地改数据就是**直接改线上库**，没有第二份兜底。要动结构或批量改数据前，
-  先 `bash deploy/backup-db.sh`。
+- `deploy/sync-db.sh` 是**单向覆盖**，线上那几行改动会被丢掉。往线上写之前脚本一定先备份。
+- `iblog-server/src/main/resources/application-local.yml` 已默认注释掉。它只在需要临时
+  直连线上库时放开（配合 `--spring.profiles.active=dev,local`），日常别用。
 - 隧道断了后端不会立刻报错（连接池里还留着连接），要等下次取连接才会失败。
   重启隧道后连接池会自动恢复，不用重启后端。
+

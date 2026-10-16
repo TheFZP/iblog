@@ -1,17 +1,15 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    # 个人博客，线上线下共用一份数据：本地开发直连线上库，调试时看到的就是真实数据。
+    # 本地开发连本地 MySQL。先本地改，确认没问题再同步到线上：
+    #     bash deploy/sync-db.sh            # 本地 -> 线上（会先自动备份线上）
+    #     bash deploy/sync-db.sh --dry-run  # 只看差异，不写
     #
-    # 线上 MySQL 没有把 3306 暴露到公网（只挂在 docker 内网），所以这里连的是
-    # 本机 3307 —— 由 deploy/db-tunnel.sh 建立的 SSH 隧道转发到线上的 iblog-mysql。
-    # 用之前先跑一次：bash deploy/db-tunnel.sh
-    #
-    # 想临时切回本地库：设 IBLOG_DB_HOST=localhost IBLOG_DB_PORT=3306
-    # IBLOG_DB_PASSWORD=123456
-    url: jdbc:mysql://${IBLOG_DB_HOST:127.0.0.1}:${IBLOG_DB_PORT:3307}/${IBLOG_DB_NAME:iblog}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # 想把线上数据拉下来覆盖本地：
+    #     bash deploy/sync-db.sh --pull
+    url: jdbc:mysql://${IBLOG_DB_HOST:localhost}:${IBLOG_DB_PORT:3306}/${IBLOG_DB_NAME:iblog}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${IBLOG_DB_USERNAME:root}
-    password: ${IBLOG_DB_PASSWORD:}
+    password: ${IBLOG_DB_PASSWORD:123456}
     hikari:
       minimum-idle: 2
       maximum-pool-size: 10
