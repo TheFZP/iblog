@@ -157,10 +157,10 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 13px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--iblog-border);
+  border-bottom: 1px solid var(--c-border);
 }
 
 .tags {
@@ -171,8 +171,8 @@ onMounted(async () => {
 }
 
 .tag {
-  background: #eef4fa;
-  color: var(--iblog-primary);
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
   border-radius: 12px;
   padding: 2px 12px;
   font-size: 13px;
@@ -188,7 +188,7 @@ onMounted(async () => {
   gap: 20px;
   margin-top: 34px;
   padding-top: 18px;
-  border-top: 1px solid var(--iblog-border);
+  border-top: 1px solid var(--c-border);
   font-size: 14px;
 }
 
@@ -198,13 +198,13 @@ onMounted(async () => {
 
 .neighbor .label {
   display: block;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 12px;
   margin-bottom: 4px;
 }
 
 .none {
-  color: #c0c4cc;
+  color: var(--c-text-faint);
 }
 
 .section-title {
@@ -221,20 +221,20 @@ onMounted(async () => {
 
 .comment {
   padding: 12px 14px;
-  background: #fafbfc;
-  border-radius: 6px;
+  background: var(--c-surface-sunken);
+  border-radius: var(--r);
 }
 
 .comment-head {
   display: flex;
   justify-content: space-between;
   font-size: 13px;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   margin-bottom: 6px;
 }
 
 .nickname {
-  color: var(--iblog-text);
+  color: var(--c-text);
   font-weight: 600;
 }
 
@@ -244,7 +244,7 @@ onMounted(async () => {
 }
 
 .none-tip {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 14px;
 }
 
@@ -258,7 +258,7 @@ onMounted(async () => {
 .comment-form textarea {
   width: 100%;
   padding: 9px 12px;
-  border: 1px solid var(--iblog-border);
+  border: 1px solid var(--c-border);
   border-radius: 6px;
   font-size: 14px;
   font-family: inherit;
@@ -268,7 +268,7 @@ onMounted(async () => {
 
 .comment-form input:focus,
 .comment-form textarea:focus {
-  border-color: var(--iblog-primary);
+  border-color: var(--c-brand);
 }
 
 .form-footer {
@@ -279,7 +279,7 @@ onMounted(async () => {
 }
 
 .hint {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 12px;
 }
 
@@ -287,7 +287,7 @@ onMounted(async () => {
   padding: 8px 22px;
   border: none;
   border-radius: 6px;
-  background: var(--iblog-primary);
+  background: var(--c-brand);
   color: #fff;
   cursor: pointer;
   font-size: 14px;

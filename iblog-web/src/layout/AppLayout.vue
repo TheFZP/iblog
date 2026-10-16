@@ -1,49 +1,180 @@
 <template>
   <div class="app-layout">
-    <header class="header">
+    <!-- 键盘用户跳过导航直达正文 -->
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <header class="header" :class="{ 'is-scrolled': scrolled, 'is-open': menuOpen }">
       <div class="layout header-inner">
-        <router-link to="/" class="brand">
-          <span class="brand-name">{{ site.site_title || 'iblog' }}</span>
-          <span class="brand-sub">{{ site.site_subtitle || '记录技术与生活' }}</span>
+        <router-link to="/" class="brand" aria-label="返回首页">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 19.5V5.2A1.2 1.2 0 0 1 5.2 4h9.3L20 9.5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z" />
+              <path d="M14.4 4v5.6H20" />
+              <path d="M7.8 13.6h8.4M7.8 17h5.6" />
+            </svg>
+          </span>
+          <span class="brand-text">
+            <span class="brand-name">{{ site.site_title || 'iblog' }}</span>
+            <span class="brand-sub">{{ site.site_subtitle || '记录技术与生活' }}</span>
+          </span>
         </router-link>
 
-        <nav class="nav">
-          <router-link to="/" :class="{ active: isActive('/') }">首页</router-link>
-          <router-link to="/archive" :class="{ active: isActive('/archive') }">归档</router-link>
-          <router-link to="/about" :class="{ active: isActive('/about') }">关于</router-link>
+        <nav class="nav" aria-label="主导航">
+          <router-link
+            v-for="item in navs"
+            :key="item.path"
+            :to="item.path"
+            class="nav-link"
+            :class="{ active: isActive(item.path) }"
+          >
+            {{ item.label }}
+          </router-link>
         </nav>
 
-        <form class="search" @submit.prevent="onSearch">
-          <input v-model="keyword" type="text" placeholder="搜索文章标题…" />
-          <button type="submit">搜索</button>
-        </form>
+        <div class="actions">
+          <form class="search" role="search" @submit.prevent="onSearch">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.6-3.6" />
+            </svg>
+            <input
+              v-model="keyword"
+              type="search"
+              placeholder="搜索文章"
+              aria-label="搜索文章"
+              @keydown.esc="keyword = ''"
+            />
+          </form>
+
+          <button
+            class="icon-btn"
+            type="button"
+            :aria-label="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
+            @click="toggleTheme"
+          >
+            <svg v-if="theme === 'dark'" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2" />
+              <path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.6 14.4A8.7 8.7 0 0 1 9.6 3.4a8.6 8.6 0 1 0 11 11Z" />
+            </svg>
+          </button>
+
+          <button
+            class="icon-btn menu-btn"
+            type="button"
+            :aria-expanded="menuOpen"
+            aria-controls="mobile-nav"
+            aria-label="打开菜单"
+            @click="menuOpen = !menuOpen"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path v-if="!menuOpen" d="M4 7.5h16M4 12h16M4 16.5h16" />
+              <path v-else d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
       </div>
+
+      <!-- 窄屏下拉导航 -->
+      <transition name="drop">
+        <nav v-if="menuOpen" id="mobile-nav" class="mobile-nav" aria-label="移动端导航">
+          <div class="layout">
+            <router-link
+              v-for="item in navs"
+              :key="item.path"
+              :to="item.path"
+              :class="{ active: isActive(item.path) }"
+              @click="menuOpen = false"
+            >
+              {{ item.label }}
+            </router-link>
+            <form class="mobile-search" role="search" @submit.prevent="onSearch">
+              <input v-model="keyword" type="search" placeholder="搜索文章" aria-label="搜索文章" />
+            </form>
+          </div>
+        </nav>
+      </transition>
     </header>
 
-    <main class="main">
-      <router-view />
+    <main id="main" class="main">
+      <router-view v-slot="{ Component, route: r }">
+        <transition name="page" mode="out-in">
+          <component :is="Component" :key="r.path" />
+        </transition>
+      </router-view>
     </main>
 
     <footer class="footer">
-      <div class="layout">
-        <p>© {{ year }} {{ site.site_title || 'iblog' }} · {{ site.site_footer || 'Powered by iblog' }}</p>
-        <p v-if="site.site_icp" class="icp">{{ site.site_icp }}</p>
+      <div class="layout footer-inner">
+        <div class="footer-brand-col">
+          <span class="footer-brand">{{ site.site_title || 'iblog' }}</span>
+          <p v-if="site.site_description" class="footer-desc">{{ site.site_description }}</p>
+        </div>
+
+        <nav class="footer-links" aria-label="页脚导航">
+          <router-link v-for="item in navs" :key="item.path" :to="item.path">{{ item.label }}</router-link>
+        </nav>
+
+        <div class="footer-meta">
+          <a v-if="site.github_url" :href="site.github_url" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 19c-4.3 1.4-4.3-2.2-6-2.6m12 5.6v-3.6c0-1 .1-1.4-.5-2 2.3-.3 4.5-1.2 4.5-5a3.9 3.9 0 0 0-1.1-2.7 3.6 3.6 0 0 0-.1-2.7s-.9-.3-2.9 1.1a10 10 0 0 0-5.2 0C7.7 5.5 6.8 5.8 6.8 5.8a3.6 3.6 0 0 0-.1 2.7A3.9 3.9 0 0 0 5.6 11.2c0 3.8 2.2 4.7 4.5 5-.6.6-.6 1.2-.5 2v3.6" />
+            </svg>
+            GitHub
+          </a>
+          <a v-if="site.email" :href="`mailto:${site.email}`">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m3.5 6.5 8.5 6 8.5-6" />
+            </svg>
+            邮箱
+          </a>
+          <a v-if="site.site_icp" href="https://beian.miit.gov.cn" target="_blank" rel="noopener">
+            {{ site.site_icp }}
+          </a>
+        </div>
+      </div>
+
+      <div class="layout footer-bottom">
+        <span>{{ site.site_footer || 'Powered by iblog' }}</span>
+        <span>© {{ year }} {{ site.author_name || site.site_title || 'iblog' }}</span>
       </div>
     </footer>
+
+    <!-- 回到顶部：滚动一屏后出现 -->
+    <transition name="fade">
+      <button v-if="scrolled" class="to-top" type="button" aria-label="回到顶部" @click="toTop">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
+        </svg>
+      </button>
+    </transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSite } from '@/composables/useSite'
+import { useSite, useTheme, initTheme } from '@/composables/useSite'
 
 const route = useRoute()
 const router = useRouter()
 const { site, loadSite } = useSite()
+const { theme, toggleTheme } = useTheme()
 
 const keyword = ref('')
-const year = computed(() => new Date().getFullYear())
+const menuOpen = ref(false)
+const scrolled = ref(false)
+const year = new Date().getFullYear()
+
+const navs = [
+  { path: '/', label: '首页' },
+  { path: '/list', label: '文章' },
+  { path: '/archive', label: '归档' },
+  { path: '/about', label: '关于' }
+]
 
 function isActive(path: string) {
   if (path === '/') {
@@ -53,10 +184,53 @@ function isActive(path: string) {
 }
 
 function onSearch() {
-  router.push({ path: '/list', query: { keyword: keyword.value || undefined } })
+  const k = keyword.value.trim()
+  menuOpen.value = false
+  router.push({ path: '/list', query: k ? { keyword: k } : {} })
 }
 
-onMounted(loadSite)
+/** 滚动用一个 rAF 节流，避免每次 scroll 都触发响应式更新 */
+let ticking = false
+function onScroll() {
+  if (ticking) {
+    return
+  }
+  ticking = true
+  requestAnimationFrame(() => {
+    scrolled.value = window.scrollY > 12
+    ticking = false
+  })
+}
+
+function toTop() {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
+}
+
+/** 路由变化时收起移动端菜单，避免“菜单还开着但页面已经跳走” */
+watch(
+  () => route.fullPath,
+  () => {
+    menuOpen.value = false
+  }
+)
+
+/** 移动端菜单展开时锁住背景滚动 */
+watch(menuOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+onMounted(() => {
+  initTheme()
+  loadSite()
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+  document.body.style.overflow = ''
+})
 </script>
 
 <style scoped>
@@ -66,106 +240,451 @@ onMounted(loadSite)
   min-height: 100vh;
 }
 
+/* ---------- 顶栏 ---------- */
 .header {
-  background: #fff;
-  border-bottom: 1px solid var(--iblog-border);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 50;
+  background: color-mix(in srgb, var(--c-bg) 80%, transparent);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease);
+}
+
+/* 顶部时是「浮动」的，滚动后才出现发丝线，形成边界感 */
+.header.is-scrolled {
+  border-bottom-color: var(--c-border);
+  background: color-mix(in srgb, var(--c-bg) 93%, transparent);
 }
 
 .header-inner {
-  height: 68px;
+  height: var(--header-h);
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: var(--s-8);
 }
 
 .brand {
   display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--c-text);
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--c-brand);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.brand-mark svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.brand-text {
+  display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.16;
 }
 
 .brand-name {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--iblog-text);
+  font-size: var(--t-md);
+  font-weight: 680;
+  letter-spacing: -0.02em;
 }
 
 .brand-sub {
-  font-size: 12px;
-  color: var(--iblog-muted);
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+  letter-spacing: 0.01em;
 }
 
+/* ---------- 主导航 ---------- */
 .nav {
   display: flex;
-  gap: 22px;
+  gap: 2px;
+  margin-left: var(--s-4);
 }
 
-.nav a {
-  color: var(--iblog-text);
-  font-size: 15px;
-  padding: 4px 0;
-  border-bottom: 2px solid transparent;
+.nav-link {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  color: var(--c-text-secondary);
+  font-size: 14.5px;
+  font-weight: 500;
+  transition: color 0.15s var(--ease), background-color 0.15s var(--ease);
 }
 
-.nav a.active {
-  color: var(--iblog-primary);
-  border-bottom-color: var(--iblog-primary);
+.nav-link:hover {
+  color: var(--c-text);
+  background: var(--c-surface-sunken);
 }
 
-.search {
+.nav-link.active {
+  color: var(--c-text);
+  font-weight: 620;
+}
+
+/* 当前页用一小段短横标记，比整条下划线轻 */
+.nav-link.active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--c-brand);
+}
+
+.actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
+}
+
+/* ---------- 搜索 ---------- */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--c-text-faint);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
 }
 
 .search input {
-  width: 200px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--iblog-border);
-  border-radius: 17px;
+  width: 180px;
+  height: 36px;
+  padding: 0 12px 0 33px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-size: var(--t-sm);
   outline: none;
-  font-size: 14px;
+  transition: border-color 0.15s var(--ease), width 0.28s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.search input::placeholder {
+  color: var(--c-text-faint);
 }
 
 .search input:focus {
-  border-color: var(--iblog-primary);
+  width: 230px;
+  border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px var(--c-brand-ring);
 }
 
-.search button {
-  height: 34px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 17px;
-  background: var(--iblog-primary);
-  color: #fff;
+/* 去掉 search 类型自带的清除按钮，样式不受控 */
+.search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-muted);
   cursor: pointer;
-  font-size: 14px;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
+.icon-btn:hover {
+  background: var(--c-surface-sunken);
+  color: var(--c-text);
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.menu-btn {
+  display: none;
+}
+
+/* ---------- 移动端导航 ---------- */
+.mobile-nav {
+  border-top: 1px solid var(--c-border);
+  background: var(--c-surface);
+  padding: 10px 0 var(--s-4);
+}
+
+.mobile-nav .layout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-nav a {
+  padding: 12px;
+  border-radius: var(--r-sm);
+  color: var(--c-text-secondary);
+  font-size: var(--t-md);
+}
+
+.mobile-nav a:hover,
+.mobile-nav a.active {
+  background: var(--c-surface-sunken);
+  color: var(--c-text);
+}
+
+.mobile-nav a.active {
+  font-weight: 620;
+}
+
+.mobile-search {
+  margin-top: var(--s-2);
+}
+
+.mobile-search input {
+  width: 100%;
+  height: 44px;
+  padding: 0 var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-surface-sunken);
+  color: var(--c-text);
+  outline: none;
+}
+
+.drop-enter-active,
+.drop-leave-active {
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+
+.drop-enter-from,
+.drop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* ---------- 主区 ---------- */
 .main {
   flex: 1;
-  padding: 28px 0 48px;
+  padding: var(--s-12) 0 var(--s-20);
 }
 
+.page-enter-active {
+  transition: opacity 0.26s var(--ease), transform 0.26s var(--ease-out);
+}
+
+.page-leave-active {
+  transition: opacity 0.12s var(--ease);
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-leave-to {
+  opacity: 0;
+}
+
+/* ---------- 页脚 ---------- */
 .footer {
-  background: #fff;
-  border-top: 1px solid var(--iblog-border);
-  padding: 22px 0;
-  text-align: center;
-  color: var(--iblog-muted);
-  font-size: 13px;
+  border-top: 1px solid var(--c-border);
+  padding: var(--s-10) 0 var(--s-6);
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
 }
 
-.footer p {
-  margin: 4px 0;
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-6) var(--s-12);
+  justify-content: space-between;
 }
 
-.icp {
-  font-size: 12px;
+.footer-brand-col {
+  max-width: 320px;
+}
+
+.footer-brand {
+  display: block;
+  color: var(--c-text);
+  font-weight: 660;
+  font-size: var(--t-base);
+  letter-spacing: -0.015em;
+}
+
+.footer-desc {
+  margin-top: 6px;
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+  line-height: 1.6;
+}
+
+.footer-links {
+  display: flex;
+  gap: var(--s-5);
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.footer-links a {
+  color: var(--c-text-muted);
+}
+
+.footer-links a:hover {
+  color: var(--c-brand);
+}
+
+.footer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-items: flex-start;
+}
+
+.footer-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--c-text-muted);
+}
+
+.footer-meta a:hover {
+  color: var(--c-brand);
+}
+
+.footer-meta svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.footer-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-6);
+  justify-content: space-between;
+  margin-top: var(--s-8);
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--c-border);
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+}
+
+/* ---------- 回到顶部 ---------- */
+.to-top {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: var(--c-surface);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  box-shadow: var(--e);
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease),
+    transform 0.15s var(--ease);
+}
+
+.to-top:hover {
+  color: var(--c-brand);
+  border-color: var(--c-brand);
+  transform: translateY(-2px);
+}
+
+.to-top svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.94);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  .nav,
+  .search {
+    display: none;
+  }
+
+  .menu-btn {
+    display: grid;
+  }
+
+  .header-inner {
+    gap: var(--s-4);
+  }
+
+  .main {
+    padding: var(--s-8) 0 var(--s-12);
+  }
+
+  .footer-inner {
+    gap: var(--s-6);
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-sub {
+    display: none;
+  }
+
+  .to-top {
+    right: 16px;
+    bottom: 16px;
+  }
 }
 </style>

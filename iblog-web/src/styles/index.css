@@ -1,118 +1,728 @@
+/* =============================================================
+ *  iblog 官网 —— 设计系统 (Design Tokens + 基础样式)
+ *
+ *  设计取向：编辑式（editorial / magazine）。
+ *    · 版式是主角：字阶拉得开，靠字号与字重建立层级，而不是靠卡片边框
+ *    · 栅格不对称：主栏 + 窄侧栏，首屏用「头条 + 次条」制造主次
+ *    · 颜色克制：只有一个品牌色（墨青），且只出现在可交互的地方
+ *    · 深浅两套不是互反，各自单独配过对比度
+ *
+ *  命名：--c-* 颜色 · --s-* 间距 · --t-* 字号 · --r-* 圆角 · --e-* 阴影
+ * ============================================================= */
+
+/* -------------------------------------------------------------
+ *  1. 令牌 —— 颜色
+ *     浅色不是纯白，是带一点米黄的纸感（#fcfcfa），
+ *     长时间阅读比纯白舒服，也更贴合「编辑式」的气质。
+ * ------------------------------------------------------------- */
 :root {
-  --iblog-primary: #2f6fb3;
-  --iblog-text: #2c3e50;
-  --iblog-muted: #8492a6;
-  --iblog-border: #ebeef5;
-  --iblog-bg: #f7f8fa;
+  /* 品牌：墨青。比旧版 #3b5bdb 更沉、更少「科技蓝」味 */
+  --c-brand: #0f5257;
+  --c-brand-hover: #0b3f43;
+  --c-brand-soft: #e6f0f0;
+  --c-brand-softer: #f2f7f7;
+  --c-brand-ring: rgba(15, 82, 87, 0.18);
+
+  /* 纸与墨 */
+  --c-bg: #fcfcfa;
+  --c-surface: #ffffff;
+  --c-surface-sunken: #f6f6f3;
+  --c-border: #e7e7e2;
+  --c-border-strong: #d5d5ce;
+
+  --c-text: #16181a;
+  --c-text-secondary: #45484c;
+  --c-text-muted: #74777c;
+  --c-text-faint: #a1a4a8;
+
+  /* 语义色 */
+  --c-accent: #b45309;
+  --c-success: #15803d;
+
+  /* 遮罩 */
+  --c-overlay: rgba(22, 24, 26, 0.44);
+
+  color-scheme: light;
 }
 
-* {
+/* -------------------------------------------------------------
+ *  2. 令牌 —— 深色
+ *     背景带一点冷蓝（#101315），表面比背景亮一档形成层。
+ *     正文用 #e8e8e4 而非纯白 —— 纯白在暗底上会「发光」。
+ * ------------------------------------------------------------- */
+:root[data-theme='dark'] {
+  --c-brand: #6fd3cf;
+  --c-brand-hover: #8fe0dc;
+  --c-brand-soft: #10333a;
+  --c-brand-softer: #0d262b;
+  --c-brand-ring: rgba(111, 211, 207, 0.22);
+
+  --c-bg: #101315;
+  --c-surface: #171b1e;
+  --c-surface-sunken: #13171a;
+  --c-border: #262b2f;
+  --c-border-strong: #363d42;
+
+  --c-text: #e8e8e4;
+  --c-text-secondary: #b6babe;
+  --c-text-muted: #8d9296;
+  --c-text-faint: #676c71;
+
+  --c-accent: #f0a05a;
+  --c-success: #5cc98a;
+
+  --c-overlay: rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+/* -------------------------------------------------------------
+ *  3. 令牌 —— 排版 / 尺度 / 动效
+ * ------------------------------------------------------------- */
+:root {
+  --f-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --f-serif: 'Noto Serif SC', 'Songti SC', 'Source Han Serif SC', Georgia, 'Times New Roman', serif;
+  --f-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, Monaco, monospace;
+
+  /* 字阶：1.25 左右的比例，拉得开才有编辑式的层级感 */
+  --t-xs: 11.5px;
+  --t-sm: 13px;
+  --t-base: 15px;
+  --t-md: 16px;
+  --t-lg: 18px;
+  --t-xl: 22px;
+  --t-2xl: 28px;
+  --t-3xl: 36px;
+  --t-4xl: 46px;
+
+  /* 间距：4 / 8 节奏 */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+
+  --r-sm: 5px;
+  --r: 8px;
+  --r-lg: 14px;
+  --r-full: 999px;
+
+  /* 阴影：极克制。编辑式设计靠留白分层，不靠投影 */
+  --e-sm: 0 1px 2px rgba(20, 22, 24, 0.04);
+  --e: 0 1px 3px rgba(20, 22, 24, 0.05), 0 6px 16px -8px rgba(20, 22, 24, 0.08);
+  --e-lg: 0 2px 6px rgba(20, 22, 24, 0.05), 0 18px 40px -16px rgba(20, 22, 24, 0.14);
+
+  --container: 1180px;
+  --container-narrow: 720px;
+  --header-h: 62px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme='dark'] {
+  --e-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --e: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 16px -8px rgba(0, 0, 0, 0.45);
+  --e-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 18px 40px -16px rgba(0, 0, 0, 0.6);
+}
+
+/* -------------------------------------------------------------
+ *  4. 重置与基础
+ * ------------------------------------------------------------- */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-html,
-body,
-#app {
-  margin: 0;
-  padding: 0;
-  min-height: 100%;
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  /* 锚点跳转躲开吸顶导航 */
+  scroll-padding-top: calc(var(--header-h) + 24px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
-  font-size: 15px;
-  line-height: 1.75;
-  color: var(--iblog-text);
-  background-color: var(--iblog-bg);
+  margin: 0;
+  min-height: 100vh;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--f-sans);
+  font-size: var(--t-base);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'kern' 1;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-weight: 640;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+  color: var(--c-text);
+}
+
+p {
+  margin: 0;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
 }
 
 a {
-  color: var(--iblog-primary);
+  color: var(--c-brand);
   text-decoration: none;
+  transition: color 0.15s var(--ease);
 }
 
 a:hover {
-  color: #1c5187;
+  color: var(--c-brand-hover);
 }
 
+button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--c-brand);
+  color: #fff;
+}
+
+/* 键盘可达性：只在键盘导航时出现焦点环 */
+:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--c-border-strong);
+  border-radius: var(--r-full);
+  border: 3px solid var(--c-bg);
+}
+
+/* 阻止弹性滚动时的背景穿透 */
+body {
+  overscroll-behavior-y: none;
+}
+
+/* -------------------------------------------------------------
+ *  5. 布局工具
+ * ------------------------------------------------------------- */
 .layout {
-  max-width: 1080px;
+  width: 100%;
+  max-width: var(--container);
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 var(--s-6);
 }
 
-.card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid var(--iblog-border);
+.layout--mid {
+  max-width: 900px;
 }
 
-/* ---------- Markdown 正文 ---------- */
+.layout--narrow {
+  max-width: var(--container-narrow);
+}
+
+/* 主内容 + 侧栏；主栏必须 minmax(0,1fr)，否则长代码块会把栅格撑破 */
+.page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--s-16);
+  align-items: start;
+}
+
+@media (max-width: 1040px) {
+  .page-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-10);
+  }
+}
+
+.surface {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+}
+
+/* 章节标签：小字号大写 + 一条延伸的细线，编辑式排版的基本元件 */
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-6);
+  font-size: var(--t-xs);
+  font-weight: 640;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-text-faint);
+}
+
+.section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--c-border);
+}
+
+/* 标签 / 徽标 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  background: var(--c-surface-sunken);
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+a.chip:hover {
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+}
+
+.chip--brand {
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+}
+
+/* 按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 var(--s-5);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: var(--c-brand);
+  color: #fff;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease),
+    transform 0.1s var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--c-brand-hover);
+  color: #fff;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--c-border-strong);
+  color: var(--c-text-secondary);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--c-surface-sunken);
+  border-color: var(--c-text-faint);
+  color: var(--c-text);
+}
+
+/* 空状态 / 错误态 / 加载态 */
+.empty-state {
+  padding: var(--s-16) var(--s-6);
+  text-align: center;
+  color: var(--c-text-muted);
+  font-size: var(--t-base);
+}
+
+.empty-state__icon {
+  display: block;
+  margin: 0 auto var(--s-4);
+  width: 32px;
+  height: 32px;
+  stroke: var(--c-text-faint);
+  fill: none;
+  stroke-width: 1.5;
+}
+
+/* 骨架屏：加载时占住版位，避免内容跳变（CLS） */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--c-surface-sunken);
+  border-radius: var(--r-sm);
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(127, 127, 127, 0.09), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* 仅供屏幕阅读器 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 跳转到主内容：键盘用户的第一个可用锚点 */
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  z-index: 100;
+  transform: translate(-50%, -200%);
+  padding: 10px 18px;
+  border-radius: var(--r);
+  background: var(--c-brand);
+  color: #fff;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  transition: transform 0.18s var(--ease);
+}
+
+.skip-link:focus {
+  transform: translate(-50%, 0);
+  color: #fff;
+}
+
+/* 内容淡入：路由切换用，克制不喧宾夺主 */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-up {
+  animation: fade-up 0.42s var(--ease-out) both;
+}
+
+/* -------------------------------------------------------------
+ *  6. 分页器（首页 / 列表页共用，故提到全局）
+ * ------------------------------------------------------------- */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+  margin-top: var(--s-10);
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--c-border);
+}
+
+.pager__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-surface);
+  color: var(--c-text-secondary);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease),
+    background-color 0.15s var(--ease);
+}
+
+.pager__btn:hover:not(:disabled) {
+  border-color: var(--c-brand);
+  color: var(--c-brand);
+}
+
+.pager__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pager__btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pager__status {
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pager__status strong {
+  color: var(--c-text);
+  font-weight: 620;
+}
+
+/* =============================================================
+ *  7. Markdown 正文排版
+ *     博客最该讲究的地方：字号、行高、段距、代码块、表格。
+ *     中文衬线在 17px / 1.9 这个组合下阅读最舒服。
+ * ============================================================= */
 .markdown-body {
+  font-family: var(--f-serif);
+  font-size: 17px;
+  line-height: 1.9;
+  color: var(--c-text-secondary);
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-body > *:last-child {
+  margin-bottom: 0;
 }
 
 .markdown-body h1,
 .markdown-body h2,
-.markdown-body h3 {
-  margin: 1.6em 0 0.6em;
-  line-height: 1.4;
+.markdown-body h3,
+.markdown-body h4 {
+  font-family: var(--f-sans);
+  color: var(--c-text);
+  margin: 2em 0 0.7em;
+  scroll-margin-top: calc(var(--header-h) + 28px);
+}
+
+.markdown-body h1 {
+  font-size: var(--t-2xl);
 }
 
 .markdown-body h2 {
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--iblog-border);
+  font-size: var(--t-xl);
+  padding-bottom: 0.36em;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.markdown-body h3 {
+  font-size: var(--t-lg);
+}
+
+.markdown-body h4 {
+  font-size: var(--t-md);
 }
 
 .markdown-body p {
-  margin: 0.9em 0;
+  margin: 1.2em 0;
 }
 
-.markdown-body pre {
-  background: #f6f8fa;
-  padding: 14px 16px;
-  border-radius: 6px;
-  overflow-x: auto;
+.markdown-body a {
+  color: var(--c-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--c-brand) 38%, transparent);
 }
 
-.markdown-body code {
-  background: #f2f3f5;
-  padding: 2px 5px;
-  border-radius: 4px;
-  font-size: 0.9em;
-  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+.markdown-body a:hover {
+  text-decoration-color: var(--c-brand);
 }
 
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
-}
-
-.markdown-body blockquote {
-  margin: 1em 0;
-  padding: 2px 16px;
-  color: #6a737d;
-  border-left: 4px solid #dfe2e5;
-  background: #fafbfc;
-}
-
-.markdown-body img {
-  max-width: 100%;
+.markdown-body strong {
+  color: var(--c-text);
+  font-weight: 640;
 }
 
 .markdown-body ul,
 .markdown-body ol {
-  padding-left: 1.6em;
+  margin: 1.2em 0;
+  padding-left: 1.5em;
 }
 
+.markdown-body li {
+  margin: 0.42em 0;
+}
+
+.markdown-body li::marker {
+  color: var(--c-text-faint);
+}
+
+/* 引用：编辑式排版里的 pull quote，给足呼吸感 */
+.markdown-body blockquote {
+  margin: 1.8em 0;
+  padding: 0.1em 0 0.1em 1.3em;
+  border-left: 3px solid var(--c-brand);
+  color: var(--c-text-muted);
+  font-style: italic;
+}
+
+.markdown-body blockquote p {
+  margin: 0.6em 0;
+}
+
+.markdown-body hr {
+  margin: 2.6em 0;
+  border: 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.markdown-body img {
+  margin: 1.8em auto;
+  border-radius: var(--r);
+  border: 1px solid var(--c-border);
+}
+
+/* 行内代码 */
+.markdown-body code {
+  font-family: var(--f-mono);
+  font-size: 0.86em;
+  padding: 0.16em 0.42em;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-sunken);
+  border: 1px solid var(--c-border);
+  color: var(--c-text);
+}
+
+/* 代码块 */
+.markdown-body pre {
+  margin: 1.6em 0;
+  padding: var(--s-4) var(--s-5);
+  border-radius: var(--r);
+  background: var(--c-surface-sunken);
+  border: 1px solid var(--c-border);
+  overflow-x: auto;
+  line-height: 1.66;
+}
+
+.markdown-body pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13.5px;
+  color: var(--c-text-secondary);
+}
+
+:root[data-theme='dark'] .markdown-body pre {
+  background: #0c0f11;
+}
+
+/* 表格：窄屏横向滚动 */
 .markdown-body table {
-  border-collapse: collapse;
+  display: block;
   width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 1.6em 0;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
 }
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid var(--iblog-border);
-  padding: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--c-border);
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--c-surface-sunken);
+  font-weight: 620;
+  color: var(--c-text);
+}
+
+/* -------------------------------------------------------------
+ *  8. 响应式收口
+ * ------------------------------------------------------------- */
+@media (max-width: 640px) {
+  :root {
+    --t-3xl: 30px;
+    --t-4xl: 34px;
+  }
+
+  .layout {
+    padding: 0 var(--s-5);
+  }
+
+  .markdown-body {
+    font-size: 16px;
+    line-height: 1.85;
+  }
 }

@@ -119,14 +119,14 @@ onMounted(load)
 
 .head p {
   margin: 6px 0 0;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 14px;
 }
 
 .empty {
   padding: 40px;
   text-align: center;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
 }
 
 .pager {
@@ -135,17 +135,17 @@ onMounted(load)
   justify-content: center;
   gap: 16px;
   margin-top: 20px;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 14px;
 }
 
 .pager button {
   padding: 6px 16px;
-  border: 1px solid var(--iblog-border);
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-surface);
   cursor: pointer;
-  color: var(--iblog-text);
+  color: var(--c-text);
 }
 
 .pager button:disabled {

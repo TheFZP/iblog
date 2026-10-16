@@ -58,7 +58,7 @@ h1 {
 }
 
 .desc {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   margin: 0 0 22px;
 }
 
@@ -67,8 +67,8 @@ h1 {
   gap: 16px;
   align-items: center;
   padding: 16px 0;
-  border-top: 1px solid var(--iblog-border);
-  border-bottom: 1px solid var(--iblog-border);
+  border-top: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border);
 }
 
 .avatar {
@@ -84,7 +84,7 @@ h1 {
 }
 
 .intro {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 14px;
 }
 
@@ -102,7 +102,7 @@ h1 {
 .info span {
   display: inline-block;
   width: 70px;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
 }
 
 .stack {
@@ -117,6 +117,6 @@ h1 {
 .stack ul {
   margin: 0;
   padding-left: 1.4em;
-  color: #4a5a6a;
+  color: var(--c-text-secondary);
 }
 </style>

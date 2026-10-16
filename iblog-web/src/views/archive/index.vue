@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="layout page-grid">
     <div class="main-col">
       <div class="head card">
@@ -60,7 +60,7 @@ onMounted(async () => {
 
 .head p {
   margin: 6px 0 0;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 14px;
 }
 
@@ -76,7 +76,7 @@ onMounted(async () => {
 }
 
 .count {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   font-size: 13px;
   font-weight: 400;
 }
@@ -95,7 +95,7 @@ onMounted(async () => {
 }
 
 .date {
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
   flex: 0 0 88px;
   font-variant-numeric: tabular-nums;
 }
@@ -103,6 +103,6 @@ onMounted(async () => {
 .empty {
   padding: 40px;
   text-align: center;
-  color: var(--iblog-muted);
+  color: var(--c-text-muted);
 }
 </style>
