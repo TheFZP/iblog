@@ -1,5 +1,7 @@
 # ========= 通用 =========
 *.log
+# 重定向日志会带上 .out/.err 后缀，*.log 匹配不到
+*.log.*
 logs/
 .DS_Store
 Thumbs.db
