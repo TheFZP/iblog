@@ -171,12 +171,44 @@ fi
 # ⚠️ 站点已全量走 HTTPS：80/81 上都挂了「HTTP → HTTPS」跳转，且管理后台容器内
 #    本身就是 443/TLS（宿主机 81 → 容器 443）。所以自检必须打 https，
 #    再用 -L 跟随跳转；否则只会看到 301/400，把真实故障掩盖过去。
+
+# 后端是 Spring Boot，冷启动要十几到二十几秒（本次实测 20.9s）。容器刚 Started
+# 时端口还没起来，立刻自检会得到 HTTP 000 —— 那是启动中的正常现象，不是故障。
+# 但把它当成故障报出来的代价很大：红叉会让人以为发布失败，进而重跑一遍发布，
+# 而真正的故障反而淹没在假红里，久了就没人看自检结果了。
+# 所以先阻塞等后端把 /api/portal/site 打通用，再跑下面的检查。
+if need server; then
+  log "等待后端就绪（最多 90 秒）"
+  ready=0
+  for i in $(seq 1 45); do
+    code="$(ssh "${SSH_OPTS[@]}" "$SERVER" \
+      "curl -sk -o /dev/null -m 5 -w '%{http_code}' 'http://127.0.0.1:8080/api/portal/site'" \
+      2>/dev/null || echo 000)"
+    if [ "$code" = "200" ]; then
+      printf '  ✓ 后端就绪（第 %s 次探测，用时约 %s 秒）\n' "$i" "$((i * 2))"
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$ready" -eq 0 ]; then
+    warn "等了 90 秒后端仍没起来（最后返回 $code）—— 下面自检会失败，先看日志："
+    ssh "${SSH_OPTS[@]}" "$SERVER" "cd '$REMOTE_DIR' && docker compose logs --tail=40 iblog-server" || true
+  fi
+fi
+
 log "自检（在服务器上打本机回环，不受安全组影响）"
+FAILED=0
 check() { # $1=url  $2=期望码  $3=说明
   local code
-  code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -skL -o /dev/null -m 10 -w '%{http_code}' '$1'" 2>/dev/null || echo 000)"
+  # 前端容器冷启动时 nginx 也有一两秒不可达，给 3 次机会，避免把启动延迟报成故障。
+  for attempt in 1 2 3; do
+    code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -skL -o /dev/null -m 10 -w '%{http_code}' '$1'" 2>/dev/null || echo 000)"
+    [ "$code" = "$2" ] && break
+    sleep 2
+  done
   if [ "$code" = "$2" ]; then printf '  ✓ %-42s HTTP %s（期望 %s）\n' "$3" "$code" "$2"
-  else                          printf '  ✗ %-42s HTTP %s（期望 %s）\n' "$3" "$code" "$2"; fi
+  else                          printf '  ✗ %-42s HTTP %s（期望 %s）\n' "$3" "$code" "$2"; FAILED=$((FAILED + 1)); fi
 }
 check 'http://127.0.0.1:8080/api/portal/site' '200' '后端 /api/portal/site'
 check 'https://127.0.0.1/'                   '200' '官网首页（https）'
@@ -189,4 +221,9 @@ check 'http://127.0.0.1/'                    '200' '官网 80 → HTTPS 跳转�
 log "容器状态"
 ssh "${SSH_OPTS[@]}" "$SERVER" "cd '$REMOTE_DIR' && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 
-log "发布完成"
+# 自检有失败就以非 0 退出，让调用方（CI / 人或脚本）能据此判断，不必去读输出。
+if [ "$FAILED" -gt 0 ]; then
+  die "发布完成，但有 $FAILED 项自检未通过 —— 上面的红叉是真的，别忽略"
+fi
+
+log "发布完成（自检全部通过）"
