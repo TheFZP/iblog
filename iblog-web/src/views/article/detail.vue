@@ -147,6 +147,14 @@ onMounted(async () => {
   margin-bottom: 18px;
 }
 
+/* 移动端卡片内边距收紧：340px 宽的卡片里左右各 34px 会让正文只剩 272px，
+   一行约 17 个汉字，读起来太挤。 */
+@media (max-width: 640px) {
+  .block {
+    padding: 22px 20px;
+  }
+}
+
 .title {
   margin: 0 0 12px;
   font-size: 26px;
@@ -257,24 +265,29 @@ onMounted(async () => {
 .comment-form input,
 .comment-form textarea {
   width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--c-border);
-  border-radius: 6px;
+  padding: 10px 13px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  color: var(--c-text);
   font-size: 14px;
   font-family: inherit;
   outline: none;
   resize: vertical;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
 
 .comment-form input:focus,
 .comment-form textarea:focus {
   border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px var(--c-brand-ring);
 }
 
 .form-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-top: 12px;
 }
 
@@ -284,17 +297,44 @@ onMounted(async () => {
 }
 
 .form-footer button {
-  padding: 8px 22px;
+  min-height: 44px;
+  padding: 8px 24px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: var(--c-brand);
   color: #fff;
   cursor: pointer;
   font-size: 14px;
+  transition: background 0.18s var(--ease), transform 0.12s var(--ease);
+}
+
+.form-footer button:hover:not(:disabled) {
+  background: var(--c-brand-hover);
+}
+
+.form-footer button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.form-footer button:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
 }
 
 .form-footer button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* 移动端提示文字与按钮不再并排，避免挤压 */
+@media (max-width: 640px) {
+  .form-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-footer button {
+    width: 100%;
+  }
 }
 </style>

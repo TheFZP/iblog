@@ -672,6 +672,11 @@ a.chip:hover {
 }
 
 .markdown-body pre code {
+  /* 明确成块 + max-content：长行按内容撑开由 pre 横向滚动，
+     不靠 inline 元素的隐式溢出，避免盒子尺寸不可控 */
+  display: block;
+  width: max-content;
+  min-width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -724,5 +729,23 @@ a.chip:hover {
   .markdown-body {
     font-size: 16px;
     line-height: 1.85;
+  }
+
+  /* 移动端代码块：缩小字号并收紧内边距，
+     让 80+ 字符的长行尽量在一屏内读完，减少横向拖动 */
+  .markdown-body pre {
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  .markdown-body pre code {
+    font-size: 12px;
+  }
+
+  .markdown-body code {
+    font-size: 0.84em;
+    padding: 0.14em 0.34em;
   }
 }
