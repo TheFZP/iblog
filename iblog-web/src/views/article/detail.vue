@@ -64,7 +64,7 @@
           </div>
         </form>
       </template>
-      <p v-else class="none-tip">评论功能已关闭。</p>
+      <p v-else class="none-tip">休得胡言，评论功能已关闭。</p>
     </div>
   </div>
 </template>
