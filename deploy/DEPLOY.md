@@ -983,6 +983,28 @@ bash deploy/sync-db.sh --pull
 
 会用线上覆盖本地（**本地先自动备份**）。
 
+**跑之前先确认本机环境**（2026-10-17 在 Windows 上踩过）：
+
+- 本地 `mysql` / `mysqldump` **不在 PATH 里**（默认装在 `C:\Program Files\MySQL\MySQL Server 8.0\bin\`），
+  脚本找不到会直接退出。用环境变量指过去即可。
+- 脚本是 bash script，Windows 上要用 **Git Bash** 跑，`pwsh` 里没有 `bash`。
+
+一条命令跑通（Git Bash）：
+
+```bash
+export IBLOG_MYSQL_BIN="/c/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe"
+export IBLOG_MYSQLDUMP_BIN="/c/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
+bash deploy/sync-db.sh --pull
+```
+
+> 从 PowerShell 调用时，环境变量名一样，路径用 Windows 形式：
+> `$env:IBLOG_MYSQL_BIN = "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe"`，
+> 然后 `& "C:\Program Files\Git\bin\bash.exe" -lc "cd /d/develop/IdeaProjects/iblog && bash deploy/sync-db.sh --pull"`。
+
+**`--pull` 之前务必先 `--dry-run` 看一眼**：它是整库覆盖，不区分表。曾经出现过本地只有 2 篇
+种子文章、线上有 13 篇的情况 —— 如果本地那 2 篇里有一篇是你新写的，`--pull` 会直接冲掉它。
+先比对行数，确认本地没有「线上没有的、你想留的东西」再覆盖。
+
 ### 4. 用 Navicat 之类的图形客户端连本地
 
 本地库直接连 `localhost:3306`，root / 123456，不需要隧道。
@@ -1025,4 +1047,10 @@ FLUSH PRIVILEGES;
   直连线上库时放开（配合 `--spring.profiles.active=dev,local`），日常别用。
 - 隧道断了后端不会立刻报错（连接池里还留着连接），要等下次取连接才会失败。
   重启隧道后连接池会自动恢复，不用重启后端。
+- **美食栏目录数据时，`poi_id` 优先于经纬度**：`iblog-web/src/utils/amap.ts` 的
+  `buildAmapUrl()` 先看 `poiid`，没有再退回 `position`，两者都没有才用「店名+地址」做关键词搜索。
+  所以**只填 `poi_id` 就能精确跳转**，不必再抠经纬度。POI ID 从高德分享链接的
+  `/place/<POI_ID>` 里取；链接换成 `/ssr/place/<POI_ID>` 也一样。
+- `blog_food.rating` 是 `TINYINT` 1-5 的整数星级，存不下高德的 4.7 / 4.6 这类小数评分，
+  按四舍五入取整（4.7→5、4.6→5、4.4→4）。原始小分可以写进 `remark` 备注。
 
