@@ -119,18 +119,25 @@
                 class="watch-row"
                 :class="{ 'is-suspended': isSuspended(s.code) }"
               >
-                <div class="watch-row__id">
-                  <span class="watch-row__name">{{ s.name }}</span>
-                  <span class="watch-row__code">{{ s.code }}</span>
-                </div>
-                <div class="watch-row__price">
-                  <span :class="toneClass(quoteOf(s.code)?.change)">{{ fmt(s.price) }}</span>
-                  <span v-if="s.suspended" class="chip chip--brand">停牌</span>
-                </div>
-                <div class="watch-row__chg" :class="toneClass(quoteOf(s.code)?.change)">
-                  <span>{{ signed(s.change) }}</span>
-                  <span>{{ pct(s.changePct) }}</span>
-                </div>
+                <button
+                  class="watch-row__main"
+                  type="button"
+                  :aria-label="`查看 ${s.name} 详情`"
+                  @click="openDetail(s.code)"
+                >
+                  <div class="watch-row__id">
+                    <span class="watch-row__name">{{ s.name }}</span>
+                    <span class="watch-row__code">{{ s.code }}</span>
+                  </div>
+                  <div class="watch-row__price">
+                    <span :class="toneClass(quoteOf(s.code)?.change)">{{ fmt(s.price) }}</span>
+                    <span v-if="s.suspended" class="chip chip--brand">停牌</span>
+                  </div>
+                  <div class="watch-row__chg" :class="toneClass(quoteOf(s.code)?.change)">
+                    <span>{{ signed(s.change) }}</span>
+                    <span>{{ pct(s.changePct) }}</span>
+                  </div>
+                </button>
                 <button
                   class="watch-row__del"
                   type="button"
@@ -159,7 +166,12 @@
             <ol v-else-if="hotList.length" class="hot-list">
               <li v-for="h in hotList" :key="h.code" class="hot-row">
                 <span class="hot-row__rank" :class="{ 'is-top': h.order <= 3 }">{{ h.order }}</span>
-                <div class="hot-row__main">
+                <button
+                  class="hot-row__main hot-row__main--btn"
+                  type="button"
+                  :aria-label="`查看 ${h.name} 详情`"
+                  @click="openDetail(h.code)"
+                >
                   <div class="hot-row__top">
                     <span class="hot-row__name">{{ h.name }}</span>
                     <span class="hot-row__chg" :class="toneClass(h.riseAndFall)">
@@ -170,7 +182,7 @@
                     <span class="hot-row__code">{{ h.code }}</span>
                     <span v-if="h.popularityTag" class="chip">{{ h.popularityTag }}</span>
                   </div>
-                </div>
+                </button>
                 <button
                   class="hot-row__add"
                   type="button"
@@ -213,6 +225,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   fetchHotList,
   fetchIndices,
@@ -225,6 +238,15 @@ import {
 import { useWatchlist, type WatchStock } from '@/composables/useWatchlist'
 
 const AUTO_REFRESH_SEC = 15
+
+const router = useRouter()
+
+/** 跳转个股详情页 */
+function openDetail(code: string) {
+  if (code) {
+    router.push(`/stock/${code}`)
+  }
+}
 
 const {
   watchlist,
@@ -761,10 +783,10 @@ onUnmounted(() => {
 .watch-row {
   display: grid;
   /* 价格列右对齐贴住涨跌列，中间不留弹性空白 */
-  grid-template-columns: minmax(0, 1fr) auto minmax(88px, auto) 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
-  gap: var(--s-5);
-  padding: 12px var(--s-5);
+  gap: var(--s-3);
+  padding: 0 0 0 var(--s-5);
   border-bottom: 1px solid var(--c-border);
   transition: background-color 0.12s var(--ease);
 }
@@ -775,6 +797,31 @@ onUnmounted(() => {
 
 .watch-row:hover {
   background: var(--c-surface-sunken);
+}
+
+/* 主体是按钮：整行可点进详情，删除按钮独立在外，避免嵌套按钮 */
+.watch-row__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(88px, auto);
+  align-items: center;
+  gap: var(--s-5);
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.watch-row__main:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
+.watch-row__del {
+  margin-right: var(--s-4);
 }
 
 .watch-row.is-suspended .watch-row__price {
@@ -900,6 +947,31 @@ onUnmounted(() => {
 .hot-row__main {
   flex: 1;
   min-width: 0;
+}
+
+/* 热榜主体也是按钮：整块可点，去掉按钮默认样式 */
+.hot-row__main--btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hot-row__main--btn:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.hot-row__name {
+  transition: color 0.12s var(--ease);
+}
+
+.hot-row__main--btn:hover .hot-row__name {
+  color: var(--c-brand);
 }
 
 .hot-row__top {
@@ -1089,8 +1161,13 @@ onUnmounted(() => {
   }
 
   .watch-row {
-    /* 窄屏去掉涨跌额那一列，只保留价格 + 涨跌幅 + 删除 */
-    grid-template-columns: minmax(0, 1fr) auto minmax(60px, auto) 28px;
+    grid-template-columns: minmax(0, 1fr) 28px;
+    gap: var(--s-2);
+  }
+
+  .watch-row__main {
+    /* 窄屏去掉涨跌额那一列，只保留价格 + 涨跌幅 */
+    grid-template-columns: minmax(0, 1fr) auto minmax(60px, auto);
     gap: var(--s-3);
   }
 

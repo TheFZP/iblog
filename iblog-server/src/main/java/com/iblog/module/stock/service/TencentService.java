@@ -4,6 +4,7 @@ import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.IntradayItem;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketIndex;
+import com.iblog.module.stock.model.OrderBook;
 import com.iblog.module.stock.model.SearchResult;
 import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.support.StockCode;
@@ -142,6 +143,58 @@ public class TencentService {
         q.setMarket(StockCode.marketOf(code));
         q.setCurrency("¥");
         return q;
+    }
+
+    // ==================== 五档盘口 ====================
+
+    /**
+     * 获取五档盘口。
+     *
+     * <p>A 股盘口就藏在行情字段里，不需要额外请求 —— 这也是当初选腾讯作为主数据源的原因之一：
+     * 一次 {@code q=} 请求同时拿到现价、量额、五档。</p>
+     *
+     * <p>字段布局（0-based，价格与量交替）：
+     * [9..10] 买一 … [17..18] 买五，[19..20] 卖一 … [27..28] 卖五。</p>
+     *
+     * <p>港股走分时接口，该段恒为空串，返回 {@link OrderBook#unavailable()}。</p>
+     */
+    public OrderBook fetchOrderBook(String rawCode) {
+        String code = StockCode.normalize(rawCode);
+        if (StockCode.isHk(code)) {
+            return OrderBook.unavailable();
+        }
+        String tCode = StockCode.toTencent(code);
+        String url = "https://qt.gtimg.cn/q=" + tCode;
+        String text = http.getText(url, StockHttpClient.REFERER_QT, StockHttpClient.GBK);
+
+        String[] f = text.split("~", -1);
+        if (f.length < 47) {
+            throw new StockDataException("行情接口返回字段过少（" + f.length + "），代码可能不存在：" + code);
+        }
+
+        List<OrderBook.Level> bids = new ArrayList<>(5);
+        List<OrderBook.Level> asks = new ArrayList<>(5);
+        for (int i = 0; i < 5; i++) {
+            double bidPrice = num(at(f, 9 + i * 2));
+            double bidVol = num(at(f, 10 + i * 2));
+            if (bidPrice > 0) {
+                bids.add(new OrderBook.Level(bidPrice, bidVol));
+            }
+            double askPrice = num(at(f, 19 + i * 2));
+            double askVol = num(at(f, 20 + i * 2));
+            if (askPrice > 0) {
+                asks.add(new OrderBook.Level(askPrice, askVol));
+            }
+        }
+
+        OrderBook book = new OrderBook();
+        book.setAvailable(!bids.isEmpty() || !asks.isEmpty());
+        book.setBids(bids);
+        // 腾讯给的是卖一到卖五（价格递增），这里反转成「卖五到卖一」，与行情软件自上而下一致
+        // 注意：List.reversed() 是 Java 21 的 API，本项目 JDK 17 用不了
+        java.util.Collections.reverse(asks);
+        book.setAsks(asks);
+        return book;
     }
 
     /**

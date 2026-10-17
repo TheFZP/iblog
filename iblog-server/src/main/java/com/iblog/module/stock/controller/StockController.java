@@ -5,6 +5,7 @@ import com.iblog.module.stock.model.HotStockItem;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketIndex;
+import com.iblog.module.stock.model.OrderBook;
 import com.iblog.module.stock.model.SearchResult;
 import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.HotListService;
@@ -85,6 +86,12 @@ public class StockController {
     @GetMapping("/intraday")
     public R<IntradayData> intraday(@RequestParam String code) {
         return R.ok(tencentService.fetchIntraday(code));
+    }
+
+    @Operation(summary = "五档盘口")
+    @GetMapping("/orderbook")
+    public R<OrderBook> orderBook(@RequestParam String code) {
+        return R.ok(tencentService.fetchOrderBook(code));
     }
 
     @Operation(summary = "大盘指数")

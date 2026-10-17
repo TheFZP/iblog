@@ -42,6 +42,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '行情' }
       },
       {
+        path: 'stock/:code',
+        name: 'StockDetail',
+        component: () => import('@/views/stock/detail.vue'),
+        meta: { title: '个股详情' }
+      },
+      {
         path: 'about',
         name: 'About',
         component: () => import('@/views/about/index.vue'),

@@ -76,6 +76,22 @@ export interface IntradayData {
   items: IntradayItem[]
 }
 
+/** 盘口单档 */
+export interface OrderBookLevel {
+  price: number
+  /** 委托量（手） */
+  volume: number
+}
+
+export interface OrderBook {
+  /** 五档是否可用；港股恒为 false */
+  available: boolean
+  /** 卖五到卖一（价格由高到低） */
+  asks: OrderBookLevel[]
+  /** 买一到买五（价格由高到低） */
+  bids: OrderBookLevel[]
+}
+
 export interface HotStockItem {
   code: string
   name: string
@@ -117,4 +133,8 @@ export function fetchIndices() {
 
 export function fetchHotList() {
   return get<HotStockItem[]>('/stock/hotlist')
+}
+
+export function fetchOrderBook(code: string) {
+  return get<OrderBook>('/stock/orderbook', { code })
 }
