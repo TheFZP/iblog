@@ -99,12 +99,38 @@ docker info | grep -A5 'Registry Mirrors'
 
 在 ECS 控制台 → 安全组 → 入方向，放行这四条：
 
-| 端口 | 用途 | 来源建议 |
+| 端口 | 用途 | 当前线上实际配置（2026-10-17 起） |
 | --- | --- | --- |
-| 22 | SSH | 你的固定出口 IP；若 IP 不固定，用 `0.0.0.0/0` 但**务必关掉密码登录只留密钥** |
+| 22 | SSH | `0.0.0.0/0`（密码登录已关闭，仅密钥，见「六、SSH 登录」） |
 | 80 | 官网（现在只做 ACME 校验 + 301 跳 443） | `0.0.0.0/0`，**不能关**（见下） |
 | 443 | 官网 HTTPS | `0.0.0.0/0` |
-| 81 | 管理后台（HTTPS） | **只放你的 IP**（`x.x.x.x/32`） |
+| 81 | 管理后台（HTTPS） | `0.0.0.0/0`（2026-10-17 由单 IP 改为全网，原因见下） |
+
+> ⚠️ **为什么 22 / 81 改成了 `0.0.0.0/0`（2026-10-17 事故复盘）**
+>
+> 原先 22 和 81 都只放行 `14.145.59.108/32`（公司出口 IP）。搬到宿舍后宽带 IP 变成
+> `183.12.135.215`，两条规则同时失效，表现为**管理后台打不开、SSH 也连不上**。
+> 排查时容易误判成容器挂了，实际判别方法：
+>
+> - **连接超时（丢弃）** = 安全组没放行；**connection refused** = 服务/sshd 本身的问题
+> - 容器侧佐证：`docker ps` 里 `iblog-admin` Up、`ss -lntp | grep ':81 '` 有 docker-proxy 监听、
+>   服务器本机 `curl -sk https://127.0.0.1:81/dashboard` 返回 **200** —— 三者都正常就说明是网络层
+>
+> 动态 IP 下固定 `/32` 没法长期使用，因此放宽为 `0.0.0.0/0`。安全性由应用层兜底：
+> 22 端口 `PasswordAuthentication no` + `PermitRootLogin prohibit-password`（无密码可爆破）；
+> 81 端口有 JWT 认证、登录接口 `limit_req`，且 80 端口的 `/api/admin/**` 已 `return 404`。
+>
+> 想收窄回单 IP 的话：把这两条的**访问来源**改回 `x.x.x.x/32` 即可，多个 IP 可以建多条规则并存，
+> 安全组是「取并集」而不是覆盖。新增规则只用「手动添加」，**不要动其它已有规则**。
+>
+> 更稳的替代方案（IP 频繁变化时推荐）：81 继续维持单 IP 或干脆不放行，本地走 SSH 隧道
+> （和下面 8080 的做法完全一致）：
+>
+> ```bash
+> ssh -N -L 8181:127.0.0.1:81 root@8.138.105.59   # 然后本机开 https://localhost:8181/dashboard
+> ```
+>
+> 注意浏览器会提示证书不受信任（证书签给 IP 而非 `localhost`），点继续即可；隧道窗口不能关。
 
 > ⚠️ **80 端口即使已经全站跳 https 了也不能关**：Let's Encrypt 的 IP 证书只有 6 天有效期，
 > certbot 每 6 天都要靠 80 端口做一次 HTTP-01 校验。关了 80，续期就会失败，
@@ -126,6 +152,7 @@ ssh -L 8080:127.0.0.1:8080 root@<服务器IP>   # 然后本机开 http://localho
 > 反代给后端，其余 `/api/**` 一律 `return 404`。否则 `/api/admin/**`（含登录接口）会从
 > 开放的 80 端口对全网暴露，那么把 81 限制到单个 IP 就白做了 —— 本仓库曾有这个问题，已修。
 > 管理后台的 nginx 另外给登录接口加了 `limit_req`（每 IP 10 次/分钟，突发 10），防止被爆破。
+> 这也是 2026-10-17 敢把 81 放开到 `0.0.0.0/0` 的前提：后台入口只有 81 一个，80 上打不到。
 
 > 443 端口留给你配置 HTTPS 证书时使用。
 
@@ -483,6 +510,10 @@ Let's Encrypt 从 **2026-01-15** 起正式对纯 IP 地址签发公信证书
   实际吐出的序列号完全一致** —— 证明「ACME 签发 → deploy-hook → nginx 重载」整条链路通
 - 外网验证 `curl -w '%{ssl_verify_result}'` 全为 **0**（证书被信任，不是靠 `-k` 跳过）
 - 外网验证 80 上的校验路径返回**精确内容且未被跳转**
+- **2026-10-17 复验**：当前证书 `notAfter = Oct 22 01:14:20 2026 GMT`（剩余 4 天）时跑
+  `certbot renew --dry-run`，返回 `all simulated renewals succeeded` —— 80 端口的
+  HTTP-01 校验通道在生产配置下依然通畅，10/18 之后 cron 会自动续上。
+  （本次只是演练，未签发真证书；磁盘证书仍是 10/15 那张。）
 
 **日常排查：**
 
@@ -709,9 +740,88 @@ sshd -T | grep -iE 'passwordauthentication|permitrootlogin|pubkeyauthentication'
    **实例 → 远程连接（VNC）** 或 **云助手发送命令** 把
    `/etc/ssh/sshd_config.d/00-iblog-no-password.conf` 删掉后 `systemctl reload sshd`。
    （服务器上留了现成的回滚脚本 `/root/ssh-restore-password.sh`，在控制台里直接执行它即可。）
+   也可以按下面「给新电脑加一把密钥」的办法，用控制台把新公钥贴进去，**不用**重新打开密码登录。
 3. **22 端口现在可以放心放宽来源了。** 之前为了防爆破只能限单个 IP，而宽带 IP 是动态的，
    IP 一变就连不上；现在没有密码可爆破，安全组里 22 的授权对象改成 `0.0.0.0/0` 也不会有
    实质风险（仍然建议只在需要时放宽）。
+
+#### 给新电脑加一把密钥（换设备 / 私钥丢失时）
+
+**前提：22 端口的安全组已经放行并能到达服务器；贴公钥这一步走控制台，不依赖 SSH。**
+
+**① 在本机生成密钥对**（PowerShell）：
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\id_ed25519" -C "你的机器名-iblog"
+```
+
+生成两个文件（Windows 上默认就在 `C:\Users\<你>\.ssh\`）：
+
+| 文件 | 用途 | 处置 |
+| --- | --- | --- |
+| `id_ed25519` | **私钥** | 只留在本机，绝不外传/不进仓库，**务必备份** |
+| `id_ed25519.pub` | 公钥 | 贴到服务器上 |
+
+取出公钥内容：
+
+```powershell
+Get-Content "$env:USERPROFILE\.ssh\id_ed25519.pub"
+```
+
+**② 把公钥写到服务器**（二选一，都不需要密码登录）：
+
+- **控制台 VNC**：实例 → 远程连接 → VNC 登录，执行下面三行（把公钥整行粘进去）：
+
+  ```bash
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  echo 'ssh-ed25519 AAAA...你的公钥... 机器名-iblog' >> ~/.ssh/authorized_keys
+  chmod 600 ~/.ssh/authorized_keys
+  ```
+
+- **云助手发送命令**：实例 → 发送远程命令 → Shell，粘贴同样三行，免得手打长公钥。
+
+> `>>` 是**追加**，不会覆盖已有密钥——公司那台电脑的旧密钥可以继续用。
+> 权限必须是 `~/.ssh` = `700`、`authorized_keys` = `600`，`sshd` 对组/其他可读写是直接拒绝的。
+
+**③ 本机验证**：
+
+```powershell
+ssh -o BatchMode=yes root@8.138.105.59 "hostname && docker ps --format '{{.Names}}\t{{.Status}}'"
+```
+
+看到主机名和容器列表就成功了。用 `sshd -T | grep passwordauthentication` 确认仍是 `no`。
+
+> ⚠️ **常见坑：在服务器的 VNC 终端里执行 `ssh root@8.138.105.59` 会报
+> `Permission denied (publickey)`。** 那是服务器在连它自己 —— 它上面只有公钥没有私钥，
+> 必然失败。隧道和登录都要在**你自己的电脑**上执行。
+
+### 证书续期自检（2026-10-17 已演练验证）
+
+IP 证书只有 6 天有效期，靠 root 的 crontab 自动续期（`crond` 必须 active）：
+
+```bash
+crontab -l | grep -iE 'cert|acme'
+# 20 3,15 * * *  /opt/certbot/bin/certbot renew --quiet --deploy-hook /opt/iblog/deploy/reload-tls.sh
+# 40 3 * * *     /opt/iblog/deploy/check-cert.sh
+```
+
+**不确定续期是否还能跑时，做一次无害演练**（不签发真证书，只走 ACME 校验）：
+
+```bash
+/opt/certbot/bin/certbot renew --dry-run
+# 期望：Congratulations, all simulated renewals succeeded
+```
+
+演练只验证「能签发」，**签发后还得让容器重载证书** —— 这由 `--deploy-hook
+/opt/iblog/deploy/reload-tls.sh` 负责（先 `nginx -t` 校验再 `nginx -s reload`，
+失败则不重载、保留旧证书继续服务）。查续期与重载记录：
+
+```bash
+tail -20 /var/log/iblog-certbot.log
+```
+
+> ℹ️ 日志里每条 `check-cert` 会重复打印两次：`reload-tls.sh` 的 `log()` 用 `tee -a` 写了一次，
+> crontab 的 `>>` 重定向又写一次。只是冗余，不影响续期。
 
 ### 系统安全更新（2026-10-15 打过一次，之后建议定期做）
 
@@ -767,6 +877,31 @@ A：MySQL 还在初始化。`docker compose logs mysql` 看是否完成，或用
 
 **Q：管理后台能打开但接口 502**
 A：`iblog-server` 没起来，先看 `docker compose logs iblog-server`；确认 `MYSQL_PASSWORD` 与 `MYSQL_ROOT_PASSWORD` 一致。
+
+**Q：管理后台 / SSH 突然打不开，但官网正常（2026-10-17 实际踩过）**
+A：**先怀疑安全组，别急着重建容器。** 换网络（公司↔宿舍）后宽带出口 IP 变了，
+安全组里旧的 `x.x.x.x/32` 就失效了，而 80/443 是对全网开放所以官网没事。按三步定位：
+
+```bash
+# ① 本机：超时=安全组丢弃；refused=服务本身没起
+Test-NetConnection 8.138.105.59 -Port 81     # PowerShell
+
+# ② 服务器上确认服务侧是否正常（三者都正常就一定是网络层）
+docker ps --filter name=iblog-admin --format '{{.Status}} {{.Ports}}'   # 期望 Up
+ss -lntp | grep ':81 '                                                  # 期望 docker-proxy 监听
+curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:81/dashboard # 期望 200
+```
+
+③ 对不上就去 ECS 控制台把对应端口的**访问来源**改成本机当前出口 IP
+（`curl ifconfig.me` 可查），或直接放 `0.0.0.0/0`。**改规则只用「手动添加」**，
+多个 IP 建多条规则并存即可，别动已有规则。详见「一、3」。
+
+> 临时绕过、不想改安全组：`ssh -N -L 8181:127.0.0.1:81 root@8.138.105.59`，
+> 然后本机开 `https://localhost:8181/dashboard`。
+
+**Q：在服务器上 `ssh root@8.138.105.59` 报 `Permission denied (publickey)`**
+A：你是在服务器的 VNC 终端里连它自己——服务器上只有公钥 `authorized_keys`、没有私钥，
+必然失败。SSH 登录和端口隧道都要在**你自己的电脑**上执行，见「四、SSH 登录」。
 
 **Q：改了站点配置前台没变化**
 A：站点配置有 2 小时 Redis 缓存，保存配置时会自动清除。如果手工改过数据库，执行 `docker exec -it iblog-redis redis-cli del iblog:site:config`。
