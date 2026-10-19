@@ -9,15 +9,6 @@
           {{ site.site_description || site.site_subtitle || '记录技术与生活' }}
         </p>
       </div>
-
-      <router-link to="/about" class="masthead__author">
-        <img v-if="site.author_avatar" :src="site.author_avatar" :alt="site.author_name || '作者'" />
-        <span v-else class="masthead__avatar" aria-hidden="true">{{ authorInitial }}</span>
-        <span class="masthead__author-text">
-          <strong>{{ site.author_name || '博主' }}</strong>
-          <small>{{ site.author_intro || '正在认真写代码的人' }}</small>
-        </span>
-      </router-link>
     </header>
 
     <div class="page-grid">
@@ -97,11 +88,6 @@ const today = computed(() =>
   new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 )
 
-const authorInitial = computed(() => {
-  const name = (site.value.author_name || '博').trim()
-  return /^[a-zA-Z]/.test(name) ? name[0].toUpperCase() : name.slice(0, 1)
-})
-
 async function load() {
   loading.value = true
   try {
@@ -128,11 +114,9 @@ onMounted(() => {
 
 <style scoped>
 /* ---------- 刊头 ---------- */
+/* 编辑式排版里的「报头」：日期、站名、一句定位，用 2px 实线收口。
+   这里不再放作者卡 —— 侧栏已经有同样一张，重复两遍反而抢了站名的焦点。 */
 .masthead {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-8);
   padding-bottom: var(--s-8);
   margin-bottom: var(--s-10);
   border-bottom: 2px solid var(--c-text);
@@ -160,63 +144,6 @@ onMounted(() => {
   color: var(--c-text-muted);
   font-size: var(--t-md);
   line-height: 1.7;
-}
-
-.masthead__author {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  flex-shrink: 0;
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-full);
-  background: var(--c-surface);
-  color: var(--c-text);
-  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
-}
-
-.masthead__author:hover {
-  color: var(--c-text);
-  border-color: var(--c-brand);
-  box-shadow: var(--e-sm);
-}
-
-.masthead__avatar,
-.masthead__author img {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--r-full);
-  background: var(--c-brand);
-  color: #fff;
-  font-size: var(--t-md);
-  font-weight: 680;
-  flex-shrink: 0;
-  object-fit: cover;
-}
-
-.masthead__author-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  min-width: 0;
-}
-
-.masthead__author-text strong {
-  font-size: var(--t-sm);
-  font-weight: 620;
-}
-
-.masthead__author-text small {
-  font-size: var(--t-xs);
-  color: var(--c-text-faint);
-  /* 20ch 会把「一个正在认真让AI写代码的人。」截成「一个正在认真让AI写代…」，
-     刊头右上角放得下，给到 26ch 并允许两行，避免为了一个省略号丢掉半句话。 */
-  max-width: 26ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ---------- 首屏 ---------- */
@@ -254,12 +181,6 @@ onMounted(() => {
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
-  .masthead {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--s-6);
-  }
-
   .masthead__title {
     font-size: var(--t-3xl);
   }
@@ -276,10 +197,6 @@ onMounted(() => {
 @media (max-width: 640px) {
   .masthead__desc {
     font-size: var(--t-base);
-  }
-
-  .masthead__author-text small {
-    display: none;
   }
 }
 </style>
