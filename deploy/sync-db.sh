@@ -8,7 +8,10 @@
 #      bash deploy/sync-db.sh                 # 同步到线上（会先备份线上、要确认）
 #      bash deploy/sync-db.sh --dry-run       # 只看两边差异，不写任何东西
 #      bash deploy/sync-db.sh --pull          # 反向：线上 -> 本地（覆盖本地）
+#      bash deploy/sync-db.sh --pull --dry-run  # 只读比对，不拉（--dry-run 两个方向都生效）
 #      bash deploy/sync-db.sh --yes           # 跳过确认（给脚本/CI 用）
+#
+#      --dry-run 是全局修饰符，放在 --pull 前面或后面都一样，作用于当前方向。
 #
 #  前置条件：
 #      - 线上要通，且 tunnel 或 ssh 可用（脚本自己开一次性隧道，不用先跑 db-tunnel.sh）
@@ -156,6 +159,7 @@ rotate_backups() {
 }
 
 do_dry_run() {
+  local dir="${1:-push}"
   ensure_local_up
   ensure_remote_up
   log "只读比对（不写任何东西）"
@@ -163,8 +167,13 @@ do_dry_run() {
   echo "  本地 $LOCAL_HOST:$LOCAL_PORT  vs  线上 $SERVER:$REMOTE_CONTAINER"
   compare_counts "本地" "线上" "local_sql" "remote_sql" || true
   echo
-  echo "  上面这两个数字就是同步的方向和影响面。"
-  echo "  确认无误后执行：bash deploy/sync-db.sh"
+  if [ "$dir" = "pull" ]; then
+    echo "  上面这两个数字就是同步的方向和影响面。"
+    echo "  确认无误后执行：bash deploy/sync-db.sh --pull   （会用线上覆盖本地）"
+  else
+    echo "  上面这两个数字就是同步的方向和影响面。"
+    echo "  确认无误后执行：bash deploy/sync-db.sh"
+  fi
 }
 
 do_push() {
@@ -229,6 +238,7 @@ do_push() {
 }
 
 do_pull() {
+  local assume_yes="${1:-no}"
   local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
   local backup="$BACKUP_DIR/local-before-pull-$stamp.sql"
   ensure_backup_dir
@@ -251,6 +261,19 @@ do_pull() {
     > "$dump" 2>/dev/null || die "线上导出失败"
   verify_dump "$dump"
 
+  # ⚠️ 这一步之后就不可逆了（本地库被删重建），所以在它之前确认。
+  if [ "$assume_yes" != "yes" ]; then
+    echo
+    log "将要用【线上】覆盖【本地】的库 $DB"
+    echo "    线上 -> $SERVER:$REMOTE_CONTAINER"
+    echo "    本地 -> $LOCAL_HOST:$LOCAL_PORT"
+    echo "    本地已备份：$backup"
+    echo
+    printf '确认拉取？输入 yes 继续：'
+    local ans; read -r ans
+    [ "$ans" = "yes" ] || { log "已取消，本地未改动"; rm -f "$dump"; exit 0; }
+  fi
+
   "$LOCAL_MYSQL" -h "$LOCAL_HOST" -P "$LOCAL_PORT" -u"$LOCAL_USER" -p"$LOCAL_PASS" \
     --default-character-set=utf8mb4 \
     -e "DROP DATABASE IF EXISTS \`$DB\`; CREATE DATABASE \`$DB\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;" \
@@ -272,11 +295,34 @@ do_pull() {
   fi
 }
 
-case "${1:-}" in
-  --dry-run|-n) do_dry_run ;;
-  --pull)       do_pull ;;
-  --yes|-y)     do_push yes ;;
-  "")           do_push no ;;
-  -h|--help)    sed -n '2,28p' "${BASH_SOURCE[0]}" ;;
-  *)            die "未知参数：$1（可用：--dry-run | --pull | --yes）" ;;
-esac
+# 参数解析：把「方向」和「修饰符」分开。
+# 以前写成 `case "${1:-}" in --pull) do_pull ;; ...`，只看第一个参数，
+# 于是 `--pull --dry-run` 里 --dry-run 被静默忽略、直接执行了会 DROP 本地库的拉取
+# （2026-10-18 真的踩到过）。现在先扫全部参数收集标志，再决定跑哪条路径。
+MODIFIER_DRY_RUN=0
+MODIFIER_YES=0
+DIRECTION=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n) MODIFIER_DRY_RUN=1 ;;
+    --yes|-y)     MODIFIER_YES=1 ;;
+    --pull)       DIRECTION="pull" ;;
+    -h|--help)    sed -n '2,28p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *)            die "未知参数：$arg（可用：--dry-run | --pull | --yes）" ;;
+  esac
+done
+
+if [ "$MODIFIER_DRY_RUN" -eq 1 ]; then
+  do_dry_run "${DIRECTION:-push}"
+elif [ "$DIRECTION" = "pull" ]; then
+  if [ "$MODIFIER_YES" -eq 1 ]; then
+    do_pull yes
+  else
+    do_pull no
+  fi
+elif [ "$MODIFIER_YES" -eq 1 ]; then
+  do_push yes
+else
+  do_push no
+fi
