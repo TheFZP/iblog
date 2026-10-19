@@ -78,7 +78,9 @@ public final class StockCode {
      * 注意小写，腾讯接口区分大小写。
      */
     public static String toTencent(String code) {
-        String c = stripMarketPrefix(code);
+        // 用 normalize 而不是 stripMarketPrefix：后者不剥 ".SH" 后缀，
+        // 会让 "600519.SH" 变成 "sh600519.SH"（单测 EastmoneyServiceTest.secidMapping 覆盖）
+        String c = normalize(code);
         if (isHk(c)) {
             return "hk" + c;
         }
@@ -92,7 +94,8 @@ public final class StockCode {
      * 东方财富 secid：{@code 1.600519 / 0.300750 / 116.00700 / 0.430047}。
      */
     public static String toEmSecid(String code) {
-        String c = stripMarketPrefix(code);
+        // 同 toTencent：必须走 normalize，否则 "000002.SZ" 会变成 "0.000002.SZ"
+        String c = normalize(code);
         if (isHk(c)) {
             return "116." + c;
         }
@@ -107,7 +110,7 @@ public final class StockCode {
      * 市场标识：SH / SZ / BJ / HK，用于前端展示与自选股分组。
      */
     public static String marketOf(String code) {
-        String c = stripMarketPrefix(code);
+        String c = normalize(code);
         if (isHk(c)) {
             return "HK";
         }
@@ -121,7 +124,7 @@ public final class StockCode {
      * 币种符号：港股走港币，其余人民币。
      */
     public static String currencySymbol(String code) {
-        return isHk(code) ? "HK$" : "¥";
+        return isHk(normalize(code)) ? "HK$" : "¥";
     }
 
     private static String stripMarketPrefix(String code) {
@@ -137,7 +140,6 @@ public final class StockCode {
         }
         return c;
     }
-
     private static boolean isDigits(String s) {
         if (s.isEmpty()) {
             return false;

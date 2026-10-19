@@ -5,9 +5,12 @@ import com.iblog.module.stock.model.HotStockItem;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketIndex;
+import com.iblog.module.stock.model.MoneyFlow;
+import com.iblog.module.stock.model.MoneyFlowHistoryItem;
 import com.iblog.module.stock.model.OrderBook;
 import com.iblog.module.stock.model.SearchResult;
 import com.iblog.module.stock.model.StockQuote;
+import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
 import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.support.StockCode;
@@ -40,6 +43,7 @@ public class StockController {
 
     private final TencentService tencentService;
     private final HotListService hotListService;
+    private final EastmoneyService eastmoneyService;
 
     /** 首页展示的主要指数（上证 / 深证 / 创业板 / 沪深300 / 科创50 / 中证500） */
     private static final List<String> INDEX_CODES = List.of(
@@ -117,6 +121,24 @@ public class StockController {
     @GetMapping("/hotlist")
     public R<List<HotStockItem>> hotList() {
         return R.ok(hotListService.fetchHotList());
+    }
+
+    @Operation(summary = "主力资金流向（当日分档快照）",
+            description = "单位万元。非交易时段 current=false，此时 date 是最近一个交易日；"
+                    + "上游不提供该股数据时 unavailable=true（前端应显示空态而不是 0）")
+    @GetMapping("/moneyflow")
+    public R<MoneyFlow> moneyFlow(@Parameter(description = "股票代码") @RequestParam String code) {
+        return R.ok(eastmoneyService.fetchMoneyFlow(code));
+    }
+
+    @Operation(summary = "主力资金流向历史（按日期升序）",
+            description = "单位万元，默认 30 个交易日，上限 120")
+    @GetMapping("/moneyflow/history")
+    public R<List<MoneyFlowHistoryItem>> moneyFlowHistory(
+            @Parameter(description = "股票代码") @RequestParam String code,
+            @Parameter(description = "交易日条数，默认 30")
+            @RequestParam(required = false, defaultValue = "30") Integer limit) {
+        return R.ok(eastmoneyService.fetchMoneyFlowHistory(code, limit));
     }
 
     @Operation(summary = "股票代码归一化（调试用）")
