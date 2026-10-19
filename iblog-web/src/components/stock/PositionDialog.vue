@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { usePositions, type Position } from '@/composables/usePositions'
+import { usePositionAlerts } from '@/composables/usePositionAlerts'
 import { fmtNum } from '@/utils/stockFormat'
 
 /**
@@ -8,6 +9,9 @@ import { fmtNum } from '@/utils/stockFormat'
  *
  * <p>同一只股票只保留一条持仓记录（加仓就在原记录上改成本价和数量），
  * 与桌面版口径一致 —— 多批次加权成本是另一套功能，这里不做。</p>
+ *
+ * <p>止损/止盈阈值存在独立的 localStorage 里（{@code usePositionAlerts}），
+ * 不写进持仓记录：它们跟「有没有持仓」无关，删了持仓再买回来阈值还在。</p>
  */
 
 const props = defineProps<{
@@ -21,17 +25,27 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const { positions, upsertPosition, removePosition } = usePositions()
+const { configFor, setConfig, clearConfig } = usePositionAlerts()
 
 const code = ref('')
 const name = ref('')
 const buyPrice = ref<number | null>(null)
 const quantity = ref<number | null>(null)
 const buyDate = ref('')
+const stopLossPct = ref<number | null>(null)
+const takeProfitPct = ref<number | null>(null)
 const error = ref('')
 
 function todayStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 把当前表单里的代码对应的阈值读进表单 */
+function loadAlertConfig(codeKey: string) {
+  const cfg = configFor(codeKey)
+  stopLossPct.value = cfg.stopLossPct ?? null
+  takeProfitPct.value = cfg.takeProfitPct ?? null
 }
 
 watch(
@@ -61,6 +75,7 @@ watch(
       quantity.value = null
       buyDate.value = todayStr()
     }
+    loadAlertConfig(code.value.trim())
   }
 )
 
@@ -94,12 +109,18 @@ function submit() {
     error.value = '持仓数量必须是 100 的整数倍（1 手 = 100 股）'
     return
   }
+  const key = code.value.trim()
   upsertPosition({
-    code: code.value.trim(),
-    name: name.value.trim() || code.value.trim(),
+    code: key,
+    name: name.value.trim() || key,
     buyPrice: p,
     quantity: q,
     buyDate: buyDate.value || todayStr()
+  })
+  // 阈值与持仓分开保存：清空输入 = 关掉该项提醒
+  setConfig(key, {
+    stopLossPct: stopLossPct.value ?? undefined,
+    takeProfitPct: takeProfitPct.value ?? undefined
   })
   emit('close')
 }
@@ -107,6 +128,8 @@ function submit() {
 function doRemove() {
   if (props.editing) {
     removePosition(props.editing.code)
+    // 删持仓时顺手清掉它的提醒配置，否则会留下一份永远不会触发的孤儿配置
+    clearConfig(props.editing.code)
     emit('close')
   }
 }
@@ -182,6 +205,43 @@ function doRemove() {
           <span class="form__label">成本金额</span>
           <span class="form__cost">{{ previewCost() }}</span>
         </div>
+
+        <div class="form__divider">止损 / 止盈提醒</div>
+
+        <div class="form__row">
+          <label class="form__label" for="pos-stop-loss">亏损达到</label>
+          <input
+            id="pos-stop-loss"
+            v-model.number="stopLossPct"
+            class="form__input"
+            type="number"
+            step="1"
+            min="0"
+            placeholder="8"
+            @keydown.enter="submit"
+          >
+          <span class="form__hint">%，留空关闭</span>
+        </div>
+
+        <div class="form__row">
+          <label class="form__label" for="pos-take-profit">盈利达到</label>
+          <input
+            id="pos-take-profit"
+            v-model.number="takeProfitPct"
+            class="form__input"
+            type="number"
+            step="1"
+            min="0"
+            placeholder="20"
+            @keydown.enter="submit"
+          >
+          <span class="form__hint">%，留空关闭</span>
+        </div>
+
+        <p class="form__note">
+          盘中现价相较成本价越过阈值时发一条浏览器通知，同一标的同一原因每天只提醒一次。
+          需在行情页点「开启通知」授权，且页面保持打开。
+        </p>
 
         <p v-if="error" class="form__error">{{ error }}</p>
 
@@ -298,6 +358,32 @@ function doRemove() {
   font-size: var(--t-base);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* 止损止盈是「可选的附加配置」，用分隔线和上标小字与必填项拉开层级 */
+.form__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-2) 0 0;
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+  letter-spacing: 0.04em;
+}
+
+.form__divider::before,
+.form__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--c-border);
+}
+
+.form__note {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-text-faint);
 }
 
 .form__error {

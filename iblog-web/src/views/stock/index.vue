@@ -15,6 +15,24 @@
             {{ stateBadge.text }}<template v-if="lastQuoteTime"> · {{ lastQuoteTime }}</template>
           </span>
           <button
+            class="alert-btn"
+            :class="{ 'is-on': notifyGranted && alertCount > 0 }"
+            type="button"
+            :disabled="notifyUnsupported || notifyRequesting || notifyGranted"
+            :title="
+              notifyGranted
+                ? '通知已开启，价格与止损止盈提醒会在后台巡检'
+                : '授权浏览器通知，行情越过你设的价位时弹出提醒'
+            "
+            @click="enableNotify"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+            <span>{{ notifyRequesting ? '授权中' : alertHint }}</span>
+          </button>
+          <button
             class="btn btn--ghost refresh-btn"
             type="button"
             :disabled="refreshing"
@@ -236,6 +254,9 @@ import {
   type SearchResult
 } from '@/api/stock'
 import { useWatchlist, type WatchStock } from '@/composables/useWatchlist'
+import { useNotify } from '@/composables/useNotify'
+import { usePositionAlerts } from '@/composables/usePositionAlerts'
+import { usePriceAlerts } from '@/composables/usePriceAlerts'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
 
 const router = useRouter()
@@ -266,6 +287,51 @@ const results = ref<SearchResult[]>([])
 const searching = ref(false)
 const showDropdown = ref(false)
 const confirmClear = ref(false)
+
+// ---------- 提醒状态 ----------
+//
+// 提醒的「触发」由 AppLayout 里的全局巡查器负责（关掉本页也照常巡检），
+// 这里只展示状态并提供开启浏览器通知的入口 —— 两者是同一套数据，不会各说各话。
+
+const { permission: notifyPermission, requestNotifyPermission } = useNotify()
+const { alerts: priceAlerts } = usePriceAlerts()
+const { enabledCount: positionAlertCount } = usePositionAlerts()
+
+/** 当前启用的提醒条数：价格提醒按目标数算，持仓按设置了阈值的股票数算 */
+const alertCount = computed(
+  () => priceAlerts.value.filter((a) => a.enabled).length + positionAlertCount.value
+)
+
+/** 浏览器通知是否已授权 */
+const notifyGranted = computed(() => notifyPermission.value === 'granted')
+
+/** 浏览器不支持 Notification（如部分内网浏览器） */
+const notifyUnsupported = computed(() => notifyPermission.value === 'unsupported')
+
+/**
+ * 提醒入口的展示文案。
+ *
+ * 三种情况分开说：不支持 / 未授权 / 已授权但一条没配。
+ * 统称「提醒」会让人以为已经开着，于是不被通知时以为坏了。
+ */
+const alertHint = computed(() => {
+  if (notifyUnsupported.value) return '浏览器不支持通知'
+  if (!notifyGranted.value) return '开启通知'
+  if (alertCount.value === 0) return '提醒'
+  return `${alertCount.value} 条提醒`
+})
+
+const notifyRequesting = ref(false)
+
+async function enableNotify() {
+  if (notifyRequesting.value || notifyGranted.value) return
+  notifyRequesting.value = true
+  try {
+    await requestNotifyPermission()
+  } finally {
+    notifyRequesting.value = false
+  }
+}
 
 /** 当前市场状态：用大盘指数自带的上游时间戳做反证，比纯时钟判断可靠 */
 const marketState = computed(() => getMarketState(undefined, indices.value[0]?.quoteTime))
@@ -552,6 +618,67 @@ onUnmounted(() => {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* 提醒入口：与「刷新」同层级但更轻，未授权时用品牌色才对得上「待办」的语义 */
+.alert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: var(--c-surface);
+  color: var(--c-text-secondary);
+  font-size: var(--t-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease),
+    border-color 120ms var(--ease),
+    color 120ms var(--ease);
+}
+
+.alert-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.alert-btn:hover:not(:disabled) {
+  border-color: var(--c-brand);
+  color: var(--c-brand);
+}
+
+/* 未授权：品牌色描边，提示这里有件事没做完 */
+.alert-btn:not(.is-on):not(:disabled) {
+  border-color: var(--c-brand-ring);
+  color: var(--c-brand);
+  background: var(--c-brand-soft);
+}
+
+/* 已开启：安静的实色，不再抢注意力 */
+.alert-btn.is-on,
+.alert-btn:disabled {
+  cursor: default;
+  color: var(--c-text-muted);
+  background: var(--c-surface-sunken);
+  border-color: transparent;
+}
+
+.alert-btn.is-on svg {
+  color: var(--c-success);
+}
+
+.alert-btn:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
 }
 
 .refresh-btn svg.spin {
@@ -1181,7 +1308,15 @@ onUnmounted(() => {
 
   .page-head__side {
     width: 100%;
-    justify-content: space-between;
+    /* 一行放不下时让「开启通知」折到下一行，而不是把三个控件挤成一团 */
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    justify-content: flex-start;
+  }
+
+  .alert-btn,
+  .refresh-btn {
+    min-height: 44px;
   }
 
   .indices {

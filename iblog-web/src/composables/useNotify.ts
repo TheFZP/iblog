@@ -88,9 +88,12 @@ if (typeof document !== 'undefined') {
 /**
  * 发送一条提醒。
  *
+ * @param tag 通知合并标签。相同 tag 的新通知会替换旧通知，避免连续刷新堆成一屏；
+ *            但不同标的/不同原因必须给不同 tag，否则「A 突破」会被「B 止损」顶掉，
+ *            用户只能看到最后一条。
  * @returns 是否成功送达（权限被拒返回 false，调用方应停止后续发送）
  */
-async function sendNotification(title: string, body: string): Promise<boolean> {
+async function sendNotification(title: string, body: string, tag = 'iblog-stock-alert'): Promise<boolean> {
   if (permission.value !== 'granted') {
     permission.value = readPermission()
   }
@@ -98,8 +101,7 @@ async function sendNotification(title: string, body: string): Promise<boolean> {
   let sent = false
   if (permission.value === 'granted') {
     try {
-      // tag 相同会合并同一条通知，避免连续刷新时堆成一屏
-      new Notification(title, { body, tag: 'iblog-stock-alert', icon: '/favicon.ico' })
+      new Notification(title, { body, tag, icon: '/favicon.ico' })
       sent = true
     } catch {
       sent = false

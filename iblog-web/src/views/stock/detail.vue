@@ -55,7 +55,7 @@ const route = useRoute()
 const router = useRouter()
 const { isInWatchlist, toggleWatchlist, applyQuotes } = useWatchlist()
 const { positionStats, applyPositionQuote } = usePositions()
-const { countEnabledForCode, checkPriceAlerts } = usePriceAlerts()
+const { countEnabledForCode } = usePriceAlerts()
 
 const code = computed(() => String(route.params.code ?? ''))
 
@@ -136,8 +136,8 @@ async function loadQuote() {
     // 同步回自选列表与持仓，避免两处价格不一致
     applyQuotes([q])
     applyPositionQuote(q.code, q)
-    // 价格提醒检测（内部只在交易时段检测，单例共享）
-    await checkPriceAlerts({ code: q.code, name: q.name, price: q.price }, true)
+    // 价格提醒与持仓止损止盈由全局巡查器（useAlertWatcher）统一巡检，
+    // 这里不再单独检查 —— 否则详情页开着时会和巡查器重复判定
   } catch {
     if (seq === quoteSeq) {
       // 保留旧数据，只标记 stale

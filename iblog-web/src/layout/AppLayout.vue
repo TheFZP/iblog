@@ -158,6 +158,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSite, useTheme, initTheme } from '@/composables/useSite'
+import { stopAlertWatcher, useAutoStartAlertWatcher } from '@/composables/useAlertWatcher'
 
 const route = useRoute()
 const router = useRouter()
@@ -222,6 +223,10 @@ watch(menuOpen, (open) => {
   document.body.style.overflow = open ? 'hidden' : ''
 })
 
+// 提醒巡查挂在布局层而不是行情页：提醒的意义就在于「我不盯着的时候」也生效，
+// 只有停在行情页才巡检等于没有提醒。
+useAutoStartAlertWatcher()
+
 onMounted(() => {
   initTheme()
   loadSite()
@@ -232,6 +237,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
   document.body.style.overflow = ''
+  stopAlertWatcher()
 })
 </script>
 
