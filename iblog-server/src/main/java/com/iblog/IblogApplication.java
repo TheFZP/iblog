@@ -12,7 +12,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * iblog 个人博客后端启动类。
  */
 @SpringBootApplication
-@MapperScan("com.iblog.module.mapper")
+// 行情模块的 Mapper 放在 com.iblog.module.stock.mapper（跟 stock 模块的其他类在一起），
+// 不在下面这个包下，所以必须显式列上 —— 否则启动时报
+// "No qualifying bean of type 'StockSettingMapper' available"。
+@MapperScan({"com.iblog.module.mapper", "com.iblog.module.stock.mapper"})
 public class IblogApplication {
 
     public static void main(String[] args) {

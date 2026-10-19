@@ -35,6 +35,18 @@ public class DatabaseBootstrap implements ApplicationListener<ApplicationEnviron
     private static final String SCHEMA_SCRIPT = "db/01-schema.sql";
     /** 种子数据脚本（classpath，可重复执行）。 */
     private static final String DATA_SCRIPT = "db/02-data.sql";
+    /**
+     * 增量迁移脚本（classpath，全部幂等）。
+     *
+     * <p>为什么需要这一段：下面的哨兵判断只看 {@code sys_user} 在不在，只要在就认为「表已经建好」，
+     * 于是新加的模块（美食、行情）在**已有库**上永远不会被自动创建 —— 表现为启动成功、
+     * 但一访问新功能就报 Table doesn't exist。所以这里把迁移脚本也跑一遍：
+     * 它们全是 CREATE TABLE IF NOT EXISTS / 条件 ALTER，重复执行没有副作用。</p>
+     */
+    private static final String[] MIGRATION_SCRIPTS = {
+            "db/03-migration-food.sql",
+            "db/04-migration-stock.sql",
+    };
     /** 用于判断「表是否已建好」的哨兵表。 */
     private static final String SENTINEL_TABLE = "sys_user";
     /** MySQL 「库不存在」的错误码。 */
@@ -73,6 +85,9 @@ public class DatabaseBootstrap implements ApplicationListener<ApplicationEnviron
                 }
                 initSchema(url, username, password);
                 log.info("{}", hint("检测到数据库还是空的，已自动建表并写入种子数据。"));
+            } else {
+                // 已有库：哨兵表在，只补跑增量迁移（幂等），不做种子数据。
+                applyMigrations(connection);
             }
         } catch (SQLException e) {
             String database = databaseName(url);
@@ -82,6 +97,32 @@ public class DatabaseBootstrap implements ApplicationListener<ApplicationEnviron
             createDatabase(url, database, username, password);
             initSchema(url, username, password);
             log.info("{}", hint("首次启动：已自动创建数据库 `" + database + "` 并完成初始化。"));
+        }
+    }
+
+    /**
+     * 对已有库补跑增量迁移脚本。
+     *
+     * <p><b>失败为什么只告警、不中止启动</b>：本博客老模块（文章/分类/评论）不依赖这些新表，
+     * 一旦某个迁移脚本写错就让整站起不来，等于为了还没人用的新功能赔上已有的全部功能 ——
+     * 线上那次「新功能报错」远比「整站 502」更好处理。所以这里一律降级为 ERROR 日志，
+     * 让运维能从日志里看到，而不是拿可用性去换启动检查的严格性。</p>
+     *
+     * <p>脚本本身全部幂等（CREATE TABLE IF NOT EXISTS / 条件 ALTER），每次启动重跑没有副作用。</p>
+     */
+    private void applyMigrations(Connection connection) {
+        for (String script : MIGRATION_SCRIPTS) {
+            ClassPathResource resource = new ClassPathResource(script);
+            if (!resource.exists()) {
+                continue;
+            }
+            try {
+                ScriptUtils.executeSqlScript(connection, resource);
+            } catch (Exception e) {
+                log.error("增量迁移脚本 {} 执行失败，相关新功能可能不可用。"
+                                + "请手工执行后重启：mysql -uroot -p iblog < iblog-server/src/main/resources/{}",
+                        script, script, e);
+            }
         }
     }
 
