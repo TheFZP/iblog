@@ -58,4 +58,16 @@ public class MoneyFlow {
 
     /** 上游暂不提供该股资金流（如部分北交所标的） */
     private boolean unavailable;
+
+    /**
+     * {@link #isUnavailable()} 的原因：{@code "network"} 表示上游连不上（过一会儿再试就好），
+     * 其它情况为空串（上游确实没有这只标的的资金流）。
+     *
+     * <p>前端据此区分「暂时取不到，请稍后再看」与「该股暂无资金流数据」—— 两种都说成
+     * 「暂无数据」会让用户以为是自己选错了股票。</p>
+     */
+    private String reason;
+
+    /** {@link #reason} 的取值：上游网络不可达 */
+    public static final String REASON_NETWORK = "network";
 }

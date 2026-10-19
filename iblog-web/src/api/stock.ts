@@ -111,6 +111,49 @@ export interface HotStockItem {
 
 export type KlinePeriod = 'day' | 'week' | 'month' | 'm5' | 'm15' | 'm30' | 'm60'
 
+/**
+ * 主力资金流向（当日分档快照）。单位：净流入为**万元**，占比为百分数。
+ *
+ * <p>东财口径的「主力」= 超大单 + 大单。净流入 = 买入额 - 卖出额，可以为负。</p>
+ */
+export interface MoneyFlow {
+  /** 净流入对应的交易日 yyyy-MM-dd */
+  date: string
+  /** 主力净流入（万元） */
+  mainNetInflow: number
+  /** 主力净占比（%） */
+  mainNetPct: number
+  superLargeNet: number
+  superLargePct: number
+  largeNet: number
+  largePct: number
+  mediumNet: number
+  mediumPct: number
+  smallNet: number
+  smallPct: number
+  /** 是否当前交易日盘中实时数据；false 表示展示的是最近交易日定稿数据 */
+  current: boolean
+  /** 上游暂不提供该股资金流（部分北交所标的） */
+  unavailable: boolean
+  /**
+   * `unavailable` 的原因：`network` 表示上游连不上（稍后重试即可），
+   * 空表示上游确实没有这只标的的资金流。
+   */
+  reason?: string
+}
+
+/** 主力资金流向历史（近 N 个交易日，按日期升序） */
+export interface MoneyFlowHistoryItem {
+  date: string
+  mainNetInflow: number
+  superLargeNet: number
+  largeNet: number
+  mediumNet: number
+  smallNet: number
+  /** 当日收盘价 */
+  close: number
+}
+
 export function fetchQuote(code: string) {
   return get<StockQuote>('/stock/quote', { code })
 }
@@ -141,4 +184,12 @@ export function fetchHotList() {
 
 export function fetchOrderBook(code: string) {
   return get<OrderBook>('/stock/orderbook', { code })
+}
+
+export function fetchMoneyFlow(code: string) {
+  return get<MoneyFlow>('/stock/moneyflow', { code })
+}
+
+export function fetchMoneyFlowHistory(code: string, limit = 30) {
+  return get<MoneyFlowHistoryItem[]>('/stock/moneyflow/history', { code, limit })
 }

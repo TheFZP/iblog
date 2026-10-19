@@ -53,12 +53,34 @@ public class StockHttpClient {
     }
 
     /**
+     * GET 文本，<b>不复用连接</b>，适合连接池会被上游重置的域名。
+     *
+     * <p>东财 push2 系列对「被复用的连接」会直接 reset（实测：新连接 8/8 成功，
+     * 复用 keep-alive 连接 0/8），所以这些请求要走这条路径。腾讯行情量大，
+     * 继续用默认的池化客户端，别为此牺牲性能。</p>
+     *
+     * @param timeout 本次请求超时；调用方做重试时需要比默认的 12 秒短得多，
+     *                否则一次卡住的请求就会吃掉整个重试预算
+     */
+    public String getTextNoKeepAlive(String url, String referer, Charset charset, Duration timeout) {
+        byte[] bytes = send(url, referer, true, timeout);
+        return new String(bytes, charset == null ? StandardCharsets.UTF_8 : charset);
+    }
+
+    /**
      * GET 原始字节，调用方自行解码（GBK 场景用这个）。
      */
     public byte[] getBytes(String url, String referer) {
+        return send(url, referer, false, REQUEST_TIMEOUT);
+    }
+
+    /**
+     * @param freshConnection true 表示用一次性连接（不池化、不复用）
+     */
+    private byte[] send(String url, String referer, boolean freshConnection, Duration timeout) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(url))
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(timeout)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                         + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
                 .header("Accept", "*/*")
@@ -66,9 +88,11 @@ public class StockHttpClient {
         if (referer != null && !referer.isEmpty()) {
             builder.header("Referer", referer);
         }
+        // 每次新建客户端即每次新建连接；.build() 不持有连接池之外的状态，开销可忽略
+        HttpClient http = freshConnection ? newClient() : client;
 
         try {
-            HttpResponse<byte[]> resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
             if (resp.statusCode() != 200) {
                 throw new StockDataException("上游返回 HTTP " + resp.statusCode());
             }
@@ -82,6 +106,13 @@ public class StockHttpClient {
             log.warn("行情请求失败 url={} err={}", url, e.toString());
             throw new StockDataException("行情数据获取失败：" + e.getMessage());
         }
+    }
+
+    private static HttpClient newClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(CONNECT_TIMEOUT)
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     /**

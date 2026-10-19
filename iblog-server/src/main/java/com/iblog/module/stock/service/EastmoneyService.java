@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -55,6 +56,20 @@ public class EastmoneyService {
     /** 历史条数上限：前端只画 30 日，留点余量但别让上游一次吐几千行 */
     public static final int MAX_HISTORY_LIMIT = 120;
 
+    /**
+     * 单次请求的重试次数。
+     *
+     * <p>实测该域名连接被 reset 的比例在三成上下（15 次里 6 次失败、8 次里 8 次成功都见过），
+     * 且失败通常几百毫秒内就返回 —— 多试几次成本很低。</p>
+     */
+    private static final int MAX_ATTEMPTS = 5;
+    /** 每次重试前固定等一会儿，太快连发更容易继续被拒 */
+    private static final long RETRY_BACKOFF_MS = 150L;
+    /** 整段重试的时间预算，必须小于前端 axios 的 15s 超时，留足余量给响应序列化 */
+    private static final long RETRY_BUDGET_MS = 6000L;
+    /** 单次请求超时：上游正常在 250-600ms 返回，给到 3s 已经很宽松 */
+    private static final Duration FETCH_TIMEOUT = Duration.ofSeconds(3);
+
     // ==================== 当日快照 ====================
 
     /**
@@ -71,9 +86,9 @@ public class EastmoneyService {
         String secid = StockCode.toEmSecid(code);
 
         // 1) 实时（delay）接口
-        List<String> lines = safeFetch(String.format(URL_REALTIME, secid));
-        if (!lines.isEmpty()) {
-            MoneyFlow mf = parseSnapshot(lines.get(0));
+        FetchResult realtime = safeFetch(String.format(URL_REALTIME, secid));
+        if (!realtime.lines.isEmpty()) {
+            MoneyFlow mf = parseSnapshot(realtime.lines.get(0));
             if (mf != null) {
                 mf.setCurrent(true);
                 return mf;
@@ -81,9 +96,9 @@ public class EastmoneyService {
         }
 
         // 2) 回退：历史接口最近一个交易日
-        lines = safeFetch(String.format(URL_HISTORY, secid, 1));
-        if (!lines.isEmpty()) {
-            MoneyFlow mf = parseSnapshot(lines.get(0));
+        FetchResult history = safeFetch(String.format(URL_HISTORY, secid, 1));
+        if (!history.lines.isEmpty()) {
+            MoneyFlow mf = parseSnapshot(history.lines.get(0));
             if (mf != null) {
                 // 上游有数据但当日未生成 —— 明确标注，前端据此显示交易日而非"今日"
                 mf.setCurrent(false);
@@ -91,14 +106,18 @@ public class EastmoneyService {
             }
         }
 
-        // 3) 都拿不到：区分「上游无此数据」与「请求失败」交给上层，这里给出无害的空对象
-        log.info("资金流向无数据 code={} secid={}", code, secid);
+        // 3) 都拿不到：区分「网络失败」与「上游确实没有」，前端文案完全不同
         MoneyFlow empty = new MoneyFlow();
         empty.setCurrent(false);
         empty.setUnavailable(true);
+        if (realtime.networkError || history.networkError) {
+            empty.setReason(MoneyFlow.REASON_NETWORK);
+            log.warn("资金流向上游不可达 code={} secid={}", code, secid);
+        } else {
+            log.info("资金流向无数据 code={} secid={}", code, secid);
+        }
         return empty;
     }
-
     // ==================== 历史 ====================
 
     /**
@@ -117,7 +136,8 @@ public class EastmoneyService {
         int n = limit == null || limit <= 0 ? 30 : Math.min(limit, MAX_HISTORY_LIMIT);
         String secid = StockCode.toEmSecid(code);
 
-        List<String> lines = safeFetch(String.format(URL_HISTORY, secid, n));
+        FetchResult fetched = safeFetch(String.format(URL_HISTORY, secid, n));
+        List<String> lines = fetched.lines;
         List<MoneyFlowHistoryItem> items = new ArrayList<>(lines.size());
         for (String line : lines) {
             MoneyFlowHistoryItem it = parseHistoryItem(line);
@@ -178,18 +198,66 @@ public class EastmoneyService {
     }
 
     /**
-     * 拉取并解析，网络层面的失败降级为空列表。
+     * 一次上游拉取的结果：解析出的数据行 + 是否因为网络原因彻底失败。
+     *
+     * <p>之所以要把这两件事分开带出去：{@code lines} 为空有两种截然不同的含义 ——
+     * 「请求通了但上游说没有」（该股确实无数据）和「根本没连上」（过会儿再试就好）。
+     * 前端对这两种情况的文案完全不同，服务端如果统一成空数组，就等于把信息丢了。</p>
+     */
+    private record FetchResult(List<String> lines, boolean networkError) {
+        static FetchResult ok(List<String> lines) {
+            return new FetchResult(lines, false);
+        }
+
+        static FetchResult failed() {
+            return new FetchResult(new ArrayList<>(), true);
+        }
+    }
+
+    /**
+     * 拉取并解析，网络层面的失败降级为 {@link FetchResult#failed()}。
      *
      * <p>为什么吞异常：资金流是文章页的「附加信息」，上游抖动不应该让整个详情页报错。
-     * 真正的失败会在响应里体现为 {@code current=false} + 空数据，前端有对应的空态文案。</p>
+     * 真正的失败会在响应里体现为 {@code unavailable=true} + 空数据，前端有对应的空态文案。</p>
+     *
+     * <p><b>为什么要重试</b>：实测东财 push2 系列的连接会<b>间歇性被重置</b>
+     * （{@code HTTP/1.1 header parser received no bytes}），同一秒内换个连接又通了，
+     * 15 次里 6 次失败、8 次里 8 次成功都出现过 —— 与请求内容、请求头都无关，就是通道问题。
+     * 单次失败直接当成「无数据」的话，页面会显示一个假的「暂无资金流数据」，比报错更误导人。</p>
+     *
+     * <p><b>为什么有总预算</b>：失败通常在几百毫秒内返回，但偶尔会拖到超时。重试次数 ×
+     * 单次超时如果超过前端 axios 的 15 秒，用户看到的就是「加载中」一直转到超时 —— 那比
+     * 立刻告诉他「暂时取不到」还糟。所以给整段重试一个硬预算，超了就放弃。</p>
      */
-    private List<String> safeFetch(String url) {
+    private FetchResult safeFetch(String url) {
+        long deadline = System.currentTimeMillis() + RETRY_BUDGET_MS;
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (System.currentTimeMillis() >= deadline) {
+                log.warn("资金流向重试预算用完 url={} attempts={}", url, attempt - 1);
+                break;
+            }
+            try {
+                String text = http.getTextNoKeepAlive(url, REFERER, java.nio.charset.StandardCharsets.UTF_8,
+                        FETCH_TIMEOUT);
+                return FetchResult.ok(EmFflowParser.parseKlines(text));
+            } catch (Exception e) {
+                last = e instanceof RuntimeException re ? re : new StockDataException(e.getMessage());
+                log.warn("资金流向请求失败 url={} attempt={}/{} err={}", url, attempt, MAX_ATTEMPTS, e.getMessage());
+                if (attempt < MAX_ATTEMPTS) {
+                    sleepQuietly(RETRY_BACKOFF_MS);
+                }
+            }
+        }
+        log.warn("资金流向请求最终失败 url={} err={}", url, last == null ? "unknown" : last.getMessage());
+        return FetchResult.failed();
+    }
+
+    private static void sleepQuietly(long ms) {
         try {
-            String text = http.getText(url, REFERER, java.nio.charset.StandardCharsets.UTF_8);
-            return EmFflowParser.parseKlines(text);
-        } catch (Exception e) {
-            log.warn("资金流向请求失败 url={} err={}", url, e.getMessage());
-            return new ArrayList<>();
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }

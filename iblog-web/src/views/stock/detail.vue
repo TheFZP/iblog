@@ -6,11 +6,15 @@ import {
   fetchKline,
   fetchIntraday,
   fetchOrderBook,
+  fetchMoneyFlow,
+  fetchMoneyFlowHistory,
   type StockQuote,
   type KlineItem,
   type IntradayItem,
   type OrderBook,
-  type KlinePeriod
+  type KlinePeriod,
+  type MoneyFlow,
+  type MoneyFlowHistoryItem
 } from '@/api/stock'
 import { useWatchlist } from '@/composables/useWatchlist'
 import { usePositions } from '@/composables/usePositions'
@@ -18,6 +22,7 @@ import { usePriceAlerts } from '@/composables/usePriceAlerts'
 import KlineChart from '@/components/stock/KlineChart.vue'
 import IntradayChart from '@/components/stock/IntradayChart.vue'
 import DepthPanel from '@/components/stock/DepthPanel.vue'
+import MoneyFlowSection from '@/components/stock/MoneyFlowSection.vue'
 import PriceAlertDialog from '@/components/stock/PriceAlertDialog.vue'
 import PositionDialog from '@/components/stock/PositionDialog.vue'
 import {
@@ -68,6 +73,15 @@ const intradayStale = ref(false)
 
 const book = ref<OrderBook | null>(null)
 
+const moneyFlow = ref<MoneyFlow | null>(null)
+const moneyFlowLoading = ref(false)
+const moneyFlowStale = ref(false)
+const moneyFlowHistory = ref<MoneyFlowHistoryItem[]>([])
+const moneyFlowHistoryLoading = ref(false)
+
+/** 资金流历史只在换股票时拉一次：日线级数据，没必要跟着 15 秒刷新 */
+let moneyFlowHistoryLoadedFor = ''
+
 const chartMode = ref<'intraday' | 'kline'>('intraday')
 const showAlertDialog = ref(false)
 const showPositionDialog = ref(false)
@@ -80,6 +94,9 @@ let quoteSeq = 0
 let klineSeq = 0
 let intradaySeq = 0
 let depthSeq = 0
+/** 当日快照与历史是两个独立的请求流，各自的序号互不干扰 —— 共用会导致加载态卡死 */
+let moneyFlowSeq = 0
+let moneyFlowHistorySeq = 0
 let refreshTimer: number | null = null
 let themeObserver: MutationObserver | null = null
 
@@ -184,6 +201,66 @@ async function loadDepth() {
   }
 }
 
+/**
+ * 当日资金流快照。
+ *
+ * <p>上游在集合竞价/非交易日拿不到当日数据时，后端会退化成「最近交易日 + current=false」，
+ * 这里不做特殊处理，交给组件显示日期——否则页面会出现一个空白的「今日」。</p>
+ */
+async function loadMoneyFlow() {
+  const seq = ++moneyFlowSeq
+  moneyFlowLoading.value = true
+  try {
+    const data = await fetchMoneyFlow(code.value)
+    if (seq !== moneyFlowSeq) {
+      return
+    }
+    moneyFlow.value = data
+    moneyFlowStale.value = false
+  } catch {
+    if (seq === moneyFlowSeq) {
+      // 保留旧快照，只标记旧数据
+      moneyFlowStale.value = true
+    }
+  } finally {
+    if (seq === moneyFlowSeq) {
+      moneyFlowLoading.value = false
+    }
+  }
+}
+
+/**
+ * 近 30 日资金流历史：日线级数据，换股票才重新拉。
+ *
+ * <p><b>必须用独立的序号</b>：早先和 {@link loadMoneyFlow} 共用一个 `moneyFlowSeq`，
+ * 两者并发时后发者的 `++` 会让先发者的序号失效 —— 先发者进不了 finally，
+ * `moneyFlowLoading` 永远停在 true，页面就卡在「加载中…」。</p>
+ */
+async function loadMoneyFlowHistory(force = false) {
+  if (!force && moneyFlowHistoryLoadedFor === code.value) {
+    return
+  }
+  const seq = ++moneyFlowHistorySeq
+  moneyFlowHistoryLoading.value = true
+  try {
+    const data = await fetchMoneyFlowHistory(code.value, 30)
+    if (seq !== moneyFlowHistorySeq) {
+      return
+    }
+    moneyFlowHistory.value = data ?? []
+    moneyFlowHistoryLoadedFor = code.value
+  } catch {
+    // 历史拿不到就空着，组件会显示「暂无数据」，不影响当日快照
+    if (seq === moneyFlowHistorySeq) {
+      moneyFlowHistory.value = []
+    }
+  } finally {
+    if (seq === moneyFlowHistorySeq) {
+      moneyFlowHistoryLoading.value = false
+    }
+  }
+}
+
 /** 切换股票：清空旧数据再加载，避免闪一下上一只的图表 */
 function resetForNewCode() {
   quote.value = null
@@ -193,13 +270,27 @@ function resetForNewCode() {
   intraday.value = []
   intradayStale.value = false
   book.value = null
+  moneyFlow.value = null
+  moneyFlowStale.value = false
+  moneyFlowHistory.value = []
+  moneyFlowHistoryLoadedFor = ''
+  // 序号必须一起重置：旧股票的请求若还悬着，回来时不该再把 loading 改回 false
+  moneyFlowSeq++
+  moneyFlowHistorySeq++
   // K 线视图的身份靠「首根日期+数量」区分，换股票必须回到分时并重置周期
   chartMode.value = 'intraday'
   period.value = 'day'
 }
 
 async function loadAll() {
-  await Promise.all([loadQuote(), loadKline(), loadIntraday(), loadDepth()])
+  await Promise.all([
+    loadQuote(),
+    loadKline(),
+    loadIntraday(),
+    loadDepth(),
+    loadMoneyFlow(),
+    loadMoneyFlowHistory()
+  ])
 }
 
 function changePeriod(p: KlinePeriod) {
@@ -210,9 +301,9 @@ function changePeriod(p: KlinePeriod) {
   loadKline()
 }
 
-/** 手动刷新：行情 + 分时 + 盘口（K 线是历史数据，不需要 15 秒一刷） */
+/** 手动刷新：行情 + 分时 + 盘口 + 当日资金流（K 线与历史资金流是日线数据，不需要刷） */
 async function refreshAll() {
-  await Promise.all([loadQuote(), loadIntraday(), loadDepth()])
+  await Promise.all([loadQuote(), loadIntraday(), loadDepth(), loadMoneyFlow()])
 }
 
 function startAutoRefresh() {
@@ -456,6 +547,16 @@ const stats = computed(() => {
     <section class="chart-card chart-card--depth">
       <DepthPanel :book="book" :prev-close="quote?.prevClose ?? null" />
     </section>
+
+    <!-- 主力资金：当日分档 + 近 30 日净流入 -->
+    <MoneyFlowSection
+      :money-flow="moneyFlow"
+      :money-flow-loading="moneyFlowLoading"
+      :money-flow-history="moneyFlowHistory"
+      :money-flow-history-loading="moneyFlowHistoryLoading"
+      :stale="moneyFlowStale"
+    />
+
     <!-- 弹窗 -->
     <PriceAlertDialog
       :show="showAlertDialog"

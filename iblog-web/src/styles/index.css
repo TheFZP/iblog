@@ -39,6 +39,12 @@
   --c-accent: #b45309;
   --c-success: #15803d;
 
+  /* 涨跌色（A 股口径：红涨绿跌）。
+     行情相关组件（K 线、盘口、资金流、价格提醒…）都要用，统一放全局，
+     组件内直接用 .tone-up / .tone-down / .tone-flat 或这两个变量即可。 */
+  --stock-up: #d93025;
+  --stock-down: #14803c;
+
   /* 遮罩 */
   --c-overlay: rgba(22, 24, 26, 0.44);
 
@@ -70,6 +76,10 @@
 
   --c-accent: #f0a05a;
   --c-success: #5cc98a;
+
+  /* 涨跌色：深色下提亮，否则 #14803c 在 #101315 底上几乎看不清 */
+  --stock-up: #ff6b5e;
+  --stock-down: #45c26f;
 
   --c-overlay: rgba(0, 0, 0, 0.6);
 
@@ -296,6 +306,21 @@ body {
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
+}
+
+/* 涨跌色调：A 股红涨绿跌。
+   之前行情相关的 4 个组件各自在 scoped 样式里重复定义了这套类，
+   新组件又要用，遂提到全局；组件里的同名规则保留（优先级更高，行为不变）。 */
+.tone-up {
+  color: var(--stock-up);
+}
+
+.tone-down {
+  color: var(--stock-down);
+}
+
+.tone-flat {
+  color: var(--c-text-secondary);
 }
 
 /* 章节标签：小字号大写 + 一条延伸的细线，编辑式排版的基本元件 */
