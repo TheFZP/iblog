@@ -1,6 +1,7 @@
 import { watch } from 'vue'
 import { fetchQuotes } from '@/api/stock'
 import { getMarketState, refreshIntervalMs, isTradingHours } from '@/utils/marketTime'
+import { useNotify } from './useNotify'
 import { usePriceAlerts } from './usePriceAlerts'
 import { usePositionAlerts } from './usePositionAlerts'
 import { useWatchlist } from './useWatchlist'
@@ -48,6 +49,16 @@ function probeCode(watchlist: string[], positions: string[], alertCodes: string[
 
 async function tick() {
   lastTickAt = Date.now()
+
+  // 没有通知权限时，判定出来也发不出去（sendNotification 会返回 false，
+  // check 函数于是不标记已通知 —— 这是对的，用户放开权限后还该收到）。
+  // 既然如此就别扫了：白打一轮上游请求，用户还看不到任何东西。
+  // 权限通过行情页的「开启通知」按钮授予，watch 到变化后会重新 start。
+  const { permission } = useNotify()
+  if (permission.value !== 'granted') {
+    return
+  }
+
   const { watchlist } = useWatchlist()
   const { positions } = usePositions()
   const { alerts, checkPriceAlerts } = usePriceAlerts()
@@ -169,13 +180,29 @@ export function stopAlertWatcher() {
 /**
  * 为「忘了点开始」的场景兜底：在应用外壳里 watch 一次，
  * 只要用户配置了任一提醒就自动启动巡查，不必额外给用户一个开关。
+ *
+ * <p>同时 watch 通知权限：没权限时 tick() 会直接返回（判定了也发不出去），
+ * 用户点了「开启通知」之后要能立刻真正开始工作，而不是等下一次整页加载。</p>
  */
 export function useAutoStartAlertWatcher() {
   const { alerts } = usePriceAlerts()
   const { configs } = usePositionAlerts()
+  const { permission } = useNotify()
+
   watch(
-    () => [alerts.value.some((a) => a.enabled), Object.keys(configs.value).length > 0] as const,
-    ([hasPriceAlert, hasPositionAlert]) => {
+    () => [
+      alerts.value.some((a) => a.enabled),
+      Object.keys(configs.value).length > 0,
+      permission.value === 'granted'
+    ] as const,
+    ([hasPriceAlert, hasPositionAlert, canNotify]) => {
+      if (!canNotify) {
+        // 权限被收回（或从未授予）时停掉轮询：扫了也发不出去
+        if (started) {
+          stopAlertWatcher()
+        }
+        return
+      }
       if (hasPriceAlert || hasPositionAlert) {
         startAlertWatcher()
       }
