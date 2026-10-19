@@ -86,9 +86,15 @@ function initChart() {
   }
   const { theme } = colors()
 
+  // 挂载时若还处在空态，容器是 display:none，clientWidth/clientHeight 都是 0。
+  // lightweight-charts 在 0 尺寸下会算出非法布局，这里给个合理兜底；
+  // 等数据到达、容器显示后，ResizeObserver 会把真实尺寸同步回来。
+  const initWidth = container.value.clientWidth || 600
+  const initHeight = container.value.clientHeight || 180
+
   chart = createChart(container.value, {
-    width: container.value.clientWidth,
-    height: container.value.clientHeight,
+    width: initWidth,
+    height: initHeight,
     layout: {
       background: { type: ColorType.Solid, color: 'transparent' },
       textColor: theme.text,
@@ -137,9 +143,17 @@ function initChart() {
   })
 
   resizeObserver = new ResizeObserver(() => {
-    if (chart && container.value) {
-      chart.applyOptions({ width: container.value.clientWidth, height: container.value.clientHeight })
+    if (!chart || !container.value) {
+      return
     }
+    const w = container.value.clientWidth
+    const h = container.value.clientHeight
+    // 空态时容器是 display:none，尺寸为 0；用 0 去 applyOptions 会让图表报错/变形。
+    // 等有数据、容器可见后 ResizeObserver 会再触发一次，那时再同步尺寸。
+    if (w <= 0 || h <= 0) {
+      return
+    }
+    chart.applyOptions({ width: w, height: h })
   })
   resizeObserver.observe(container.value)
 
@@ -228,9 +242,10 @@ defineExpose({ applyTheme })
 
 <template>
   <div class="mf">
-    <div class="mf__head">
-      <span class="mf__title">主力净流入 · 近 {{ data.length || 30 }} 日</span>
-      <template v-if="!isEmpty()">
+    <!-- 有数据才显示整块图表（标题 + chips + 图 + 图例）；没数据时只留一行空态文案 -->
+    <template v-if="!isEmpty()">
+      <div class="mf__head">
+        <span class="mf__title">主力净流入 · 近 {{ data.length || 30 }} 日</span>
         <span class="mf__chips">
           <span class="mf__chip" :class="sumOf(1) >= 0 ? 'tone-up' : 'tone-down'">
             今日 {{ fmtSignedWan(sumOf(1)) }}
@@ -250,10 +265,21 @@ defineExpose({ applyTheme })
           <i class="mf__dot mf__dot--down" />净流出
           <i class="mf__dot mf__dot--ma" />{{ MA_DAYS }}日均线
         </span>
-      </template>
-    </div>
+      </div>
+    </template>
 
-    <div ref="container" class="mf__chart" role="img" :aria-label="`近 ${data.length} 日主力净流入柱状图`" />
+    <!--
+      用 v-show 而不是 v-if：lightweight-charts 需要这个 DOM 节点在挂载时就存在，
+      数据是异步到达的，靠 v-if 会拿不到容器、之后也补不回来。
+      所以首屏可能先创建在一个隐藏的容器上，数据来了再显示 —— 这是可接受的。
+    -->
+    <div
+      v-show="!isEmpty()"
+      ref="container"
+      class="mf__chart"
+      role="img"
+      :aria-label="`近 ${data.length} 日主力净流入柱状图`"
+    />
 
     <div v-if="isEmpty() && !loading" class="mf__empty">暂无资金流向历史数据</div>
     <div v-else-if="isEmpty() && loading" class="mf__empty">加载中…</div>

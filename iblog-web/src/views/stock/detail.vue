@@ -346,11 +346,23 @@ function setupThemeObserver() {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 }
 
-/** 从后台切回来立刻补一次，不然要等满 15 秒 */
+/**
+ * 从后台切回来时补一次刷新。
+ *
+ * <p>只在可能真有变化时补：交易时段与午休。盘前/盘后/休市价格不动，
+ * 切个标签页就打一遍行情+分时+盘口+资金流四个接口纯属浪费；
+ * 这种情况下交给降频定时器，或者用户点「刷新」。</p>
+ */
 function onVisibilityChange() {
-  if (document.visibilityState === 'visible') {
+  if (document.visibilityState !== 'visible') {
+    return
+  }
+  const s = getMarketState(code.value, quote.value?.quoteTime)
+  if (s === 'open' || s === 'break') {
     refreshAll()
   }
+  // 时间可能已经跨过收盘，按最新状态重新排期
+  scheduleRefresh()
 }
 
 watch(

@@ -528,11 +528,24 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onVisible)
 })
 
+/**
+ * 从后台切回来时补一次刷新。
+ *
+ * <p>只补「可能真有变化」的情况：交易时段立刻刷，午休也可以刷（偶有零星成交）；
+ * 盘前/盘后/休市时价格不会动，切个标签页就打一遍四类接口纯属浪费 ——
+ * 这种情况交给降频定时器即可，用户想看最新数字可以点「刷新」。</p>
+ */
 function onVisible() {
-  if (document.visibilityState === 'visible') {
-    refreshAll(false)
-    scheduleRefresh()
+  if (document.visibilityState !== 'visible') {
+    return
   }
+  const s = marketState.value
+  if (s === 'open' || s === 'break') {
+    refreshAll(false)
+  }
+  // 无论刷没刷，都要按最新状态重排定时器：
+  // 可能刚才已经跨过收盘，下次该等 5 分钟而不是 15 秒
+  scheduleRefresh()
 }
 
 onUnmounted(() => {
