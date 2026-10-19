@@ -4,8 +4,10 @@
  * <p>为什么要自己做：价格提醒只在交易时段检测，否则周末/深夜浏览页面会被
  * 隔夜跳空误触发。A 股 09:30-11:30 / 13:00-15:00，港股 09:30-12:00 / 13:00-16:00。</p>
  *
- * <p>本文件不做交易日历（法定节假日）判断 —— 那需要额外拉取日历接口，
- * 网页端暂不引入。周末判断足以覆盖误报的主要场景。</p>
+ * <p>关于法定节假日：纯时钟判断无法知道「今天是十一长假」，会把 10 月 1 日显示成
+ * 「交易中」。本文件不内置节假日表（每年要人工维护，一定会过期），而是提供
+ * {@link isQuoteFresh}——用上游报价自带的时间戳反证「市场其实没动」。两者组合，
+ * 时钟给「现在该不该开市」，时间戳给「实际上有没有在动」。</p>
  */
 
 /** 各市场交易时段（分钟数，含两端）：[上午开, 上午收] / [下午开, 下午收] */
@@ -25,15 +27,23 @@ export function getToday(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-export type MarketState = 'pre' | 'open' | 'break' | 'post' | 'holiday'
+export type MarketState = 'pre' | 'open' | 'break' | 'post' | 'holiday' | 'stale'
 
 /**
  * 市场状态。
  *
+ * <p>{@code stale} 表示「时钟说是交易时段，但上游时间戳明显落后」——典型的法定节假日、
+ * 或者数据源卡住。需要把上游时间戳传进 {@code quoteTime} 才能识别；不传就只能是纯时钟判断。</p>
+ *
  * @param code 股票代码，5 位数字按港股
+ * @param quoteTime 上游行情时间 `yyyy-MM-dd HH:mm:ss`，可选
  * @param at 基准时刻，默认当前（便于测试）
  */
-export function getMarketState(code?: string, at: Date = new Date()): MarketState {
+export function getMarketState(
+  code?: string,
+  quoteTime?: string | null,
+  at: Date = new Date()
+): MarketState {
   const market = isHkCode(code) ? 'HK' : 'A'
   const [morningOpen, morningClose] = SESSIONS[market].morning
   const [afternoonOpen, afternoonClose] = SESSIONS[market].afternoon
@@ -44,16 +54,57 @@ export function getMarketState(code?: string, at: Date = new Date()): MarketStat
   }
 
   const t = at.getHours() * 60 + at.getMinutes()
-  if (t < morningOpen) return 'pre'
-  if (t <= morningClose) return 'open'
-  if (t < afternoonOpen) return 'break'
-  if (t <= afternoonClose) return 'open'
-  return 'post'
+  const clockState: MarketState =
+    t < morningOpen
+      ? 'pre'
+      : t <= morningClose
+        ? 'open'
+        : t < afternoonOpen
+          ? 'break'
+          : t <= afternoonClose
+            ? 'open'
+            : 'post'
+
+  // 只有「时钟认为在交易」时才需要上游反证；盘前/盘后/午休本来就该是不动的
+  if ((clockState === 'open' || clockState === 'break') && quoteTime && !isQuoteFresh(quoteTime, at)) {
+    return 'stale'
+  }
+  return clockState
+}
+
+/** 上游时间戳容忍度（分钟）：行情推送本就可能有几十秒延迟，别把正常延迟当成停更 */
+const FRESH_TOLERANCE_MIN = 10
+
+/**
+ * 上游行情时间戳是否「还在动」。
+ *
+ * @param quoteTime `yyyy-MM-dd HH:mm:ss`
+ * @param at 基准时刻，默认当前
+ */
+export function isQuoteFresh(quoteTime?: string | null, at: Date = new Date()): boolean {
+  const ts = parseQuoteTime(quoteTime)
+  if (ts == null) {
+    // 拿不到时间戳时不做判断 —— 宁可不报，也别把「字段缺失」说成「数据过期」
+    return true
+  }
+  const diffMin = (at.getTime() - ts) / 60000
+  return diffMin <= FRESH_TOLERANCE_MIN
+}
+
+/** 解析 `yyyy-MM-dd HH:mm:ss`（也接受带 T 的 ISO 形式）→ 毫秒；解析失败返回 null */
+export function parseQuoteTime(quoteTime?: string | null): number | null {
+  if (!quoteTime) return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(quoteTime)
+  if (!m) return null
+  const [, y, mo, d, h, mi, s] = m
+  // 用本地时间构造：上游给的就是交易所本地时间（东八区），不是 UTC
+  const ts = new Date(+y, +mo - 1, +d, +h, +mi, s ? +s : 0).getTime()
+  return Number.isNaN(ts) ? null : ts
 }
 
 /** 是否在交易时段内（含午休，与价格提醒的轮询口径一致） */
 export function isTradingHours(code?: string, at: Date = new Date()): boolean {
-  const state = getMarketState(code, at)
+  const state = getMarketState(code, null, at)
   return state === 'open' || state === 'break'
 }
 
@@ -70,7 +121,48 @@ export function marketStateLabel(state: MarketState): string {
       return '已收盘'
     case 'holiday':
       return '休市'
+    case 'stale':
+      return '休市'
   }
+}
+
+/** 状态短标签，用于行情页与详情页的状态胶囊 */
+export function marketStateBadge(state: MarketState): { text: string; live: boolean } {
+  switch (state) {
+    case 'open':
+      return { text: '交易中', live: true }
+    case 'break':
+      return { text: '午间休市', live: false }
+    case 'pre':
+      return { text: '未开盘', live: false }
+    case 'post':
+      return { text: '已收盘', live: false }
+    case 'stale':
+    case 'holiday':
+      return { text: '休市', live: false }
+  }
+}
+
+/**
+ * 刷新间隔（毫秒）——按市场状态动态变化。
+ *
+ * <p>原来固定 15 秒全量刷四五个接口，收盘后、深夜、周末照样刷，等于白烧用户的流量和
+ * 后端的上游配额。分三档：交易中 15 秒、午休 60 秒（仍有零星成交）、其余 5 分钟。</p>
+ */
+export function refreshIntervalMs(state: MarketState, hidden = false): number {
+  let base: number
+  switch (state) {
+    case 'open':
+      base = 15_000
+      break
+    case 'break':
+      base = 60_000
+      break
+    default:
+      base = 300_000
+  }
+  // 页面在后台时没必要按前台频率刷
+  return hidden ? base * 4 : base
 }
 
 /** 裁剪历史记录，只保留最近 N 天：{ "YYYY-MM-DD": {...} } */

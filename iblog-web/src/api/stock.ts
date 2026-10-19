@@ -36,6 +36,8 @@ export interface StockQuote {
   currency: string
   suspended: boolean
   amount: number
+  /** 上游行情时间 yyyy-MM-dd HH:mm:ss；空串表示上游未给 */
+  quoteTime?: string
 }
 
 export interface SearchResult {
@@ -51,6 +53,8 @@ export interface MarketIndex {
   price: number
   change: number
   changePct: number
+  /** 上游行情时间 yyyy-MM-dd HH:mm:ss；空串表示上游未给 */
+  quoteTime?: string
 }
 
 export interface KlineItem {

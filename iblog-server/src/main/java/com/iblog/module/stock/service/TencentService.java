@@ -117,6 +117,7 @@ public class TencentService {
         q.setAmplitude(num(at(fields, 43)));
         q.setMarket("HK");
         q.setCurrency("HK$");
+        q.setQuoteTime(fixQuoteTime(at(fields, 30)));
         return q;
     }
 
@@ -142,6 +143,7 @@ public class TencentService {
         q.setAmplitude(num(at(f, 43)));
         q.setMarket(StockCode.marketOf(code));
         q.setCurrency("¥");
+        q.setQuoteTime(fixQuoteTime(at(f, 30)));
         return q;
     }
 
@@ -194,6 +196,7 @@ public class TencentService {
         // 注意：List.reversed() 是 Java 21 的 API，本项目 JDK 17 用不了
         java.util.Collections.reverse(asks);
         book.setAsks(asks);
+        book.setQuoteTime(fixQuoteTime(at(f, 30)));
         return book;
     }
 
@@ -496,6 +499,7 @@ public class TencentService {
         data.setPreClose(preClose);
         data.setDate(date);
         data.setCode(code);
+        data.setQuoteTime(fixQuoteTime(stockData.path("qt").path(tCode).path(30).asText("")));
         return data;
     }
 
@@ -522,6 +526,7 @@ public class TencentService {
         mi.setPrice(num(at(f, 3)));
         mi.setChange(num(at(f, 31)));
         mi.setChangePct(num(at(f, 32)));
+        mi.setQuoteTime(fixQuoteTime(at(f, 30)));
         return mi;
     }
 
@@ -567,6 +572,43 @@ public class TencentService {
         }
         return raw;
     }
+
+    /**
+     * 腾讯报价时间字段 [30] 归一化为 {@code yyyy-MM-dd HH:mm:ss}。
+     *
+     * <p>实测同一接口下两种格式并存：
+     * A 股是 {@code 20261019092730}（14 位纯数字），港股是 {@code 2026/10/16 16:08:22}（斜杠分隔、
+     * 月日不补零）。归一化后前端才不必为每个市场写一套解析。</p>
+     *
+     * <p>解析不了就返回空串而不是抛错 —— 时间戳只是「锦上添花」，
+     * 缺它不该让整个行情请求失败。</p>
+     */
+    private String fixQuoteTime(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String s = raw.trim();
+        if (s.length() == 14 && s.chars().allMatch(Character::isDigit)) {
+            return s.substring(0, 4) + "-" + s.substring(4, 6) + "-" + s.substring(6, 8)
+                    + " " + s.substring(8, 10) + ":" + s.substring(10, 12) + ":" + s.substring(12, 14);
+        }
+        Matcher m = HK_TIME.matcher(s);
+        if (m.matches()) {
+            return String.format("%s-%02d-%02d %02d:%02d:%02d",
+                    m.group(1),
+                    Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)),
+                    Integer.parseInt(m.group(4)), Integer.parseInt(m.group(5)), Integer.parseInt(m.group(6)));
+        }
+        // 已经是目标格式就原样透传
+        if (s.length() >= 19 && s.charAt(4) == '-' && s.charAt(7) == '-') {
+            return s;
+        }
+        return "";
+    }
+
+    /** 港股回报时间 {@code yyyy/M/d H:mm:ss}：月、日、时不补零 */
+    private static final Pattern HK_TIME =
+            Pattern.compile("(\\d{4})/(\\d{1,2})/(\\d{1,2})[ T](\\d{1,2}):(\\d{2}):(\\d{2})");
 
     private String at(String[] arr, int i) {
         return i < arr.length && arr[i] != null ? arr[i] : "";

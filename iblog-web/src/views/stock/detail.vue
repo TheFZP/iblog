@@ -29,7 +29,7 @@ import {
   toneClass,
   MINUTE_PERIODS
 } from '@/utils/stockFormat'
-import { isTradingHours, getMarketState, marketStateLabel } from '@/utils/marketTime'
+import { getMarketState, marketStateLabel, refreshIntervalMs } from '@/utils/marketTime'
 
 /**
  * 个股详情页。
@@ -89,8 +89,13 @@ const alertCount = computed(() => countEnabledForCode(code.value))
 const isHk = computed(() => quote.value?.market === 'HK' || /^\d{5}$/.test(code.value))
 /** 港股不支持分钟 K 线（后端直接抛错），按钮要禁用而不是让用户点了报错 */
 const supportsMinute = computed(() => !isHk.value)
-const isTrading = computed(() => isTradingHours(code.value))
-const marketLabel = computed(() => marketStateLabel(getMarketState(code.value)))
+/** 市场状态：结合上游时间戳，能识破「节假日时钟说在交易、实际没数据」 */
+const marketState = computed(() => getMarketState(code.value, quote.value?.quoteTime))
+const isTrading = computed(() => {
+  const s = marketState.value
+  return s === 'open' || s === 'break'
+})
+const marketLabel = computed(() => marketStateLabel(marketState.value))
 
 /** 页面标题跟随股票名 */
 watch(
@@ -212,18 +217,31 @@ async function refreshAll() {
 
 function startAutoRefresh() {
   stopAutoRefresh()
-  refreshTimer = window.setInterval(() => {
-    // 页面不可见时不刷新，省流量也省上游配额
-    if (document.visibilityState !== 'visible') {
-      return
+  scheduleRefresh()
+}
+
+/**
+ * 动态间隔刷新：每次刷完再排下一次，间隔由市场状态决定。
+ *
+ * <p>为什么不用 setInterval：固定 15 秒的定时器在收盘后照样跑（用户深夜挂着页面，
+ * 一整夜要打上万次上游接口），而 setInterval 里改不了间隔。链式 setTimeout 可以在
+ * 每次刷新后按最新状态重新决定下次等多久。</p>
+ */
+function scheduleRefresh() {
+  stopAutoRefresh()
+  const state = getMarketState(code.value, quote.value?.quoteTime)
+  const delay = refreshIntervalMs(state, document.visibilityState !== 'visible')
+  refreshTimer = window.setTimeout(async () => {
+    if (document.visibilityState === 'visible') {
+      await refreshAll()
     }
-    refreshAll()
-  }, 15000)
+    scheduleRefresh()
+  }, delay)
 }
 
 function stopAutoRefresh() {
   if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer)
+    window.clearTimeout(refreshTimer)
     refreshTimer = null
   }
 }

@@ -6,13 +6,13 @@
         <div class="page-head__main">
           <h1 class="page-title">行情</h1>
           <p class="page-desc">
-            自选股实时行情与市场热榜。数据来自腾讯财经与同花顺，每 {{ AUTO_REFRESH_SEC }} 秒自动刷新。
+            自选股实时行情与市场热榜。数据来自腾讯财经与同花顺，{{ stateBadge.live ? `每 ${refreshSec} 秒自动刷新` : '休市期间降频刷新' }}。
           </p>
         </div>
         <div class="page-head__side">
-          <span class="refresh-state" :class="{ 'is-live': isTradingTime }">
+          <span class="refresh-state" :class="{ 'is-live': stateBadge.live }">
             <span class="dot" aria-hidden="true" />
-            {{ isTradingTime ? '实时' : '休市' }}
+            {{ stateBadge.text }}<template v-if="lastQuoteTime"> · {{ lastQuoteTime }}</template>
           </span>
           <button
             class="btn btn--ghost refresh-btn"
@@ -236,8 +236,7 @@ import {
   type SearchResult
 } from '@/api/stock'
 import { useWatchlist, type WatchStock } from '@/composables/useWatchlist'
-
-const AUTO_REFRESH_SEC = 15
+import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
 
 const router = useRouter()
 
@@ -268,14 +267,26 @@ const searching = ref(false)
 const showDropdown = ref(false)
 const confirmClear = ref(false)
 
-/** 当前是否在交易时段（仅用于顶部状态文案，不控制刷新开关） */
+/** 当前市场状态：用大盘指数自带的上游时间戳做反证，比纯时钟判断可靠 */
+const marketState = computed(() => getMarketState(undefined, indices.value[0]?.quoteTime))
+
+/** 顶部状态胶囊：交易中 / 午间休市 / 未开盘 / 已收盘 / 休市 */
+const stateBadge = computed(() => marketStateBadge(marketState.value))
+
+/** 是否在交易时段（保留旧名，模板里已在用） */
 const isTradingTime = computed(() => {
-  const d = new Date()
-  const day = d.getDay()
-  if (day === 0 || day === 6) return false
-  const m = d.getHours() * 60 + d.getMinutes()
-  // 9:30-11:30, 13:00-15:00
-  return (m >= 570 && m <= 690) || (m >= 780 && m <= 900)
+  const s = marketState.value
+  return s === 'open' || s === 'break'
+})
+
+/** 当前刷新间隔（秒），展示给用户看，避免「为什么一直不刷新」的困惑 */
+const refreshSec = computed(() => refreshIntervalMs(marketState.value) / 1000)
+
+/** 最新一条上游时间戳，格式化成 HH:mm:ss */
+const lastQuoteTime = computed(() => {
+  const t = indices.value.find((i) => i.quoteTime)?.quoteTime
+  const m = t ? /(\d{2}:\d{2}:\d{2})/.exec(t) : null
+  return m ? m[1] : ''
 })
 
 /** 停牌判断：报价里带上的，用统一入口避免模板里到处取 quote */
@@ -425,21 +436,43 @@ function clearAll() {
 
 // ---------- 生命周期 ----------
 
-let timer: ReturnType<typeof setInterval> | undefined
+let timer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * 链式定时刷新：每次刷完按最新市场状态决定下次等多久。
+ *
+ * <p>固定 15 秒的问题：收盘后、深夜、周末照样全量刷四类接口，白烧用户流量与后端上游配额；
+ * 而 setInterval 改不了间隔。交易中 15 秒 / 午休 60 秒 / 其余 5 分钟，页面在后台再 ×4。</p>
+ */
+function scheduleRefresh() {
+  clearTimeout(timer)
+  const delay = refreshIntervalMs(marketState.value, document.visibilityState !== 'visible')
+  timer = setTimeout(async () => {
+    if (document.visibilityState === 'visible') {
+      await refreshAll(false)
+    }
+    scheduleRefresh()
+  }, delay)
+}
 
 onMounted(() => {
   refreshAll(false)
-  // 页面隐藏时不刷新，省带宽也避免后台堆积
-  timer = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      refreshAll(false)
-    }
-  }, AUTO_REFRESH_SEC * 1000)
+  scheduleRefresh()
+  // 切回前台时立刻补一次，别让用户盯着过期数据等到下一个 5 分钟
+  document.addEventListener('visibilitychange', onVisible)
 })
 
+function onVisible() {
+  if (document.visibilityState === 'visible') {
+    refreshAll(false)
+    scheduleRefresh()
+  }
+}
+
 onUnmounted(() => {
-  clearInterval(timer)
+  clearTimeout(timer)
   clearTimeout(searchTimer)
+  document.removeEventListener('visibilitychange', onVisible)
 })
 </script>
 

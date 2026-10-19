@@ -56,6 +56,14 @@ public class StockQuote {
     /** 币种符号 */
     private String currency;
 
+    /**
+     * 上游行情时间 yyyy-MM-dd HH:mm:ss（腾讯字段 [30]）。
+     *
+     * <p>这是判断「数据是否还在动」最硬的证据 —— 比本地时钟准，因为休市时它不会前进。
+     * 前端用它做「数据新鲜度」提示，为空表示上游未给（港股分时接口偶尔缺）。</p>
+     */
+    private String quoteTime;
+
     /** 成交量（手），别名，便于前端不同写法取值 */
     public double getAmount() {
         return turnover;

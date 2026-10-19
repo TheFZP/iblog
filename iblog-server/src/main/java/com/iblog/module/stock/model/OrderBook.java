@@ -24,6 +24,9 @@ public class OrderBook {
     @Schema(description = "买一到买五（价格由高到低）")
     private List<Level> bids;
 
+    @Schema(description = "上游行情时间 yyyy-MM-dd HH:mm:ss")
+    private String quoteTime;
+
     /** 单档：价格 + 委托量（手） */
     @Data
     @Schema(description = "盘口档位")
