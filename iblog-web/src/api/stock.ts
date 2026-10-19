@@ -193,3 +193,44 @@ export function fetchMoneyFlow(code: string) {
 export function fetchMoneyFlowHistory(code: string, limit = 30) {
   return get<MoneyFlowHistoryItem[]>('/stock/moneyflow/history', { code, limit })
 }
+
+/** 个股相对沪深300 的阶段表现。timeType：1=近1月 2=近3月 3=近6月 4=今年以来 */
+export interface MarketPerformance {
+  timeType: number
+  /** 个股区间涨跌幅（%） */
+  changeRate: number
+  /** 沪深300 同期涨跌幅（%） */
+  hs300ChangeRate: number
+}
+
+/** 同行业公司的营收排名。金额单位为**元**（展示时自己除 1e8 转亿） */
+export interface RevenueRanking {
+  stockCode: string
+  stockName: string
+  totalOperateIncome: number
+  /** 营收在行业内排名，1 = 最大 */
+  totalOperateIncomeRank: number
+  netProfit: number
+  netProfitRank: number
+  totalCap: number
+}
+
+export interface IndustryAverage {
+  totalOperateIncome: number
+  netProfit: number
+  totalCap: number
+}
+
+/** 个股行业分析。港股无此数据，返回 `industryName: '港股'` 的空结构 */
+export interface IndustryData {
+  industryName: string
+  marketPerformance: MarketPerformance[]
+  revenueRanking: RevenueRanking[]
+  industryAverage: IndustryAverage | null
+  /** 报表期，如「2026年中报」 */
+  reportType: string
+}
+
+export function fetchIndustry(code: string) {
+  return get<IndustryData>('/stock/industry', { code })
+}

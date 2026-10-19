@@ -2,6 +2,7 @@ package com.iblog.module.stock.controller;
 
 import com.iblog.common.result.R;
 import com.iblog.module.stock.model.HotStockItem;
+import com.iblog.module.stock.model.IndustryData;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketIndex;
@@ -12,6 +13,7 @@ import com.iblog.module.stock.model.SearchResult;
 import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
+import com.iblog.module.stock.service.IndustryService;
 import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.support.StockCode;
 import io.swagger.v3.oas.annotations.Operation;
@@ -44,6 +46,7 @@ public class StockController {
     private final TencentService tencentService;
     private final HotListService hotListService;
     private final EastmoneyService eastmoneyService;
+    private final IndustryService industryService;
 
     /** 首页展示的主要指数（上证 / 深证 / 创业板 / 沪深300 / 科创50 / 中证500） */
     private static final List<String> INDEX_CODES = List.of(
@@ -139,6 +142,13 @@ public class StockController {
             @Parameter(description = "交易日条数，默认 30")
             @RequestParam(required = false, defaultValue = "30") Integer limit) {
         return R.ok(eastmoneyService.fetchMoneyFlowHistory(code, limit));
+    }
+
+    @Operation(summary = "个股行业分析（市场表现 + 同行营收排名）",
+            description = "港股无此数据，返回 industryName=港股 的空结构")
+    @GetMapping("/industry")
+    public R<IndustryData> industry(@Parameter(description = "股票代码") @RequestParam String code) {
+        return R.ok(industryService.fetchIndustry(code));
     }
 
     @Operation(summary = "股票代码归一化（调试用）")

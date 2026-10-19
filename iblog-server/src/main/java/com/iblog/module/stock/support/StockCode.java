@@ -107,6 +107,24 @@ public final class StockCode {
     }
 
     /**
+     * 东方财富 HSF10 代码：{@code SH600519 / SZ000002 / BJ430047}。
+     *
+     * <p>与 {@link #toEmSecid} 的 {@code 1.600519} 不是一回事：secid 用于行情类接口
+     * （push2/push2his），HSF10（emweb.securities.eastmoney.com）要的是「市场大写 + 代码」。
+     * 实测传 secid 格式返回 400。</p>
+     */
+    public static String toEmHsf10Code(String code) {
+        String c = normalize(code);
+        if (isHk(c)) {
+            return "HK" + c;
+        }
+        if (isBse(c)) {
+            return "BJ" + c;
+        }
+        return isShanghai(c) ? "SH" + c : "SZ" + c;
+    }
+
+    /**
      * 市场标识：SH / SZ / BJ / HK，用于前端展示与自选股分组。
      */
     public static String marketOf(String code) {

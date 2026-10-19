@@ -505,7 +505,134 @@ a.chip:hover {
 }
 
 /* -------------------------------------------------------------
- *  6. 分页器（首页 / 列表页共用，故提到全局）
+ *  6. 弹窗外壳（行情模块通用）
+ *
+ *  为什么要提到全局：价格提醒、持仓、行业、技术指标、回测……
+ *  行情模块有七八个弹窗，每个都用 scoped 重复一遍遮罩 + 圆角 +
+ *  阴影 + 关闭按钮，改一处要改八处。这里只定义「壳」，
+ *  各弹窗内部的排版仍由自己负责。
+ * ------------------------------------------------------------- */
+.stock-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--s-5);
+  background: var(--c-overlay);
+  backdrop-filter: blur(2px);
+  animation: modal-fade 0.18s var(--ease-out) both;
+}
+
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.stock-modal__box {
+  width: min(720px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: var(--s-6);
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+  animation: modal-rise 0.22s var(--ease-out) both;
+}
+
+@keyframes modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 窄屏不要满屏留 padding，内容本来就挤 */
+@media (max-width: 640px) {
+  .stock-modal {
+    padding: var(--s-2);
+    align-items: end;
+  }
+
+  .stock-modal__box {
+    max-height: 92vh;
+    padding: var(--s-4);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+  }
+}
+
+.stock-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.stock-modal__title {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.stock-modal__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--r);
+  background: none;
+  color: var(--c-text-faint);
+  font-size: var(--t-md);
+  cursor: pointer;
+  transition: color 0.12s var(--ease), background-color 0.12s var(--ease);
+}
+
+.stock-modal__close:hover {
+  color: var(--c-text);
+  background: var(--c-surface-sunken);
+}
+
+/* 弹窗内的加载 / 错误 / 空状态，统一样式 */
+.stock-modal__state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-10) var(--s-4);
+  color: var(--c-text-muted);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.stock-modal__state--error {
+  cursor: pointer;
+  color: var(--stock-up);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stock-modal,
+  .stock-modal__box {
+    animation: none;
+  }
+}
+
+/* -------------------------------------------------------------
+ *  7. 分页器（首页 / 列表页共用，故提到全局）
  * ------------------------------------------------------------- */
 .pager {
   display: flex;

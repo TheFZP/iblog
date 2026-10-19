@@ -8,13 +8,15 @@ import {
   fetchOrderBook,
   fetchMoneyFlow,
   fetchMoneyFlowHistory,
+  fetchIndustry,
   type StockQuote,
   type KlineItem,
   type IntradayItem,
   type OrderBook,
   type KlinePeriod,
   type MoneyFlow,
-  type MoneyFlowHistoryItem
+  type MoneyFlowHistoryItem,
+  type IndustryData
 } from '@/api/stock'
 import { useWatchlist } from '@/composables/useWatchlist'
 import { usePositions } from '@/composables/usePositions'
@@ -23,6 +25,7 @@ import KlineChart from '@/components/stock/KlineChart.vue'
 import IntradayChart from '@/components/stock/IntradayChart.vue'
 import DepthPanel from '@/components/stock/DepthPanel.vue'
 import MoneyFlowSection from '@/components/stock/MoneyFlowSection.vue'
+import IndustryModal from '@/components/stock/IndustryModal.vue'
 import PriceAlertDialog from '@/components/stock/PriceAlertDialog.vue'
 import PositionDialog from '@/components/stock/PositionDialog.vue'
 import {
@@ -85,6 +88,15 @@ let moneyFlowHistoryLoadedFor = ''
 const chartMode = ref<'intraday' | 'kline'>('intraday')
 const showAlertDialog = ref(false)
 const showPositionDialog = ref(false)
+
+// ---------- 行业分析 ----------
+const showIndustryModal = ref(false)
+const industryData = ref<IndustryData | null>(null)
+const industryLoading = ref(false)
+const industryError = ref('')
+/** 行业数据是一次性的静态资料，按股票代码缓存，反复开关弹窗不重复请求 */
+const industryLoadedFor = ref('')
+let industrySeq = 0
 
 const klineRef = ref<InstanceType<typeof KlineChart> | null>(null)
 const intradayRef = ref<InstanceType<typeof IntradayChart> | null>(null)
@@ -261,6 +273,42 @@ async function loadMoneyFlowHistory(force = false) {
   }
 }
 
+/**
+ * 加载行业分析。
+ *
+ * <p>只在用户点开弹窗时才请求 —— 行业数据是静态资料（报表期级），
+ * 每个人打开详情页都去拉一次纯属浪费上游配额。</p>
+ */
+async function loadIndustry(force = false) {
+  const target = code.value
+  if (!target) return
+  if (!force && industryLoadedFor.value === target && industryData.value) {
+    return
+  }
+  const seq = ++industrySeq
+  industryLoading.value = true
+  industryError.value = ''
+  try {
+    const data = await fetchIndustry(target)
+    if (seq !== industrySeq) return
+    industryData.value = data
+    industryLoadedFor.value = target
+  } catch (e: unknown) {
+    if (seq !== industrySeq) return
+    // 失败保留上一次成功的数据（同一只股票重试时），只标错误
+    industryError.value = (e as { message?: string })?.message || '网络异常'
+  } finally {
+    if (seq === industrySeq) {
+      industryLoading.value = false
+    }
+  }
+}
+
+function openIndustry() {
+  showIndustryModal.value = true
+  loadIndustry()
+}
+
 /** 切换股票：清空旧数据再加载，避免闪一下上一只的图表 */
 function resetForNewCode() {
   quote.value = null
@@ -274,9 +322,14 @@ function resetForNewCode() {
   moneyFlowStale.value = false
   moneyFlowHistory.value = []
   moneyFlowHistoryLoadedFor = ''
+  // 行业数据跟着股票走，换股票必须清掉，否则弹窗里还是上一只的同行
+  industryData.value = null
+  industryError.value = ''
+  industryLoadedFor.value = ''
   // 序号必须一起重置：旧股票的请求若还悬着，回来时不该再把 loading 改回 false
   moneyFlowSeq++
   moneyFlowHistorySeq++
+  industrySeq++
   // K 线视图的身份靠「首根日期+数量」区分，换股票必须回到分时并重置周期
   chartMode.value = 'intraday'
   period.value = 'day'
@@ -464,6 +517,7 @@ const stats = computed(() => {
         <button class="btn btn--ghost btn--sm" @click="showAlertDialog = true">
           价格提醒<span v-if="alertCount > 0" class="btn__badge">{{ alertCount }}</span>
         </button>
+        <button class="btn btn--ghost btn--sm" @click="openIndustry">行业</button>
       </div>
     </header>
 
@@ -582,6 +636,16 @@ const stats = computed(() => {
       :editing="position"
       :preset="quote ? { code: quote.code, name: quote.name, price: quote.price } : { code, name: code }"
       @close="showPositionDialog = false"
+    />
+    <IndustryModal
+      :show="showIndustryModal"
+      :data="industryData"
+      :loading="industryLoading"
+      :error="industryError"
+      :code="code"
+      :change-pct="quote?.changePct"
+      @close="showIndustryModal = false"
+      @retry="loadIndustry(true)"
     />
 
     <p class="detail__foot">行情数据来自腾讯财经，延迟数秒。本页不构成任何投资建议。</p>
