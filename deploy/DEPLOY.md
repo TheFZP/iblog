@@ -936,14 +936,19 @@ A：引擎装上了但 Compose 插件没装（AL4 的 moby 包不含 compose）�
 ### 1. 日常开发
 
 ```bash
-# 后端（默认就是本地库）
+# 后端（默认就是本地库，监听 10730）
 java -jar iblog-server/build/libs/iblog-server.jar --spring.profiles.active=dev
 
 # 前端
-cd iblog-web && node node_modules/vite/bin/vite.js    # http://localhost:5174
+cd iblog-web && node node_modules/vite/bin/vite.js    # http://localhost:5181
 ```
 
-前端 dev server 已把 `/api` 代理到 `localhost:8080`，不用额外配置。
+前端 dev server 已把 `/api` 代理到 `localhost:10730`，不用额外配置。
+
+> 本地端口：后端 **10730**、管理后台 **5180**、官网 **5181**。都不是框架默认端口，
+> 因为本机同时开多个项目时 8080/5173 很容易被抢。端口被占时 Vite 会直接报错退出
+> （`strictPort: true`），不会悄悄换端口。这只是本地开发端口，线上容器内部仍是
+> 8080（前端 nginx 按服务名 `iblog-server:8080` 反代），对外映射由 `deploy/.env` 决定。
 
 **Redis 保持本地**：它只存登录态和站点配置缓存，连线上会让本地登录覆盖线上 token，
 把浏览器里的线上登录态挤掉。

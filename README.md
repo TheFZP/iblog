@@ -173,7 +173,7 @@ cd iblog-server
 - 默认 `dev` 环境，连接 `localhost:3306/iblog`，Redis `localhost:6379`（账号密码以 `application-dev.yml` 为准）
 - 数据库或表不存在时**自动创建**（`iblog.db.auto-init: true`）；生产环境为 `false`，只做自检不改结构
 - 首次启动会自动创建管理员账号：**admin / admin123**
-- 接口文档：<http://localhost:8080/swagger-ui.html>
+- 接口文档：<http://localhost:10730/swagger-ui.html>
 
 ### 在 IntelliJ IDEA 中打开
 
@@ -198,7 +198,7 @@ Gradle JVM 在 `Settings → Build Tools → Gradle → Gradle JVM` 里选 **JDK
 ```bash
 cd iblog-admin
 pnpm install
-pnpm dev           # http://localhost:5173
+pnpm dev           # http://localhost:5180
 ```
 
 > 没装 pnpm 的话，用 Node 自带的 corepack 一行启用：`corepack enable pnpm`
@@ -209,13 +209,18 @@ pnpm dev           # http://localhost:5173
 ```bash
 cd iblog-web
 pnpm install
-pnpm dev           # http://localhost:5174
+pnpm dev           # http://localhost:5181
 ```
 
 > 没装 pnpm 的话，用 Node 自带的 corepack 一行启用：`corepack enable pnpm`（或 `npm i -g pnpm`）。
 > `package.json` 里的 `packageManager` 字段已锁定版本，corepack 会自动使用该版本。
 
-两个前端的 `/api` 请求都由 Vite 代理到 `http://localhost:8080`（见各自 `vite.config.ts`）。
+两个前端的 `/api` 请求都由 Vite 代理到 `http://localhost:10730`（见各自 `vite.config.ts`）。
+
+> **端口说明**：后端 `10730`、管理后台 `5180`、官网 `5181`。都不是框架默认端口（8080/5173），
+> 因为本机同时开着多个项目时默认端口极易被抢。两个前端都设了 `strictPort: true` ——
+> 端口被占会直接报错退出，而不是悄悄换一个端口，免得浏览器里打开的其实是别的项目。
+> 后端端口可用环境变量 `IBLOG_SERVER_PORT` 覆盖，例如 `IBLOG_SERVER_PORT=10731 ./gradlew bootRun`。
 
 ### 5. 跑测试
 

@@ -1,4 +1,8 @@
 server:
+  # 线上容器内固定 8080：前端 nginx 是按服务名 iblog-server:8080 反代的，
+  # Dockerfile 的 EXPOSE 也是 8080，改这里会让线上接口 502。
+  # 本地开发的端口在 application-dev.yml 里覆盖（10730），
+  # 因为本机同时开着多个项目，8080 是最容易被抢的端口。
   port: 8080
   servlet:
     encoding:

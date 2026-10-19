@@ -12,7 +12,10 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
-      port: 5174,
+      // 5181 而不是 Vite 默认的 5173：本机同时跑多个项目，5173 经常被抢。
+      port: 5181,
+      // 端口被占时直接报错退出，而不是悄悄换一个 —— 否则打开的还是别的项目。
+      strictPort: true,
       open: false,
       watch: {
         // 原子写文件时编辑器/工具会生成临时目录，chokidar 监听它们会在
@@ -21,7 +24,7 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         '/api': {
-          target: env.VITE_API_TARGET || 'http://localhost:8080',
+          target: env.VITE_API_TARGET || 'http://localhost:10730',
           changeOrigin: true
         }
       }
