@@ -101,7 +101,7 @@ async function sendNotification(title: string, body: string, tag = 'iblog-stock-
   let sent = false
   if (permission.value === 'granted') {
     try {
-      new Notification(title, { body, tag, icon: '/favicon.ico' })
+      new Notification(title, { body, tag })
       sent = true
     } catch {
       sent = false
