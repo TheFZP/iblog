@@ -17,6 +17,38 @@ export type NotifyPermission = 'default' | 'granted' | 'denied' | 'unsupported'
 
 const permission = ref<NotifyPermission>(readPermission())
 
+/**
+ * 通知总开关（本站静音）。
+ *
+ * <p>浏览器不允许网页撤销已授予的 Notification 权限，只能引导用户去站点设置里关。
+ * 但用户要的其实不是「去浏览器设置改权限」，而是「别再弹了」——
+ * 所以这里提供一个站点级静音开关：关掉后 sendNotification 直接短路，
+ * 提醒规则照常巡检，只是不弹系统通知。</p>
+ */
+const MUTED_KEY = 'iblog-notify-muted'
+const muted = ref<boolean>(readMuted())
+
+function readMuted(): boolean {
+  try {
+    return localStorage.getItem(MUTED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setMuted(value: boolean) {
+  muted.value = value
+  try {
+    if (value) {
+      localStorage.setItem(MUTED_KEY, '1')
+    } else {
+      localStorage.removeItem(MUTED_KEY)
+    }
+  } catch {
+    /* 隐私模式 */
+  }
+}
+
 function readPermission(): NotifyPermission {
   if (typeof Notification === 'undefined') {
     return 'unsupported'
@@ -94,6 +126,10 @@ if (typeof document !== 'undefined') {
  * @returns 是否成功送达（权限被拒返回 false，调用方应停止后续发送）
  */
 async function sendNotification(title: string, body: string, tag = 'iblog-stock-alert'): Promise<boolean> {
+  // 静音时直接短路：提醒巡检照常跑，只是不弹通知
+  if (muted.value) {
+    return false
+  }
   if (permission.value !== 'granted') {
     permission.value = readPermission()
   }
@@ -101,7 +137,7 @@ async function sendNotification(title: string, body: string, tag = 'iblog-stock-
   let sent = false
   if (permission.value === 'granted') {
     try {
-      new Notification(title, { body, tag, icon: '/favicon.ico' })
+      new Notification(title, { body, tag })
       sent = true
     } catch {
       sent = false
@@ -118,7 +154,9 @@ async function sendNotification(title: string, body: string, tag = 'iblog-stock-
 export function useNotify() {
   return {
     permission,
-    canNotify: computed(() => permission.value === 'granted'),
+    canNotify: computed(() => permission.value === 'granted' && !muted.value),
+    muted,
+    setMuted,
     requestNotifyPermission,
     sendNotification,
     stopTitleFlash

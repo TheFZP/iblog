@@ -16,19 +16,19 @@
           </span>
           <button
             class="alert-btn"
-            :class="{ 'is-on': notifyGranted && alertCount > 0 }"
+            :class="{ 'is-on': alertsActive, 'is-muted': notifyGranted && muted }"
             type="button"
-            :disabled="notifyUnsupported || notifyRequesting || notifyGranted"
-            :title="
-              notifyGranted
-                ? '通知已开启，价格与止损止盈提醒会在后台巡检'
-                : '授权浏览器通知，行情越过你设的价位时弹出提醒'
-            "
-            @click="enableNotify"
+            :disabled="notifyUnsupported || notifyRequesting"
+            :title="alertTitle"
+            :aria-pressed="alertsActive"
+            @click="onAlertClick"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
               <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+              <template v-if="notifyGranted && muted">
+                <line x1="3" y1="3" x2="21" y2="21" />
+              </template>
             </svg>
             <span>{{ notifyRequesting ? '授权中' : alertHint }}</span>
           </button>
@@ -293,7 +293,12 @@ const confirmClear = ref(false)
 // 提醒的「触发」由 AppLayout 里的全局巡查器负责（关掉本页也照常巡检），
 // 这里只展示状态并提供开启浏览器通知的入口 —— 两者是同一套数据，不会各说各话。
 
-const { permission: notifyPermission, requestNotifyPermission } = useNotify()
+const {
+  permission: notifyPermission,
+  requestNotifyPermission,
+  muted,
+  setMuted
+} = useNotify()
 const { alerts: priceAlerts } = usePriceAlerts()
 const { enabledCount: positionAlertCount } = usePositionAlerts()
 
@@ -308,17 +313,30 @@ const notifyGranted = computed(() => notifyPermission.value === 'granted')
 /** 浏览器不支持 Notification（如部分内网浏览器） */
 const notifyUnsupported = computed(() => notifyPermission.value === 'unsupported')
 
+/** 提醒是否处于生效状态（授权 + 未静音） */
+const alertsActive = computed(() => notifyGranted.value && !muted.value)
+
 /**
  * 提醒入口的展示文案。
  *
- * 三种情况分开说：不支持 / 未授权 / 已授权但一条没配。
+ * 四种情况分开说：不支持 / 未授权 / 已静音 / 正常。
  * 统称「提醒」会让人以为已经开着，于是不被通知时以为坏了。
  */
 const alertHint = computed(() => {
   if (notifyUnsupported.value) return '浏览器不支持通知'
+  if (notifyRequesting.value) return '授权中'
   if (!notifyGranted.value) return '开启通知'
+  if (muted.value) return '提醒已关闭'
   if (alertCount.value === 0) return '提醒'
   return `${alertCount.value} 条提醒`
+})
+
+/** 悬停提示：说清当前状态与点击后果 */
+const alertTitle = computed(() => {
+  if (notifyUnsupported.value) return '当前浏览器不支持桌面通知'
+  if (!notifyGranted.value) return '授权浏览器通知，行情越过你设的价位时弹出提醒'
+  if (muted.value) return '提醒已关闭，点击重新开启通知'
+  return '通知开启中，点击关闭提醒（不再弹系统通知）'
 })
 
 const notifyRequesting = ref(false)
@@ -331,6 +349,20 @@ async function enableNotify() {
   } finally {
     notifyRequesting.value = false
   }
+}
+
+/**
+ * 提醒按钮点击：未授权时申请权限；已授权时在开启/关闭间切换。
+ *
+ * <p>浏览器不允许网页撤销 Notification 权限，「关闭」做成本站静音：
+ * 提醒照常判定，只是不弹系统通知。恢复只需再点一下。</p>
+ */
+function onAlertClick() {
+  if (!notifyGranted.value) {
+    enableNotify()
+    return
+  }
+  setMuted(!muted.value)
 }
 
 /** 当前市场状态：用大盘指数自带的上游时间戳做反证，比纯时钟判断可靠 */
@@ -670,16 +702,14 @@ onUnmounted(() => {
 }
 
 /* 未授权：品牌色描边，提示这里有件事没做完 */
-.alert-btn:not(.is-on):not(:disabled) {
+.alert-btn:not(.is-on):not(:disabled):not(.is-muted) {
   border-color: var(--c-brand-ring);
   color: var(--c-brand);
   background: var(--c-brand-soft);
 }
 
 /* 已开启：安静的实色，不再抢注意力 */
-.alert-btn.is-on,
-.alert-btn:disabled {
-  cursor: default;
+.alert-btn.is-on {
   color: var(--c-text-muted);
   background: var(--c-surface-sunken);
   border-color: transparent;
@@ -687,6 +717,22 @@ onUnmounted(() => {
 
 .alert-btn.is-on svg {
   color: var(--c-success);
+}
+
+/* 已授权但静音：恢复可点击的手感，明确表达「现在不响」 */
+.alert-btn.is-muted {
+  cursor: pointer;
+  color: var(--c-text-faint);
+  background: var(--c-surface);
+  border-color: var(--c-border);
+}
+
+.alert-btn.is-muted svg {
+  color: var(--c-text-faint);
+}
+
+.alert-btn:disabled {
+  cursor: default;
 }
 
 .alert-btn:focus-visible {

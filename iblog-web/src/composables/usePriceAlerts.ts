@@ -174,6 +174,20 @@ function pauseAlert(id: string) {
   updateAlert(id, { enabled: false })
 }
 
+/**
+ * 开关提醒的启用状态。
+ *
+ * <p>开启时等同重新启用：清掉触发时间与基准价，否则刚打开就会被上一条
+ * 触发记录拦住，用户会觉得「开了没反应」。</p>
+ */
+function toggleAlert(id: string, enabled: boolean) {
+  if (enabled) {
+    rearmAlert(id)
+  } else {
+    pauseAlert(id)
+  }
+}
+
 function hasTriggeredToday(id: string): boolean {
   return history.value[getToday()]?.[id] === true
 }
@@ -331,6 +345,7 @@ export function usePriceAlerts() {
     removeAlert,
     rearmAlert,
     pauseAlert,
+    toggleAlert,
     checkPriceAlerts,
     hasTriggeredToday
   }

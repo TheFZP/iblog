@@ -22,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
-const { alertsForCode, addAlert, removeAlert, rearmAlert, pauseAlert } = usePriceAlerts()
+const { alertsForCode, addAlert, removeAlert, toggleAlert } = usePriceAlerts()
 const { permission, requestNotifyPermission } = useNotify()
 
 const direction = ref<'above' | 'below'>('above')
@@ -78,6 +78,15 @@ async function askPermission() {
 
 function directionLabel(d: 'above' | 'below'): string {
   return d === 'above' ? '突破' : '跌破'
+}
+
+/** 状态文案只描述事实，开关本身表达开启/关闭 */
+function stateLabel(a: { enabled: boolean; triggeredAt: number | null; mode: 'once' | 'daily' }): string {
+  if (a.enabled) {
+    return '监控中'
+  }
+  // 一次性提醒触发后会自动关闭，这里说明关闭原因，避免用户以为开关坏了
+  return a.triggeredAt ? '已触发' : '已关闭'
 }
 </script>
 
@@ -189,11 +198,20 @@ function directionLabel(d: 'above' | 'below'): string {
               {{ a.mode === 'once' ? '一次性' : '每日' }}
             </span>
             <span class="list__state" :class="a.enabled ? 'list__state--on' : 'list__state--off'">
-              {{ a.enabled ? '监控中' : a.triggeredAt ? '已触发' : '已暂停' }}
+              {{ stateLabel(a) }}
             </span>
             <span class="list__actions">
-              <button v-if="!a.enabled" class="link" @click="rearmAlert(a.id)">重新启用</button>
-              <button v-else class="link" @click="pauseAlert(a.id)">暂停</button>
+              <label class="switch" :title="a.enabled ? '关闭提醒' : '开启提醒'">
+                <input
+                  type="checkbox"
+                  class="switch__input"
+                  :checked="a.enabled"
+                  :aria-label="`${directionLabel(a.direction)} ${fmtNum(a.price)} 提醒开关`"
+                  @change="toggleAlert(a.id, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="switch__track"><span class="switch__knob" /></span>
+                <span class="switch__text">{{ a.enabled ? '开启' : '关闭' }}</span>
+              </label>
               <button class="link link--danger" @click="removeAlert(a.id)">删除</button>
             </span>
           </li>
@@ -416,7 +434,7 @@ function directionLabel(d: 'above' | 'below'): string {
 
 .list__item {
   display: grid;
-  grid-template-columns: 44px 68px minmax(0, 1fr) 56px auto;
+  grid-template-columns: 44px 68px minmax(0, 1fr) 52px minmax(88px, auto);
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
@@ -441,6 +459,7 @@ function directionLabel(d: 'above' | 'below'): string {
 
 .list__state {
   font-size: var(--t-xs);
+  white-space: nowrap;
 }
 
 .list__state--on {
@@ -453,7 +472,72 @@ function directionLabel(d: 'above' | 'below'): string {
 
 .list__actions {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-4);
+}
+
+/* ---------- 开关 ---------- */
+.switch {
+  display: inline-flex;
+  align-items: center;
   gap: var(--s-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 视觉上隐藏，但保留键盘焦点与无障碍语义 */
+.switch__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.switch__track {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--c-border);
+  transition: background 0.18s var(--ease-out);
+}
+
+.switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 0.18s var(--ease-out);
+}
+
+.switch__input:checked + .switch__track {
+  background: var(--c-brand);
+}
+
+.switch__input:checked + .switch__track .switch__knob {
+  transform: translateX(14px);
+}
+
+.switch__input:focus-visible + .switch__track {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+
+.switch__text {
+  font-size: var(--t-xs);
+  color: var(--c-text-muted);
+  min-width: 24px;
 }
 
 .link {
@@ -492,13 +576,13 @@ function directionLabel(d: 'above' | 'below'): string {
 
 @media (max-width: 560px) {
   .list__item {
-    grid-template-columns: 44px 68px minmax(0, 1fr);
+    grid-template-columns: 44px 68px 52px minmax(0, 1fr);
     row-gap: var(--s-1);
   }
 
   .list__actions {
     grid-column: 1 / -1;
-    justify-content: flex-end;
+    justify-content: space-between;
   }
 }
 </style>
