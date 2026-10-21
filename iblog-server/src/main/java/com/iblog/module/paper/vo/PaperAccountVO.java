@@ -1,0 +1,46 @@
+package com.iblog.module.paper.vo;
+
+import lombok.Builder;
+import lombok.Data;
+
+import java.math.BigDecimal;
+
+/**
+ * 模拟盘账户概览。
+ */
+@Data
+@Builder
+public class PaperAccountVO {
+
+    private Long accountId;
+
+    private String name;
+
+    private BigDecimal initialCash;
+
+    /** 可用现金 */
+    private BigDecimal cash;
+
+    private BigDecimal marketValue;
+
+    private BigDecimal totalAsset;
+
+    private BigDecimal totalProfit;
+
+    /** 累计收益率（%） */
+    private BigDecimal totalProfitPct;
+
+    /** 今日盈亏（相对上一交易日收盘总资产） */
+    private BigDecimal todayProfit;
+
+    /** 今日收益率（%） */
+    private BigDecimal todayProfitPct;
+
+    private Integer positionCount;
+
+    /** 0 关 1 开 */
+    private Integer autoTrade;
+
+    /** 最近一个交易日 */
+    private String tradeDate;
+}

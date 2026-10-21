@@ -5,6 +5,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -13,9 +14,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  */
 @SpringBootApplication
 // 行情模块的 Mapper 放在 com.iblog.module.stock.mapper（跟 stock 模块的其他类在一起），
-// 不在下面这个包下，所以必须显式列上 —— 否则启动时报
+// 模拟盘的 Mapper 放在 com.iblog.module.paper.mapper，都不在下面这个包下，
+// 所以必须显式列上 —— 否则启动时报
 // "No qualifying bean of type 'StockSettingMapper' available"。
-@MapperScan({"com.iblog.module.mapper", "com.iblog.module.stock.mapper"})
+@MapperScan({"com.iblog.module.mapper", "com.iblog.module.stock.mapper", "com.iblog.module.paper.mapper"})
+// 模拟盘的自动交易引擎 / 每日结算依赖 @Scheduled
+@EnableScheduling
 public class IblogApplication {
 
     public static void main(String[] args) {

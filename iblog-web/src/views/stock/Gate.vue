@@ -18,10 +18,8 @@
             <path d="M12 14.6v2.4" />
           </svg>
         </span>
-        <h1 id="stock-gate-title" class="stock-gate__title">行情仅对已登录用户开放</h1>
-        <p class="stock-gate__desc">
-          请先登录管理后台，再通过后台顶部的「行情」入口进入。同一浏览器登录过后台后，行情会自动解锁。
-        </p>
+        <h1 id="stock-gate-title" class="stock-gate__title">{{ gateTitle }}</h1>
+        <p class="stock-gate__desc">{{ gateDesc }}</p>
         <router-link to="/" class="btn stock-gate__action">返回首页</router-link>
       </section>
     </div>
@@ -29,13 +27,25 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 
+// 行情与模拟盘共用这道门禁，锁定卡文案由路由 meta 提供，缺省保持行情文案
+const route = useRoute()
 const { authenticated, checked, ensureAuth } = useAuth()
 
+const gateTitle = computed(
+  () => (route.meta.gateTitle as string | undefined) ?? '行情仅对已登录用户开放'
+)
+const gateDesc = computed(
+  () =>
+    (route.meta.gateDesc as string | undefined) ??
+    '请先登录管理后台，再通过后台顶部的「行情」入口进入。同一浏览器登录过后台后，行情会自动解锁。'
+)
+
 onMounted(() => {
-  // 路由守卫已校验过时直接命中缓存；这里兜底直接打开 /stock 深链的情况
+  // 路由守卫已校验过时直接命中缓存；这里兜底直接打开 /stock、/paper 深链的情况
   void ensureAuth()
 })
 </script>

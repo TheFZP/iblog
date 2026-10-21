@@ -98,6 +98,12 @@ iblog/
   - 价格提醒：突破 / 跌破目标价提醒，可叠加放量条件
   - 提醒由全局巡查器统一巡检（关掉行情页也照样生效），刷新间隔随市场状态自动调整
     （交易 15 秒 / 午休 60 秒 / 其余 5 分钟，页面在后台时再降 4 倍）
+- 模拟盘：服务端记账的 A 股模拟交易，手动买卖默认可用，自动选股 / 自动交易默认关闭
+  - 手动盘：市价 / 限价委托、T+1、100 股整手、涨跌停与停牌校验、佣金 / 印花税 / 过户费、滑点
+  - 自动交易：热榜候选 + 均线 / MACD / 量比 / 主力资金流打分选股；止损 / 止盈 / 跌破 MA10 / 时间止损卖出；
+    单票 20%、总仓 80%、日亏 3% 熔断、每日 20 笔上限，默认关闭，需在页面显式开启
+  - 每个账户独立：初始资金、持仓、委托、成交、每日净值快照；账户可随时重置
+  - 入口：官网导航 / 管理后台顶部「模拟盘」；后台入口经一次性票据直达，免二次登录
 
 ---
 
@@ -238,6 +244,24 @@ cd iblog-web && pnpm test            # 官网前端纯逻辑单测（提醒判�
 > 不引入 vitest / jsdom，被测模块（如 `src/utils/positionAlertRules.ts`）刻意做成零依赖。
 > 需要 Node ≥ 22.6。
 
+### 6. 模拟盘（自动交易默认关闭）
+
+模拟盘是服务端记账的模拟交易：登录后手动买卖直接可用；`iblog.paper.enabled` 是**自动交易总开关**，
+默认 `false`，此时自动选股 / 自动下单不会执行，手动交易不受影响。
+
+本地打开自动交易（`application-dev.yml` 已把 `force-trading-hours` 设为 true，晚上也能下单调试）：
+
+```yaml
+iblog:
+  paper:
+    enabled: true          # 打开自动交易（手动买卖本来就能用）
+    initial-cash: 1000000  # 每个新账户的初始资金
+```
+
+生产环境用环境变量 `IBLOG_PAPER_ENABLED=true` 打开自动交易。自动交易还有第二道开关：用户在 `/paper`
+页面点「自动交易」才会开启（默认关），服务端总开关没开时不允许打开。费率、滑点、仓位上限、
+熔断阈值等参数都在 `iblog.paper.*`（完整字段见 `IblogProperties.Paper`）。
+
 ---
 
 ## 五、接口约定
@@ -274,6 +298,19 @@ Authorization: Bearer <token>
 | GET | `/api/portal/articles/{id}` | 文章详情（累加浏览量）|
 | GET/POST | `/api/portal/articles/{id}/comments` · `/api/portal/comments` | 评论查询 / 提交 |
 | GET | `/api/portal/categories` · `/tags` · `/archive` · `/hot-articles` · `/site` | 官网公共数据 |
+
+模拟盘接口（`/api/stock/paper/**`，登录后可用；官网用 Cookie、后台用 header 令牌都能调）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/stock/paper/account` | 账户总览（资产 / 今日盈亏 / 持仓数 / 自动交易开关）|
+| GET | `/api/stock/paper/positions` | 持仓（含可用数量、浮动盈亏）|
+| GET / POST | `/api/stock/paper/orders` · `DELETE /orders/{id}` | 委托列表 / 下单 / 撤单 |
+| GET | `/api/stock/paper/trades` · `/nav` | 成交流水 / 每日净值 |
+| GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数 |
+| GET / POST | `/api/stock/paper/selections` · `/selections/refresh` | 今日选股结果 / 立即重新选股 |
+| GET | `/api/stock/paper/engine/status` | 引擎与自动交易状态 |
+| POST | `/api/stock/paper/account/auto-trade` · `/account/reset` | 开关自动交易 / 重置账户 |
 
 ---
 

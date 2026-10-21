@@ -90,6 +90,8 @@ services:
       # 官网行情登录态 Cookie：线上 HTTPS 必须 Secure；官网与后台为同一主域的不同子域时用 DOMAIN 指定主域
       IBLOG_COOKIE_SECURE: ${IBLOG_COOKIE_SECURE:-true}
       IBLOG_COOKIE_DOMAIN: ${IBLOG_COOKIE_DOMAIN:-}
+      # 模拟盘总开关（默认关闭；打开后才允许手动/自动下单）
+      IBLOG_PAPER_ENABLED: ${IBLOG_PAPER_ENABLED:-false}
       TZ: Asia/Shanghai
       # 小内存机器用 -Xmx384m + SerialGC（比 G1 更省内存）；配置够大时可换回 -Xmx512m -XX:+UseG1GC
       JAVA_OPTS: ${JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseSerialGC}

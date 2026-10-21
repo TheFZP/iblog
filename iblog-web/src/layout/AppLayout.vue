@@ -172,18 +172,26 @@ const menuOpen = ref(false)
 const scrolled = ref(false)
 const year = new Date().getFullYear()
 
-const ALL_NAVS = [
+interface NavItem {
+  path: string
+  label: string
+  /** 需要登录态才展示（后端会校验，这里只是不给未登录用户无效入口） */
+  authOnly?: boolean
+}
+
+const ALL_NAVS: NavItem[] = [
   { path: '/', label: '首页' },
   { path: '/list', label: '文章' },
   { path: '/archive', label: '归档' },
   { path: '/food', label: '美食' },
-  { path: '/stock', label: '行情' },
+  { path: '/stock', label: '行情', authOnly: true },
+  { path: '/paper', label: '模拟盘', authOnly: true },
   { path: '/about', label: '关于' }
 ]
 
-/** 「行情」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
+/** 「行情」「模拟盘」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
 const navs = computed(() =>
-  authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => item.path !== '/stock')
+  authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => !item.authOnly)
 )
 
 function isActive(path: string) {

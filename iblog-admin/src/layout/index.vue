@@ -35,6 +35,7 @@
         <div class="crumb">{{ pageTitle }}</div>
         <div class="header-right">
           <el-button link type="primary" @click="openStock">行情</el-button>
+          <el-button link type="primary" @click="openPaper">模拟盘</el-button>
           <el-button link type="primary" @click="openWeb">查看官网</el-button>
           <el-dropdown @command="onCommand">
             <span class="user">
@@ -94,32 +95,40 @@ function openWeb() {
 }
 
 /**
- * 从后台直接打开官网「行情」。
+ * 从后台直接打开官网页面（行情 / 模拟盘）。
  *
  * 官网与后台同主机（不同端口）时，登录 Cookie 天然共享，这里走一次性票据也无害；
  * 两者是不同网址时，票据就是免二次登录的关键。
  * 注意 VITE_WEB_URL 必须是官网完整地址，相对路径 '/' 无法拼出跨站链接。
  */
-async function openStock() {
+async function openPortal(path: string, label: string) {
   if (!/^https?:\/\//i.test(webUrl)) {
-    ElMessage.warning('请先把 iblog-admin/.env.production 里的 VITE_WEB_URL 配成官网完整地址（如 https://www.example.com），再从后台打开行情')
+    ElMessage.warning(`请先把 iblog-admin/.env.production 里的 VITE_WEB_URL 配成官网完整地址（如 https://www.example.com），再从后台打开${label}`)
     return
   }
   // 先同步开窗口、再异步取票据：await 之后浏览器会丢失“用户手势”，
   // 届时再 window.open 容易被当成弹窗拦截。
-  const stockWindow = window.open('', '_blank')
-  if (!stockWindow) {
+  const target = window.open('', '_blank')
+  if (!target) {
     ElMessage.warning('浏览器拦截了新窗口，请允许本站弹窗后重试')
     return
   }
   try {
     const { ticket } = await getStockTicket()
     const base = webUrl.replace(/\/+$/, '')
-    stockWindow.location.replace(`${base}/stock?ticket=${encodeURIComponent(ticket)}`)
+    target.location.replace(`${base}${path}?ticket=${encodeURIComponent(ticket)}`)
   } catch {
-    stockWindow.close()
+    target.close()
     // 失败提示由 request.ts 拦截器统一处理
   }
+}
+
+function openStock() {
+  void openPortal('/stock', '行情')
+}
+
+function openPaper() {
+  void openPortal('/paper', '模拟盘')
 }
 
 async function onCommand(command: string) {

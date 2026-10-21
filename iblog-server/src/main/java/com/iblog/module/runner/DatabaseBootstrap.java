@@ -46,6 +46,7 @@ public class DatabaseBootstrap implements ApplicationListener<ApplicationEnviron
     private static final String[] MIGRATION_SCRIPTS = {
             "db/03-migration-food.sql",
             "db/04-migration-stock.sql",
+            "db/05-migration-paper.sql",
     };
     /** 用于判断「表是否已建好」的哨兵表。 */
     private static final String SENTINEL_TABLE = "sys_user";

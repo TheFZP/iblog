@@ -33,6 +33,13 @@ iblog:
     cookie-secure: ${IBLOG_COOKIE_SECURE:true}
     # 官网与后台是同一主域的不同子域时，在此填主域（如 example.com），否则留空
     cookie-domain: ${IBLOG_COOKIE_DOMAIN:}
+  paper:
+    # 自动交易默认关；打开前先确认行情源、资金与风控参数
+    enabled: ${IBLOG_PAPER_ENABLED:false}
+    # 线上必须按真实交易时段运行
+    force-trading-hours: ${IBLOG_PAPER_FORCE_HOURS:false}
+    # 每年更新交易日（逗号分隔 yyyy-MM-dd）
+    holiday-dates: ${IBLOG_PAPER_HOLIDAYS:}
 
 mybatis-plus:
   configuration:

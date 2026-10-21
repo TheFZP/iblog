@@ -236,6 +236,11 @@ vim .env
 - `MYSQL_ROOT_PASSWORD`：数据库密码
 - `IBLOG_JWT_SECRET`：JWT 密钥，**长度必须 ≥ 32 字符**，可用 `openssl rand -base64 48` 生成
 
+可选（不写就用默认值）：
+
+- `IBLOG_PAPER_ENABLED`：自动交易总开关，默认 `false`；打开后才允许自动选股与自动交易（手动买卖不受影响，见「二、7」）
+- `IBLOG_COOKIE_DOMAIN` / `IBLOG_COOKIE_SECURE`：行情登录 Cookie 的域 / HTTPS 标记（见「二、6」）
+
 **2 核 2G 建议整份直接生成**（顺手把构建模式切成 B，省掉「忘了注释掉模式 A」这个坑）：
 
 ```bash
@@ -422,6 +427,45 @@ curl -s http://<服务器IP>/api/portal/auth/state
 ```
 
 **首次登录账号：`admin` / `admin123`，登录后请立即修改密码。**
+
+### 7. 模拟盘（自动交易默认关闭）
+
+官网 `/paper` 的模拟盘是**服务端记账**的 A 股模拟交易：不需要外部券商接口，行情来自现有的
+腾讯 / 东财数据源，成交规则（T+1、整手、涨跌停、费用、滑点）都在后端 `com.iblog.module.paper`。
+
+默认 `IBLOG_PAPER_ENABLED=false`：手动模拟买卖可用，自动选股与自动交易不会跑。要打开自动交易：
+
+```bash
+# /opt/iblog/deploy/.env 追加
+IBLOG_PAPER_ENABLED=true
+# 然后重建后端容器
+sudo docker compose up -d --build iblog-server
+```
+
+> 自动交易还有第二道开关：即使服务端打开了，也需要用户在 `/paper` 页面点「自动交易」按钮，
+> 才会替该用户自动下单（默认关）。服务端总开关没开时，前端打开按钮会直接报错。
+
+参数都在 `iblog.paper.*`（环境变量 `IBLOG_PAPER_*`，完整字段见 `IblogProperties.Paper`）：
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | false | 总开关 |
+| `initial-cash` | 1000000 | 每账户初始资金 |
+| `tick-ms` | 15000 | 引擎撮合 / 自动交易间隔（毫秒）|
+| `selection-refresh-ms` | 300000 | 自动选股最小间隔（毫秒）|
+| `commission-rate` / `commission-min` | 0.00025 / 5 | 佣金费率与最低 5 元 |
+| `stamp-tax-rate` | 0.0005 | 印花税（仅卖出）|
+| `transfer-fee-rate` | 0.00001 | 过户费 |
+| `slippage-bps` | 5 | 市价单滑点（万分之）|
+| `max-position-pct` / `max-total-position-pct` | 0.2 / 0.8 | 单票 / 总仓上限 |
+| `max-daily-loss-pct` | 0.03 | 日亏熔断（只减仓不加仓）|
+| `max-orders-per-day` | 20 | 每账户每日委托上限 |
+| `max-candidates` | 5 | 每日自动买入候选数 |
+| `holiday-dates` | 空 | 额外休市日，逗号分隔 `2026-10-01,...` |
+| `force-trading-hours` | false | 忽略交易时段限制（**仅本地调试用**）|
+
+> 模拟盘数据在 MySQL 的 `paper_*` 表；已有库会在后端启动时自动执行 `db/05-migration-paper.sql` 补表。
+> 「重置账户」只清该用户的持仓 / 委托 / 成交 / 净值，不影响其他用户。
 
 ---
 
