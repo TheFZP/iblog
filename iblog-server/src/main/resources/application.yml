@@ -50,6 +50,16 @@ iblog:
     expire: 86400
     header: Authorization
     prefix: "Bearer "
+  auth:
+    # 官网行情登录态：后台登录后下发 HttpOnly Cookie，官网据此判断「是否登录过后台」。
+    # 同一主机的不同端口（如 https://host:81 与 https://host）浏览器会共享 Cookie。
+    cookie-name: ${IBLOG_COOKIE_NAME:iblog_auth}
+    # 线上走 HTTPS 必须为 true；本地 http 开发保持 false
+    cookie-secure: ${IBLOG_COOKIE_SECURE:false}
+    # 留空=仅当前主机；官网与后台是同一主域的不同子域时填主域，如 example.com
+    cookie-domain: ${IBLOG_COOKIE_DOMAIN:}
+    # 官网与后台变成完全不同的网址时，后台点「行情」签发的一次性票据有效期（秒）
+    ticket-expire: ${IBLOG_TICKET_EXPIRE:120}
 
 logging:
   level:

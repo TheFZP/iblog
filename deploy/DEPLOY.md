@@ -384,6 +384,43 @@ curl http://localhost:8080/api/portal/site
 - 管理后台：`http://<服务器IP>:81/`
 - 接口文档：`http://<服务器IP>:8080/swagger-ui.html`
 
+### 6. 行情登录门禁（Cookie / 一次性票据）
+
+官网的「行情」只对**登录过管理后台**的浏览器开放：未登录时导航里不显示「行情」，
+直接访问 `/stock` 会看到登录提示页；`/api/stock/**` 接口也会返回业务码 401
+（HTTP 状态仍为 200，与后台接口的约定一致）。
+
+后台登录接口在返回 JWT 的同时会下发一个 **HttpOnly Cookie**（默认名 `iblog_auth`），
+官网靠它判断登录态，因此不需要在官网再登录一次。按线上两个站点的网址形态分三种情况：
+
+| 网址形态 | 需要做什么 | 说明 |
+| --- | --- | --- |
+| 同一主机的不同端口（当前：官网 `https://<IP>/`、后台 `https://<IP>:81/`） | 不用配置 | 浏览器 Cookie 不区分端口，登录后台后刷新官网即可自动解锁 |
+| 同一主域的不同子域（`www.example.com` + `admin.example.com`） | `.env` 设 `IBLOG_COOKIE_DOMAIN=example.com` 后重建后端 | HTTPS 下保持 `IBLOG_COOKIE_SECURE=true`；`Domain` 覆盖子域，Cookie 即可共享 |
+| 完全不同的注册域名 | 配 `VITE_WEB_URL`，不用 Cookie 跨域 | 从后台顶部「行情」按钮进入：先取 120 秒、单次有效的 ticket，官网用票据换登录态，后台会话不受影响 |
+
+> ⚠️ `Secure` Cookie 只在 HTTPS 页面写入。如果先用 http 登录后台、再切到 https，需要重新登录一次。
+> 后台「退出登录」会同时删除 Redis 会话并清 Cookie，官网随即失效。
+
+跨域场景下，管理后台需要知道官网完整地址（相对路径 `/` 拼不出跨站链接）。构建后台时注入：
+
+```bash
+# 在仓库根目录；源码构建模式则在 pnpm build 前 export VITE_WEB_URL
+VITE_WEB_URL=https://www.example.com bash deploy/build-local.sh
+```
+
+本地开发无需额外配置：dev 环境 Cookie 默认不要求 HTTPS，在 `localhost:5180` 登录后台后，
+`localhost:5181` 的官网会直接识别（Cookie 按主机共享、不区分端口）。
+
+自检：
+
+```bash
+# 未登录直接访问行情接口，应返回 401
+curl -s "http://<服务器IP>/api/stock/quotes?codes=sh600000"
+# 官网接口的登录态（浏览器登录后台后，带上 Cookie 请求）
+curl -s http://<服务器IP>/api/portal/auth/state
+```
+
 **首次登录账号：`admin` / `admin123`，登录后请立即修改密码。**
 
 ---

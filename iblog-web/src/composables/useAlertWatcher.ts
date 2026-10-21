@@ -6,6 +6,7 @@ import { usePriceAlerts } from './usePriceAlerts'
 import { usePositionAlerts } from './usePositionAlerts'
 import { useWatchlist } from './useWatchlist'
 import { usePositions } from './usePositions'
+import { useAuth } from './useAuth'
 
 /**
  * 全局提醒巡查器。
@@ -185,19 +186,21 @@ export function stopAlertWatcher() {
  * 用户点了「开启通知」之后要能立刻真正开始工作，而不是等下一次整页加载。</p>
  */
 export function useAutoStartAlertWatcher() {
+  const { authenticated } = useAuth()
   const { alerts } = usePriceAlerts()
   const { configs } = usePositionAlerts()
   const { permission } = useNotify()
 
   watch(
     () => [
+      authenticated.value,
       alerts.value.some((a) => a.enabled),
       Object.keys(configs.value).length > 0,
       permission.value === 'granted'
     ] as const,
-    ([hasPriceAlert, hasPositionAlert, canNotify]) => {
-      if (!canNotify) {
-        // 权限被收回（或从未授予）时停掉轮询：扫了也发不出去
+    ([isAuthed, hasPriceAlert, hasPositionAlert, canNotify]) => {
+      // 未登录时行情接口一律 401，巡检只会反复打空请求；权限被收回（或从未授予）时同理，扫了也发不出去
+      if (!isAuthed || !canNotify) {
         if (started) {
           stopAlertWatcher()
         }

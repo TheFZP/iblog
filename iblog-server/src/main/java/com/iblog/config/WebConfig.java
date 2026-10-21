@@ -21,7 +21,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authInterceptor)
-                .addPathPatterns("/api/admin/**")
+                // 后台接口：只认 Authorization 请求头
+                // 行情接口：请求头或后台登录时下发的 HttpOnly Cookie 均可（官网免二次登录）
+                .addPathPatterns("/api/admin/**", "/api/stock/**")
                 .excludePathPatterns("/api/admin/auth/login");
     }
 

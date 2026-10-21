@@ -53,7 +53,16 @@ fi
 # ---------- 2. 管理后台 ----------
 echo
 echo "==> [2/4] 构建管理后台（iblog-admin）"
-(cd "$ROOT/iblog-admin" && pnpm install --frozen-lockfile && pnpm build)
+# 官网与后台网址不同时，后台顶部「行情」按钮要拼出官网完整地址；在构建时注入。
+# 用法：VITE_WEB_URL=https://www.example.com bash deploy/build-local.sh
+# 不设置则沿用 iblog-admin/.env.production 里的值。
+if [ -n "${VITE_WEB_URL:-}" ]; then
+  echo "    VITE_WEB_URL = $VITE_WEB_URL"
+  (cd "$ROOT/iblog-admin" && pnpm install --frozen-lockfile && VITE_WEB_URL="$VITE_WEB_URL" pnpm build)
+else
+  echo "    VITE_WEB_URL 未设置，使用 iblog-admin/.env.production 里的值"
+  (cd "$ROOT/iblog-admin" && pnpm install --frozen-lockfile && pnpm build)
+fi
 
 # ---------- 3. 官网前台 ----------
 echo

@@ -25,3 +25,13 @@ export function logout() {
 export function getUserInfo() {
   return get<any>('/admin/auth/info')
 }
+
+/** 官网行情登录票据：官网与本后台网址不同、无法共享 Cookie 时，用一次性票据完成免登录跳转 */
+export interface StockTicket {
+  ticket: string
+  expiresIn: number
+}
+
+export function getStockTicket() {
+  return post<StockTicket>('/admin/auth/ticket')
+}

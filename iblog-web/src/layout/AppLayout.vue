@@ -159,18 +159,20 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSite, useTheme, initTheme } from '@/composables/useSite'
 import { stopAlertWatcher, useAutoStartAlertWatcher } from '@/composables/useAlertWatcher'
+import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
 const { site, loadSite } = useSite()
 const { theme, toggleTheme } = useTheme()
+const { authenticated, ensureAuth } = useAuth()
 
 const keyword = ref('')
 const menuOpen = ref(false)
 const scrolled = ref(false)
 const year = new Date().getFullYear()
 
-const navs = [
+const ALL_NAVS = [
   { path: '/', label: '首页' },
   { path: '/list', label: '文章' },
   { path: '/archive', label: '归档' },
@@ -178,6 +180,11 @@ const navs = [
   { path: '/stock', label: '行情' },
   { path: '/about', label: '关于' }
 ]
+
+/** 「行情」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
+const navs = computed(() =>
+  authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => item.path !== '/stock')
+)
 
 function isActive(path: string) {
   if (path === '/') {
@@ -226,6 +233,9 @@ watch(menuOpen, (open) => {
 // 提醒巡查挂在布局层而不是行情页：提醒的意义就在于「我不盯着的时候」也生效，
 // 只有停在行情页才巡检等于没有提醒。
 useAutoStartAlertWatcher()
+
+// 登录态确认后「行情」入口自动出现；路由守卫已先行校验，这里通常命中缓存不额外发请求
+void ensureAuth()
 
 onMounted(() => {
   initTheme()

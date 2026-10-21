@@ -14,6 +14,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
  * 后台接口登录校验：JWT 校验 + Redis 会话比对（支持服务端主动注销）。
+ *
+ * <p>令牌来源：默认只认请求头（后台接口，避免 Cookie 带来的 CSRF）；
+ * 官网行情接口 /api/stock/** 额外允许从 HttpOnly Cookie 读取，
+ * 这样后台登录后官网无需再登录一次。</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -22,6 +26,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     private final JwtUtil jwtUtil;
     private final IblogProperties properties;
     private final StringRedisTemplate stringRedisTemplate;
+    private final AuthCookie authCookie;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -29,6 +34,9 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
         String token = jwtUtil.resolveToken(request.getHeader(properties.getJwt().getHeader()));
+        if (token == null && allowsCookie(request)) {
+            token = authCookie.read(request);
+        }
         if (token == null) {
             throw new BizException(401, "未登录，请先登录");
         }
@@ -54,5 +62,12 @@ public class AuthInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
         UserContext.clear();
+    }
+
+    /**
+     * 只有官网行情接口接受 Cookie 令牌；后台接口仍强制走请求头。
+     */
+    private boolean allowsCookie(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/api/stock/");
     }
 }
