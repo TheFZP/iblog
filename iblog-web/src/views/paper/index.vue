@@ -367,7 +367,7 @@
                 </svg>
                 高级规则（选股打分）
                 <span class="strategy__advanced-hint">{{
-                  advancedOpen ? '收起' : `共 ${ADVANCED_FIELDS.length} 项`
+                  advancedOpen ? '收起' : `共 ${PARAM_FIELD_COUNT} 项`
                 }}</span>
               </button>
 
@@ -397,11 +397,228 @@
                     </label>
                   </div>
                 </div>
+                <div class="advanced__group">
+                  <h3 class="advanced__title">质量因子</h3>
+                  <p class="quality__hint">
+                    以下都是「打分项」，不是硬性过滤：不满足只是不加分，不会直接排除股票。
+                  </p>
+                  <div class="quality__rows">
+                    <div class="quality__row">
+                      <span class="quality__name">换手率</span>
+                      <label class="field quality__field">
+                        <span class="field__label">权重</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.turnoverScore"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('turnoverScore').min"
+                            :max="ruleOf('turnoverScore').max"
+                            step="1"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">分</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">下限</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.turnoverMinPct"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('turnoverMinPct').min"
+                            :max="ruleOf('turnoverMinPct').max"
+                            step="0.5"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">%</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">上限</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.turnoverMaxPct"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('turnoverMaxPct').min"
+                            :max="ruleOf('turnoverMaxPct').max"
+                            step="0.5"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">%</span>
+                        </span>
+                      </label>
+                    </div>
+
+                    <div class="quality__row">
+                      <span class="quality__name">流通市值</span>
+                      <label class="field quality__field">
+                        <span class="field__label">权重</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.floatCapScore"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('floatCapScore').min"
+                            :max="ruleOf('floatCapScore').max"
+                            step="1"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">分</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">下限</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.floatCapMinYi"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('floatCapMinYi').min"
+                            :max="ruleOf('floatCapMinYi').max"
+                            step="10"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">亿</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">上限</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.floatCapMaxYi"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('floatCapMaxYi').min"
+                            :max="ruleOf('floatCapMaxYi').max"
+                            step="10"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">亿</span>
+                        </span>
+                      </label>
+                    </div>
+
+                    <div class="quality__row">
+                      <span class="quality__name">分时站上均价线</span>
+                      <label class="field quality__field">
+                        <span class="field__label">权重</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.vwapScore"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('vwapScore').min"
+                            :max="ruleOf('vwapScore').max"
+                            step="1"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">分</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">占比阈值</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.vwapAboveRatio"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('vwapAboveRatio').min"
+                            :max="ruleOf('vwapAboveRatio').max"
+                            step="0.01"
+                            :disabled="!strategy"
+                          />
+                        </span>
+                      </label>
+                    </div>
+
+                    <div class="quality__row">
+                      <span class="quality__name">涨停记忆</span>
+                      <label class="field quality__field">
+                        <span class="field__label">权重</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.limitUpScore"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('limitUpScore').min"
+                            :max="ruleOf('limitUpScore').max"
+                            step="1"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">分</span>
+                        </span>
+                      </label>
+                      <label class="field quality__field">
+                        <span class="field__label">回看天数</span>
+                        <span class="field__control">
+                          <input
+                            v-model.number="strategyForm.limitUpWithinDays"
+                            class="field__input"
+                            type="number"
+                            :min="ruleOf('limitUpWithinDays').min"
+                            :max="ruleOf('limitUpWithinDays').max"
+                            step="1"
+                            :disabled="!strategy"
+                          />
+                          <span class="field__unit">天</span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                  <p class="quality__hint">
+                    换手率、流通市值取自行情快照；分时均价线在盘中才会更新；涨停记忆按日 K 判断（主板
+                    10%、创业板/科创板 20%、北交所 30%、ST 5%）。
+                  </p>
+                </div>
+                <div class="advanced__group">
+                  <h3 class="advanced__title">交易时段</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.sellAtOpen"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">次日开盘强制卖出</span>
+                    <span class="trade-window__hint">
+                      T+1 可卖后的首个 tick 直接市价清仓，不看止损/止盈/MA10，适合隔夜策略。
+                    </span>
+                  </label>
+                  <div class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">自动买入时间窗（开始）</span>
+                      <input
+                        v-model="strategyForm.buyStartTime"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                    <span class="trade-window__dash" aria-hidden="true">至</span>
+                    <label class="field trade-window__field">
+                      <span class="field__label">自动买入时间窗（结束）</span>
+                      <input
+                        v-model="strategyForm.buyEndTime"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                  </div>
+                  <p v-if="buyWindowInvalid" class="trade-window__warn">
+                    开始时间不早于结束时间，后端会忽略该时间窗（仍可保存）。
+                  </p>
+                  <p v-else class="trade-window__hint">
+                    仅约束自动交易买入，手动下单不受影响；未设置时默认覆盖整个交易时段。
+                  </p>
+                </div>
                 <p class="advanced__sum">
                   因子权重合计 <strong>{{ weightSum }}</strong> 分（仅作参考，不影响入选总分上限）
                 </p>
 
-                <!-- 规则模板库：把当前 22 项参数存成命名模板，一键应用到账户 -->
+                <!-- 规则模板库：把当前全部参数存成命名模板，一键应用到账户 -->
                 <div class="rule-bar">
                   <div class="rule-bar__row">
                     <label class="rule-bar__select">
@@ -436,7 +653,7 @@
                         :title="
                           rules.length >= MAX_RULES
                             ? `最多 ${MAX_RULES} 套模板，请先删除一套`
-                            : '把当前 22 项参数另存为命名模板'
+                            : '把当前全部参数另存为命名模板'
                         "
                         @click="openSaveRule"
                       >
@@ -1120,7 +1337,8 @@
               :disabled="ruleSaving"
             />
             <span class="field__hint">
-              最多 {{ RULE_NAME_MAX }} 个字；同名模板会被拒绝，当前表单的 22 项参数会一起保存
+              最多 {{ RULE_NAME_MAX }} 个字；同名模板会被拒绝，当前表单的
+              {{ PARAM_FIELD_COUNT }} 项参数会一起保存
             </span>
           </label>
           <p v-if="saveRuleError" class="account-form__error">{{ saveRuleError }}</p>
@@ -1221,8 +1439,24 @@ const RULE_NAME_MAX = 32
 /** 每个用户最多可存的规则模板数量（后端同样限制 20 套） */
 const MAX_RULES = 20
 
+/** 策略表单：API 里 3 个新增字段可选，表单内部统一补全 */
+type StrategyForm = Required<PaperStrategyParams>
+/** 数值型参数 key：时间窗与开关单独渲染，不参与区间钳制 */
+type NumericParamKey = Exclude<
+  keyof PaperStrategyParams,
+  'sellAtOpen' | 'buyStartTime' | 'buyEndTime'
+>
+
+/** 次日开盘强制卖出默认关闭 */
+const DEFAULT_SELL_AT_OPEN = false
+/** 自动买入时间窗默认覆盖整个交易时段（含） */
+const DEFAULT_BUY_START_TIME = '09:30'
+const DEFAULT_BUY_END_TIME = '15:00'
+/** HH:mm 时间格式（与后端 DateTimeFormatter "HH:mm" 一致） */
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
+
 /** 后端策略参数的完整默认值，与 PaperStrategyParams 一一对应 */
-const DEFAULT_STRATEGY_PARAMS: PaperStrategyParams = {
+const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   minScore: 60,
   stopLossPct: 8,
   takeProfitPct: 15,
@@ -1244,7 +1478,20 @@ const DEFAULT_STRATEGY_PARAMS: PaperStrategyParams = {
   rsiMin: 40,
   rsiMax: 70,
   changeMinPct: 0,
-  changeMaxPct: 9
+  changeMaxPct: 9,
+  sellAtOpen: DEFAULT_SELL_AT_OPEN,
+  buyStartTime: DEFAULT_BUY_START_TIME,
+  buyEndTime: DEFAULT_BUY_END_TIME,
+  turnoverScore: 5,
+  turnoverMinPct: 3,
+  turnoverMaxPct: 15,
+  floatCapScore: 5,
+  floatCapMinYi: 50,
+  floatCapMaxYi: 200,
+  vwapScore: 10,
+  vwapAboveRatio: 0.95,
+  limitUpScore: 10,
+  limitUpWithinDays: 20
 }
 
 interface NumberRule {
@@ -1254,13 +1501,13 @@ interface NumberRule {
   integer: boolean
 }
 
-/** 各字段的合法区间：保存前把非法/越界输入夹回区间内 */
-const STRATEGY_RULES: Record<keyof PaperStrategyParams, NumberRule> = {
-  minScore: { min: 0, max: 100, integer: true },
-  stopLossPct: { min: 0.5, max: 50, integer: false },
-  takeProfitPct: { min: 0.5, max: 200, integer: false },
-  maxHoldDays: { min: 1, max: 120, integer: true },
-  universeSize: { min: 5, max: 50, integer: true },
+/** 各字段的合法区间：保存前把非法/越界输入夹回区间内（与后端 PaperStrategyParams.parse 一致） */
+const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
+  minScore: { min: 0, max: 200, integer: true },
+  stopLossPct: { min: 0.2, max: 50, integer: false },
+  takeProfitPct: { min: 0.2, max: 200, integer: false },
+  maxHoldDays: { min: 1, max: 250, integer: true },
+  universeSize: { min: 1, max: 100, integer: true },
   maxCandidates: { min: 1, max: 20, integer: true },
   selectionRefreshSec: { min: 30, max: 3600, integer: true },
   maTrendScore: { min: 0, max: 100, integer: true },
@@ -1273,19 +1520,31 @@ const STRATEGY_RULES: Record<keyof PaperStrategyParams, NumberRule> = {
   changeScore: { min: 0, max: 100, integer: true },
   hotRankScore: { min: 0, max: 100, integer: true },
   volumeRatioMin: { min: 0.1, max: 10, integer: false },
-  moneyFlowPctMin: { min: 0, max: 50, integer: false },
-  rsiMin: { min: 0, max: 100, integer: true },
+  moneyFlowPctMin: { min: 0, max: 100, integer: false },
+  rsiMin: { min: 0, max: 99, integer: true },
   rsiMax: { min: 0, max: 100, integer: true },
-  changeMinPct: { min: -10, max: 20, integer: false },
-  changeMaxPct: { min: -10, max: 20, integer: false }
+  changeMinPct: { min: -10, max: 49.9, integer: false },
+  changeMaxPct: { min: -10, max: 50, integer: false },
+  turnoverScore: { min: 0, max: 100, integer: true },
+  turnoverMinPct: { min: 0, max: 100, integer: false },
+  turnoverMaxPct: { min: 0, max: 100, integer: false },
+  floatCapScore: { min: 0, max: 100, integer: true },
+  floatCapMinYi: { min: 0, max: 100000, integer: false },
+  floatCapMaxYi: { min: 0, max: 100000, integer: false },
+  vwapScore: { min: 0, max: 100, integer: true },
+  vwapAboveRatio: { min: 0.5, max: 1, integer: false },
+  limitUpScore: { min: 0, max: 100, integer: true },
+  limitUpWithinDays: { min: 1, max: 120, integer: true }
 }
 
-function ruleOf(key: keyof PaperStrategyParams): NumberRule {
+const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
+
+function ruleOf(key: NumericParamKey): NumberRule {
   return STRATEGY_RULES[key]
 }
 
 interface AdvancedField {
-  key: keyof PaperStrategyParams
+  key: NumericParamKey
   label: string
   step: number
   unit?: string
@@ -1339,8 +1598,16 @@ const ADVANCED_FIELDS: AdvancedField[] = ADVANCED_GROUPS.reduce<AdvancedField[]>
   []
 )
 
+/** 交易时段区固定 3 项：次日开盘强制卖出开关 + 自动买入时间窗起止 */
+const TRADE_WINDOW_FIELD_COUNT = 3
+/** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
+const QUALITY_FIELD_COUNT = 10
+/** 高级规则表单可编辑的参数总数（模板保存提示用） */
+const PARAM_FIELD_COUNT =
+  ADVANCED_FIELDS.length + TRADE_WINDOW_FIELD_COUNT + QUALITY_FIELD_COUNT
+
 /** 参与「权重合计」提示的因子权重字段 */
-const WEIGHT_KEYS: (keyof PaperStrategyParams)[] = [
+const WEIGHT_KEYS: NumericParamKey[] = [
   'maTrendScore',
   'ma20Score',
   'macdScore',
@@ -1349,7 +1616,11 @@ const WEIGHT_KEYS: (keyof PaperStrategyParams)[] = [
   'moneyFlowPctScore',
   'rsiScore',
   'changeScore',
-  'hotRankScore'
+  'hotRankScore',
+  'turnoverScore',
+  'floatCapScore',
+  'vwapScore',
+  'limitUpScore'
 ]
 
 const ORDER_FILTERS: { value: PaperOrderStatus | ''; label: string }[] = [
@@ -1448,7 +1719,7 @@ const engineLoading = ref(false)
 const engineError = ref('')
 
 const strategies = ref<PaperStrategy[]>([])
-const strategyForm = ref<PaperStrategyParams>({ ...DEFAULT_STRATEGY_PARAMS })
+const strategyForm = ref<StrategyForm>({ ...DEFAULT_STRATEGY_PARAMS })
 const strategyBusy = ref(false)
 const strategyError = ref('')
 const autoTradeConfirm = ref(false)
@@ -1494,6 +1765,12 @@ const canDeleteAccount = computed(() => accounts.value.length > 1)
 const weightSum = computed(() =>
   WEIGHT_KEYS.reduce((sum, key) => sum + (Number(strategyForm.value[key]) || 0), 0)
 )
+/** 自动买入时间窗起止非法（start >= end）时仅提示：后端会忽略该限制，不阻止保存 */
+const buyWindowInvalid = computed(() => {
+  const start = strategyForm.value.buyStartTime
+  const end = strategyForm.value.buyEndTime
+  return TIME_PATTERN.test(start) && TIME_PATTERN.test(end) && start >= end
+})
 /** 当前下拉选中的规则模板 */
 const selectedRule = computed(
   () => rules.value.find((item) => item.id === selectedRuleId.value) ?? null
@@ -1744,16 +2021,34 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : '接口请求失败，请稍后重试'
 }
 
+/** params 里的开关字段：兼容 true/false、1/0、"true"/"1" 等写法 */
+function toBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value.trim() === 'true' || value.trim() === '1'
+  return DEFAULT_SELL_AT_OPEN
+}
+
+/** params 里的时间字段：不是合法 HH:mm 时回退默认值 */
+function toTimeText(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const text = value.trim()
+  return TIME_PATTERN.test(text) ? text : fallback
+}
+
 /** 后端 params 是 JSON 文本；解析失败或字段缺失时回退默认值 */
-function normalizeStrategyParams(text: string | null | undefined): PaperStrategyParams {
-  const result: PaperStrategyParams = { ...DEFAULT_STRATEGY_PARAMS }
+function normalizeStrategyParams(text: string | null | undefined): StrategyForm {
+  const result: StrategyForm = { ...DEFAULT_STRATEGY_PARAMS }
   if (!text) return result
   try {
     const node = JSON.parse(text) as Record<string, unknown>
-    ;(Object.keys(DEFAULT_STRATEGY_PARAMS) as (keyof PaperStrategyParams)[]).forEach((key) => {
+    NUMERIC_KEYS.forEach((key) => {
       const value = node[key]
       if (typeof value === 'number' && Number.isFinite(value)) result[key] = value
     })
+    result.sellAtOpen = toBoolean(node.sellAtOpen)
+    result.buyStartTime = toTimeText(node.buyStartTime, DEFAULT_BUY_START_TIME)
+    result.buyEndTime = toTimeText(node.buyEndTime, DEFAULT_BUY_END_TIME)
   } catch {
     return { ...DEFAULT_STRATEGY_PARAMS }
   }
@@ -1765,7 +2060,7 @@ function applyStrategyForm() {
   strategyForm.value = normalizeStrategyParams(strategy.value?.params)
 }
 
-function clampRuleValue(key: keyof PaperStrategyParams): number {
+function clampRuleValue(key: NumericParamKey): number {
   const rule = STRATEGY_RULES[key]
   const fallback = DEFAULT_STRATEGY_PARAMS[key]
   let value = Number(strategyForm.value[key])
@@ -1775,13 +2070,20 @@ function clampRuleValue(key: keyof PaperStrategyParams): number {
 }
 
 /** 保存前把全部字段钳制到合法区间，并修正区间类参数的上下限关系 */
-function clampStrategyForm(): PaperStrategyParams {
-  const result = { ...DEFAULT_STRATEGY_PARAMS }
-  ;(Object.keys(DEFAULT_STRATEGY_PARAMS) as (keyof PaperStrategyParams)[]).forEach((key) => {
+function clampStrategyForm(): StrategyForm {
+  const result: StrategyForm = { ...DEFAULT_STRATEGY_PARAMS }
+  NUMERIC_KEYS.forEach((key) => {
     result[key] = clampRuleValue(key)
   })
   if (result.rsiMax < result.rsiMin) result.rsiMax = result.rsiMin
   if (result.changeMaxPct < result.changeMinPct) result.changeMaxPct = result.changeMinPct
+  if (result.turnoverMaxPct < result.turnoverMinPct) {
+    result.turnoverMaxPct = result.turnoverMinPct
+  }
+  if (result.floatCapMaxYi < result.floatCapMinYi) result.floatCapMaxYi = result.floatCapMinYi
+  result.sellAtOpen = strategyForm.value.sellAtOpen === true
+  result.buyStartTime = toTimeText(strategyForm.value.buyStartTime, DEFAULT_BUY_START_TIME)
+  result.buyEndTime = toTimeText(strategyForm.value.buyEndTime, DEFAULT_BUY_END_TIME)
   return result
 }
 
@@ -3519,6 +3821,102 @@ onBeforeUnmount(() => {
   font-family: var(--f-mono);
 }
 
+/* ---------- P5：交易时段（隔夜策略） ---------- */
+.trade-window__check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.trade-window__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--c-brand);
+  cursor: pointer;
+}
+
+.trade-window__label {
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--c-text);
+}
+
+.trade-window__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-3);
+}
+
+.trade-window__field {
+  flex: 0 1 180px;
+  min-width: 0;
+}
+
+.trade-window__field .field__input {
+  height: 40px;
+  font-family: var(--f-mono);
+}
+
+.trade-window__dash {
+  padding-bottom: 10px;
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+}
+
+.trade-window__hint {
+  width: 100%;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-text-muted);
+}
+
+.trade-window__warn {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-accent);
+}
+
+/* ---------- P6：质量因子 ---------- */
+.quality__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.quality__row {
+  display: grid;
+  grid-template-columns: 132px repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+  align-items: end;
+}
+
+.quality__name {
+  padding-bottom: 10px;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--c-text);
+}
+
+.quality__field {
+  min-width: 0;
+}
+
+.quality__field .field__input {
+  height: 40px;
+}
+
+.quality__hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-text-muted);
+}
+
 /* ---------- P4：规则模板库 ---------- */
 .rule-bar {
   display: flex;
@@ -3632,6 +4030,14 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
   }
 
+  .quality__row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quality__name {
+    padding-bottom: 0;
+  }
+
   .rule-bar__row {
     flex-direction: column;
     align-items: stretch;
@@ -3694,6 +4100,24 @@ onBeforeUnmount(() => {
 
   .advanced__grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trade-window__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .trade-window__field {
+    flex: 1 1 auto;
+  }
+
+  .trade-window__dash {
+    display: none;
+  }
+
+  .quality__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-2);
   }
 
   .account-bar {

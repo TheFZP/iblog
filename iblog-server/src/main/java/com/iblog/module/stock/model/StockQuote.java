@@ -44,6 +44,13 @@ public class StockQuote {
     /** 换手率（%） */
     private double turnoverRate;
 
+    /**
+     * 流通市值（亿元，腾讯字段 [44]）。
+     *
+     * <p>腾讯 A 股行情里 [44] 是流通市值、[45] 是总市值，单位都是亿；港股走分时接口，暂不填。</p>
+     */
+    private double floatMarketCap;
+
     /** 市盈率 */
     private double pe;
 

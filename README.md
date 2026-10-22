@@ -100,11 +100,12 @@ iblog/
     （交易 15 秒 / 午休 60 秒 / 其余 5 分钟，页面在后台时再降 4 倍）
 - 模拟盘：服务端记账的 A 股模拟交易，手动买卖默认可用，自动选股 / 自动交易默认关闭；支持多账户（默认最多 5 个）
   - 手动盘：市价 / 限价委托、T+1、100 股整手、涨跌停与停牌校验、佣金 / 印花税 / 过户费、滑点
-  - 自动交易：热榜候选 + 均线 / MACD / 量比 / 主力资金流打分选股；止损 / 止盈 / 跌破 MA10 / 时间止损卖出；
+  - 自动交易：热榜候选 + 均线 / MACD / 量比 / 主力资金流 / 换手率 / 流通市值 / 分时均价线 / 涨停记忆打分选股；
+    止损 / 止盈 / 跌破 MA10 / 时间止损卖出；
     单票 20%、总仓 80%、日亏 3% 熔断、每日 20 笔上限，默认关闭，需在页面显式开启
   - 每个账户独立：初始资金、持仓、委托、成交、每日净值快照，以及各自的选股规则（候选池、因子权重、
-    RSI / 涨幅阈值等 22 项参数，存 `paper_strategy.params`）；最多 5 个账户，可对比不同规则，账户可重置或删除
-  - 规则模板：22 项参数可另存为多套命名模板（`paper_rule` 表），在任意账户上一键应用 / 切换，应用后仍可单独微调
+    RSI / 涨幅 / 换手率 / 流通市值阈值、分时均价线占比、涨停记忆天数、买入时间窗、次日开盘强制卖出等 35 项参数，存 `paper_strategy.params`）；最多 5 个账户，可对比不同规则，账户可重置或删除
+  - 规则模板：35 项参数可另存为多套命名模板（`paper_rule` 表），在任意账户上一键应用 / 切换，应用后仍可单独微调
   - 入口：官网导航 / 管理后台顶部「模拟盘」；后台入口经一次性票据直达，免二次登录
 
 ---
@@ -316,7 +317,7 @@ Authorization: Bearer <token>
 | GET | `/api/stock/paper/positions` | 持仓（含可用数量、浮动盈亏）|
 | GET / POST | `/api/stock/paper/orders` · `DELETE /orders/{id}` | 委托列表 / 下单 / 撤单 |
 | GET | `/api/stock/paper/trades` · `/nav` | 成交流水 / 每日净值 |
-| GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数（22 项选股规则，按账户保存）|
+| GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数（35 项选股规则，按账户保存）|
 | GET / POST | `/api/stock/paper/rules` · `PUT/DELETE /rules/{id}` | 规则模板列表 / 新建 / 改 / 删 |
 | POST | `/api/stock/paper/accounts/{id}/apply-rule/{ruleId}` | 把模板参数一键应用到指定账户 |
 | GET / POST | `/api/stock/paper/selections` · `/selections/refresh` | 今日选股结果 / 立即重新选股 |

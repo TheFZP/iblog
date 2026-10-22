@@ -96,7 +96,13 @@ public class PaperAutoTrader {
             if (available <= 0) {
                 continue;
             }
-            String reason = sellReason(position, params);
+            String reason;
+            if (params.isSellAtOpen() && holdingDays(position) >= 1) {
+                // 隔夜策略：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈/MA10
+                reason = "次日开盘卖出";
+            } else {
+                reason = sellReason(position, params);
+            }
             if (reason == null) {
                 continue;
             }
@@ -166,6 +172,10 @@ public class PaperAutoTrader {
     // ---------- 买入 ----------
 
     private void buy(PaperAccount account, PaperStrategy strategy) {
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        if (!params.inBuyWindow(calendar.now())) {
+            return;
+        }
         List<PaperSignal> candidates = selectionService.recentCandidates(account.getId());
         if (candidates.isEmpty()) {
             candidates = selectionService.refreshIfStale(account.getId());

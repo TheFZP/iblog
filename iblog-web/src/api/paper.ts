@@ -388,6 +388,32 @@ export interface PaperStrategyParams {
   changeMinPct: number
   /** 涨幅上限（%） */
   changeMaxPct: number
+  /** 次日开盘强制卖出：T+1 可卖后的首个 tick 直接市价清仓，不看止损/止盈/MA10 */
+  sellAtOpen?: boolean
+  /** 自动买入时间窗起点（HH:mm，含）；仅约束自动交易买入 */
+  buyStartTime?: string
+  /** 自动买入时间窗终点（HH:mm，含）；start >= end 或非法时后端视为不限制 */
+  buyEndTime?: string
+  /** 质量因子·换手率权重（0–100 分） */
+  turnoverScore?: number
+  /** 质量因子·换手率区间下限（%） */
+  turnoverMinPct?: number
+  /** 质量因子·换手率区间上限（%） */
+  turnoverMaxPct?: number
+  /** 质量因子·流通市值权重（0–100 分） */
+  floatCapScore?: number
+  /** 质量因子·流通市值区间下限（亿元） */
+  floatCapMinYi?: number
+  /** 质量因子·流通市值区间上限（亿元） */
+  floatCapMaxYi?: number
+  /** 质量因子·分时站上均价线权重（0–100 分） */
+  vwapScore?: number
+  /** 质量因子·分时站上均价线占比阈值（0.5–1） */
+  vwapAboveRatio?: number
+  /** 质量因子·涨停记忆权重（0–100 分） */
+  limitUpScore?: number
+  /** 质量因子·涨停回看天数（1–120 自然日） */
+  limitUpWithinDays?: number
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */

@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+
 /**
  * 策略参数（存在 paper_strategy.params 的 JSON 文本）。
  *
@@ -64,6 +68,39 @@ public class PaperStrategyParams {
     /** 当日涨幅上限（%，不含） */
     private double changeMaxPct = 9;
 
+    /** 换手率在 [min,max] 区间的得分 */
+    private int turnoverScore = 5;
+    /** 换手率下限（%，含；0 表示不限） */
+    private double turnoverMinPct = 3;
+    /** 换手率上限（%，含；0 表示不限） */
+    private double turnoverMaxPct = 15;
+
+    /** 流通市值在 [min,max] 区间的得分 */
+    private int floatCapScore = 5;
+    /** 流通市值下限（亿元，含；0 表示不限） */
+    private double floatCapMinYi = 50;
+    /** 流通市值上限（亿元，含；0 表示不限） */
+    private double floatCapMaxYi = 200;
+
+    /** 分时全程站在均价线上方的得分 */
+    private int vwapScore = 10;
+    /** 「全程站在均价线上方」的分钟占比阈值（0.5~1） */
+    private double vwapAboveRatio = 0.95;
+
+    /** 近 N 个交易日出现过涨停的得分 */
+    private int limitUpScore = 10;
+    /** 涨停记忆回看的交易日数 */
+    private int limitUpWithinDays = 20;
+
+    /** 次日开盘强制卖出（隔夜策略用：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈） */
+    private boolean sellAtOpen = false;
+    /** 自动买入时间窗起点（HH:mm，含） */
+    private String buyStartTime = "09:30";
+    /** 自动买入时间窗终点（HH:mm，含） */
+    private String buyEndTime = "15:00";
+
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+
     public static PaperStrategyParams parse(ObjectMapper mapper, String json) {
         PaperStrategyParams params = new PaperStrategyParams();
         if (json == null || json.isBlank()) {
@@ -96,6 +133,21 @@ public class PaperStrategyParams {
             params.rsiMax = number(node, "rsiMax", params.rsiMax, params.rsiMin + 0.1, 100);
             params.changeMinPct = number(node, "changeMinPct", params.changeMinPct, -10, 49.9);
             params.changeMaxPct = number(node, "changeMaxPct", params.changeMaxPct, params.changeMinPct + 0.1, 50);
+
+            params.turnoverScore = integer(node, "turnoverScore", params.turnoverScore, 0, 100);
+            params.turnoverMinPct = number(node, "turnoverMinPct", params.turnoverMinPct, 0, 100);
+            params.turnoverMaxPct = number(node, "turnoverMaxPct", params.turnoverMaxPct, 0, 100);
+            params.floatCapScore = integer(node, "floatCapScore", params.floatCapScore, 0, 100);
+            params.floatCapMinYi = number(node, "floatCapMinYi", params.floatCapMinYi, 0, 100000);
+            params.floatCapMaxYi = number(node, "floatCapMaxYi", params.floatCapMaxYi, 0, 100000);
+            params.vwapScore = integer(node, "vwapScore", params.vwapScore, 0, 100);
+            params.vwapAboveRatio = number(node, "vwapAboveRatio", params.vwapAboveRatio, 0.5, 1);
+            params.limitUpScore = integer(node, "limitUpScore", params.limitUpScore, 0, 100);
+            params.limitUpWithinDays = integer(node, "limitUpWithinDays", params.limitUpWithinDays, 1, 120);
+
+            params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
+            params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);
+            params.buyEndTime = timeText(node, "buyEndTime", params.buyEndTime);
         } catch (Exception ignored) {
             // 脏 JSON 用默认值
         }
@@ -117,6 +169,49 @@ public class PaperStrategyParams {
             return mapper.writeValueAsString(this);
         } catch (Exception ex) {
             return "{}";
+        }
+    }
+
+    /** 当前时间是否在自动买入时间窗内；时间配置非法或跨零点时视为不限制。 */
+    public boolean inBuyWindow(LocalDateTime at) {
+        if (at == null) {
+            return true;
+        }
+        try {
+            LocalTime start = LocalTime.parse(buyStartTime, TIME_FORMAT);
+            LocalTime end = LocalTime.parse(buyEndTime, TIME_FORMAT);
+            if (!start.isBefore(end)) {
+                return true;
+            }
+            LocalTime now = at.toLocalTime();
+            return !now.isBefore(start) && !now.isAfter(end);
+        } catch (RuntimeException ex) {
+            return true;
+        }
+    }
+
+    private static boolean bool(JsonNode node, String field, boolean fallback) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull()) {
+            return fallback;
+        }
+        if (value.isBoolean()) {
+            return value.asBoolean();
+        }
+        if (value.isNumber()) {
+            return value.asInt() != 0;
+        }
+        String text = value.asText("").trim();
+        return "true".equalsIgnoreCase(text) || "1".equals(text);
+    }
+
+    private static String timeText(JsonNode node, String field, String fallback) {
+        JsonNode value = node.get(field);
+        String text = value == null || value.isNull() ? fallback : value.asText("").trim();
+        try {
+            return LocalTime.parse(text, TIME_FORMAT).format(TIME_FORMAT);
+        } catch (RuntimeException ex) {
+            return fallback;
         }
     }
 

@@ -141,6 +141,8 @@ public class TencentService {
         q.setPe(num(at(f, 39)));
         // 振幅是 [43]；[46] 是市净率 —— 这两个极易混淆
         q.setAmplitude(num(at(f, 43)));
+        // [44] 流通市值、[45] 总市值，单位都是亿元；选股按流通市值筛选要用 [44]
+        q.setFloatMarketCap(num(at(f, 44)));
         q.setMarket(StockCode.marketOf(code));
         q.setCurrency("¥");
         q.setQuoteTime(fixQuoteTime(at(f, 30)));

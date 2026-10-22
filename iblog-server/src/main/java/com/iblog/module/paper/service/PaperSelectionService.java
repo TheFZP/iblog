@@ -8,14 +8,17 @@ import com.iblog.module.paper.mapper.PaperSignalMapper;
 import com.iblog.module.paper.support.Indicators;
 import com.iblog.module.paper.support.PaperConstants;
 import com.iblog.module.paper.support.PaperNumbers;
+import com.iblog.module.paper.support.PaperScreenRules;
 import com.iblog.module.paper.support.PaperStrategyParams;
 import com.iblog.module.paper.support.TradeCalendar;
 import com.iblog.module.stock.model.HotStockItem;
+import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MoneyFlow;
 import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
+import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.support.StockCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -46,9 +49,19 @@ public class PaperSelectionService {
     /** 打分至少需要的日 K 根数 */
     private static final int MIN_BARS = 60;
 
+    /**
+     * 每次选股最多做多少次分时校验。
+     *
+     * <p>分时接口只能单只查询，候选池 40 只全查会把一次刷新拖到几十秒；
+     * 这里只对「靠分时加分刚好能越线」的候选按扫描顺序校验前 15 只，
+     * 漏掉的票最多少一个加分项，不至于因为限流把整轮选股拖垮。</p>
+     */
+    private static final int MAX_VWAP_CHECKS = 15;
+
     private final HotListService hotListService;
     private final KlineCacheService klineCacheService;
     private final EastmoneyService eastmoneyService;
+    private final TencentService tencentService;
     private final PaperQuoteService quoteService;
     private final PaperSignalMapper signalMapper;
     private final PaperStrategyService strategyService;
@@ -74,6 +87,7 @@ public class PaperSelectionService {
         List<PaperSignal> selected = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         int scanned = 0;
+        int[] vwapBudget = {MAX_VWAP_CHECKS};
         for (HotStockItem item : hot) {
             if (scanned >= params.getUniverseSize()) {
                 break;
@@ -88,7 +102,7 @@ public class PaperSelectionService {
             }
             scanned++;
             try {
-                PaperSignal signal = evaluate(strategy, params, code, name, item);
+                PaperSignal signal = evaluate(strategy, params, code, name, item, vwapBudget);
                 if (signal != null) {
                     selected.add(signal);
                 }
@@ -156,7 +170,8 @@ public class PaperSelectionService {
 
     // ---------- 打分 ----------
 
-    private PaperSignal evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name, HotStockItem hot) {
+    private PaperSignal evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
+                                 HotStockItem hot, int[] vwapBudget) {
         List<KlineItem> bars = klineCacheService.load(code, MIN_BARS);
         if (bars.size() < 30) {
             return null;
@@ -178,15 +193,13 @@ public class PaperSelectionService {
         double rsi = Indicators.rsi(closes, 14);
         double volumeRatio = Indicators.volumeRatio(volumes, 5);
 
-        double changePct = 0;
+        StockQuote quote = null;
         try {
-            StockQuote quote = quoteService.quote(code);
-            if (quote != null && quote.getPrice() > 0) {
-                changePct = quote.getChangePct();
-            }
+            quote = quoteService.quote(code);
         } catch (RuntimeException ignored) {
             // 盘中取不到实时价不影响用日 K 打分
         }
+        double changePct = quote != null && quote.getPrice() > 0 ? quote.getChangePct() : 0;
 
         MoneyFlow flow = null;
         try {
@@ -230,6 +243,39 @@ public class PaperSelectionService {
         if (hot != null && hot.getHotRankChg() > 0) {
             score += params.getHotRankScore();
             reasons.add("热度上升");
+        }
+        // 换手率：活跃但不过热
+        if (quote != null && PaperScreenRules.inRange(quote.getTurnoverRate(),
+                params.getTurnoverMinPct(), params.getTurnoverMaxPct())) {
+            score += params.getTurnoverScore();
+            reasons.add(String.format("换手率 %.1f%%", quote.getTurnoverRate()));
+        }
+        // 流通市值：盘子适中，短线资金进出才方便
+        if (quote != null && PaperScreenRules.inRange(quote.getFloatMarketCap(),
+                params.getFloatCapMinYi(), params.getFloatCapMaxYi())) {
+            score += params.getFloatCapScore();
+            reasons.add(String.format("流通市值 %.0f 亿", quote.getFloatMarketCap()));
+        }
+        // 涨停记忆：近 N 个交易日出现过涨停，隔日更容易吸引跟风盘
+        if (PaperScreenRules.hasLimitUp(bars, params.getLimitUpWithinDays(), code, name)) {
+            score += params.getLimitUpScore();
+            reasons.add(params.getLimitUpWithinDays() + " 日内有涨停");
+        }
+        // 分时均价线：放最后校验，只对「靠这一项刚好能越线」的票拉分时，避免拖慢整轮刷新
+        if (params.getVwapScore() > 0
+                && score + params.getVwapScore() >= params.getMinScore()
+                && vwapBudget != null && vwapBudget[0] > 0) {
+            vwapBudget[0]--;
+            try {
+                IntradayData intraday = tencentService.fetchIntraday(code);
+                double ratio = PaperScreenRules.vwapAboveRatio(intraday.getItems());
+                if (ratio >= params.getVwapAboveRatio()) {
+                    score += params.getVwapScore();
+                    reasons.add(String.format("分时 %.0f%% 站上均价线", ratio * 100));
+                }
+            } catch (RuntimeException ex) {
+                log.debug("选股：分时获取失败 code={} msg={}", code, ex.getMessage());
+            }
         }
         if (score < params.getMinScore() || reasons.isEmpty()) {
             return null;
