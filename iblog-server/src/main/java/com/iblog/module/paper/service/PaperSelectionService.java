@@ -186,6 +186,12 @@ public class PaperSelectionService {
         if (close <= 0) {
             return null;
         }
+        // 连板高度：配了上限就作为硬条件（一进二严格只做昨日首板），不满足直接剔除
+        int boardHeight = PaperScreenRules.boardHeight(bars, code, name);
+        if (params.getBoardHeightMax() > 0
+                && (boardHeight < 1 || boardHeight > params.getBoardHeightMax())) {
+            return null;
+        }
         double ma5 = Indicators.sma(closes, 5);
         double ma10 = Indicators.sma(closes, 10);
         double ma20 = Indicators.sma(closes, 20);
@@ -260,6 +266,16 @@ public class PaperSelectionService {
         if (PaperScreenRules.hasLimitUp(bars, params.getLimitUpWithinDays(), code, name)) {
             score += params.getLimitUpScore();
             reasons.add(params.getLimitUpWithinDays() + " 日内有涨停");
+        }
+        // 连板结构：昨日首板额外加分，并在理由里写清是一板还是几板
+        if (params.getBoardHeightMax() > 0) {
+            reasons.add(boardHeight == 1 ? "昨日首板" : "昨日 " + boardHeight + " 连板");
+        }
+        if (params.getFirstBoardScore() > 0 && boardHeight == 1) {
+            score += params.getFirstBoardScore();
+            if (params.getBoardHeightMax() <= 0) {
+                reasons.add("昨日首板");
+            }
         }
         // 分时均价线：放最后校验，只对「靠这一项刚好能越线」的票拉分时，避免拖慢整轮刷新
         if (params.getVwapScore() > 0

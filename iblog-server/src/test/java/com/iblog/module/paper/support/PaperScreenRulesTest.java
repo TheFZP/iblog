@@ -5,6 +5,8 @@ import com.iblog.module.stock.model.IntradayItem;
 import com.iblog.module.stock.model.KlineItem;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -105,6 +107,69 @@ class PaperScreenRulesTest {
         assertTrue(json.contains("\"floatCapMaxYi\""));
         assertTrue(json.contains("\"vwapAboveRatio\""));
         assertTrue(json.contains("\"limitUpWithinDays\""));
+        assertTrue(json.contains("\"firstBoardScore\""));
+        assertTrue(json.contains("\"boardHeightMax\""));
+    }
+
+    @Test
+    void firstBoardFactorsDefaultsAndClamps() {
+        PaperStrategyParams defaults = PaperStrategyParams.parse(mapper, "{}");
+        assertEquals(0, defaults.getFirstBoardScore());
+        assertEquals(0, defaults.getBoardHeightMax());
+
+        PaperStrategyParams clamped = PaperStrategyParams.parse(mapper,
+                "{\"firstBoardScore\":500,\"boardHeightMax\":99,\"minScore\":500}");
+        assertEquals(100, clamped.getFirstBoardScore());
+        assertEquals(10, clamped.getBoardHeightMax());
+
+        PaperStrategyParams negative = PaperStrategyParams.parse(mapper,
+                "{\"firstBoardScore\":-20,\"boardHeightMax\":-3}");
+        assertEquals(0, negative.getFirstBoardScore());
+        assertEquals(0, negative.getBoardHeightMax());
+    }
+
+    @Test
+    void boardHeightCountsSealedLimitUpsBackwards() {
+        String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+        String yesterday = LocalDate.now(ZoneId.of("Asia/Shanghai")).minusDays(1).toString();
+        String dayBefore = LocalDate.now(ZoneId.of("Asia/Shanghai")).minusDays(2).toString();
+        String older = LocalDate.now(ZoneId.of("Asia/Shanghai")).minusDays(3).toString();
+        String oldest = LocalDate.now(ZoneId.of("Asia/Shanghai")).minusDays(4).toString();
+
+        // 昨日首板：9.50 → 10.00（+5%）→ 11.00（+10%），今日盘中 bar 不参与
+        List<KlineItem> firstBoard = List.of(
+                barOn(older, 9.50), barOn(dayBefore, 10.00),
+                barOn(yesterday, 11.00), barOn(today, 11.20));
+        assertEquals(1, PaperScreenRules.boardHeight(firstBoard, "600000", "浦发银行"));
+        assertTrue(PaperScreenRules.isFirstBoard(firstBoard, "600000", "浦发银行"));
+
+        // 昨日二板（实际为三连板）：8.18 → 9.00 → 9.90 → 10.89 → 11.979
+        List<KlineItem> secondBoard = List.of(
+                barOn(oldest, 8.18), barOn(older, 9.00), barOn(dayBefore, 9.90),
+                barOn(yesterday, 10.89), barOn(today, 11.10));
+        assertEquals(3, PaperScreenRules.boardHeight(secondBoard, "600000", "浦发银行"));
+        assertFalse(PaperScreenRules.isFirstBoard(secondBoard, "600000", "浦发银行"));
+
+        // 昨日没有涨停
+        List<KlineItem> noBoard = List.of(
+                barOn(older, 9.50), barOn(dayBefore, 10.00),
+                barOn(yesterday, 10.20), barOn(today, 10.10));
+        assertEquals(0, PaperScreenRules.boardHeight(noBoard, "600000", "浦发银行"));
+
+        // 盘前：最后一根就是昨日，不再往前找「今天」
+        List<KlineItem> preOpen = List.of(
+                barOn(dayBefore, 10.00), barOn(yesterday, 11.00));
+        assertEquals(1, PaperScreenRules.boardHeight(preOpen, "600000", "浦发银行"));
+
+        // 数据不足
+        assertEquals(-1, PaperScreenRules.boardHeight(List.of(barOn(yesterday, 11.0)), "600000", "浦发银行"));
+        assertEquals(-1, PaperScreenRules.boardHeight(List.of(), "600000", "浦发银行"));
+    }
+
+    private static KlineItem barOn(String date, double close) {
+        KlineItem bar = bar(close, close, close);
+        bar.setDate(date);
+        return bar;
     }
 
     private static IntradayItem item(double price, double avgPrice) {

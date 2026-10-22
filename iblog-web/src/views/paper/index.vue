@@ -574,6 +574,47 @@
                   </p>
                 </div>
                 <div class="advanced__group">
+                  <h3 class="advanced__title">涨停结构</h3>
+                  <div class="advanced__grid">
+                    <label class="field">
+                      <span class="field__label">首板加分</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.firstBoardScore"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('firstBoardScore').min"
+                          :max="ruleOf('firstBoardScore').max"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">
+                        上一交易日为首板（涨停且前一日未涨停）时加分，不是硬性过滤
+                      </span>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">连板高度上限</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.boardHeightMax"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('boardHeightMax').min"
+                          :max="ruleOf('boardHeightMax').max"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">板</span>
+                      </span>
+                      <span class="field__hint">
+                        0=不限；1=只做昨日首板（一进二）；N=昨日涨停且连板数不超过 N，不满足直接不入选
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div class="advanced__group">
                   <h3 class="advanced__title">交易时段</h3>
                   <label class="trade-window__check">
                     <input
@@ -1491,7 +1532,9 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   vwapScore: 10,
   vwapAboveRatio: 0.95,
   limitUpScore: 10,
-  limitUpWithinDays: 20
+  limitUpWithinDays: 20,
+  firstBoardScore: 0,
+  boardHeightMax: 0
 }
 
 interface NumberRule {
@@ -1534,7 +1577,9 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   vwapScore: { min: 0, max: 100, integer: true },
   vwapAboveRatio: { min: 0.5, max: 1, integer: false },
   limitUpScore: { min: 0, max: 100, integer: true },
-  limitUpWithinDays: { min: 1, max: 120, integer: true }
+  limitUpWithinDays: { min: 1, max: 120, integer: true },
+  firstBoardScore: { min: 0, max: 100, integer: true },
+  boardHeightMax: { min: 0, max: 10, integer: true }
 }
 
 const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
@@ -1602,9 +1647,11 @@ const ADVANCED_FIELDS: AdvancedField[] = ADVANCED_GROUPS.reduce<AdvancedField[]>
 const TRADE_WINDOW_FIELD_COUNT = 3
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
 const QUALITY_FIELD_COUNT = 10
+/** 涨停结构区固定 2 项：首板加分 + 连板高度上限 */
+const BOARD_FIELD_COUNT = 2
 /** 高级规则表单可编辑的参数总数（模板保存提示用） */
 const PARAM_FIELD_COUNT =
-  ADVANCED_FIELDS.length + TRADE_WINDOW_FIELD_COUNT + QUALITY_FIELD_COUNT
+  ADVANCED_FIELDS.length + TRADE_WINDOW_FIELD_COUNT + QUALITY_FIELD_COUNT + BOARD_FIELD_COUNT
 
 /** 参与「权重合计」提示的因子权重字段 */
 const WEIGHT_KEYS: NumericParamKey[] = [

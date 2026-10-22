@@ -4,17 +4,24 @@ import com.iblog.module.stock.model.IntradayItem;
 import com.iblog.module.stock.model.KlineItem;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
  * 选股用的纯计算规则（无 Spring 依赖，便于单测）：
- * 换手率/流通市值区间、分时是否全程站在均价线上方、近 N 日涨停记忆。
+ * 换手率/流通市值区间、分时是否全程站在均价线上方、近 N 日涨停记忆、
+ * 昨日连板高度（首板/二板/…）。
  *
- * <p>这些条件只参与打分，不做硬过滤 —— 满足的加分，不满足的不扣分，
+ * <p>多数条件只参与打分，不做硬过滤 —— 满足的加分，不满足的不扣分，
  * 这样既能把「一夜持股法」这类网络流传的筛选条件量化进模型，又不会因为一条
- * 数据缺失（如分时取不到）就把候选直接淘汰。</p>
+ * 数据缺失（如分时取不到）就把候选直接淘汰。例外是「连板高度」：
+ * 一进二这类策略要求严格只做昨日首板，配了上限后由调用方直接剔除，
+ * 否则三板、四板的票靠其它因子也能凑够分数。</p>
  */
 public final class PaperScreenRules {
+
+    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
     private PaperScreenRules() {
     }
@@ -90,5 +97,49 @@ public final class PaperScreenRules {
             }
         }
         return false;
+    }
+
+    /**
+     * 上一交易日（最后已收盘的那天）的连续涨停数。
+     *
+     * <p>日 K 在盘中会带上当日未收盘的 bar，所以先判断最后一根的日期是不是今天：
+     * 是则从倒数第二根往前数，否则最后一根就是上一交易日（盘前尚未生成当日 bar）。</p>
+     *
+     * <p>用「收盘价 ≥ 涨停价」判断封板，不把盘中触板算作涨停，避免炸板票被当成连板。
+     * 第一根 bar 没有前收盘价，连续计数到此为止。</p>
+     *
+     * @return 连板数；0 表示上一交易日没有涨停；-1 表示数据不足
+     */
+    public static int boardHeight(List<KlineItem> bars, String code, String name) {
+        if (bars == null || bars.size() < 2) {
+            return -1;
+        }
+        int last = bars.size() - 1;
+        String today = LocalDate.now(ZONE).toString();
+        int ref = today.equals(bars.get(last).getDate()) ? last - 1 : last;
+        if (ref < 1) {
+            return -1;
+        }
+        int count = 0;
+        int i = ref;
+        while (i >= 1) {
+            KlineItem bar = bars.get(i);
+            KlineItem prev = bars.get(i - 1);
+            if (bar == null || prev == null || prev.getClose() <= 0 || bar.getClose() <= 0) {
+                break;
+            }
+            BigDecimal limitUp = PriceLimit.limitUp(BigDecimal.valueOf(prev.getClose()), code, name);
+            if (limitUp == null || bar.getClose() + 0.005 < limitUp.doubleValue()) {
+                break;
+            }
+            count++;
+            i--;
+        }
+        return count;
+    }
+
+    /** 上一交易日是否为首板（涨停，且前一天没有涨停）。 */
+    public static boolean isFirstBoard(List<KlineItem> bars, String code, String name) {
+        return boardHeight(bars, code, name) == 1;
     }
 }

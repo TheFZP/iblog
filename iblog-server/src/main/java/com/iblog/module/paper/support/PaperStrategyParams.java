@@ -92,6 +92,11 @@ public class PaperStrategyParams {
     /** 涨停记忆回看的交易日数 */
     private int limitUpWithinDays = 20;
 
+    /** 昨日首板（昨日涨停且前一日未涨停）的得分 */
+    private int firstBoardScore = 0;
+    /** 连板高度硬过滤：0=不限；1=仅昨日首板；N=昨日涨停且连板数不超过 N */
+    private int boardHeightMax = 0;
+
     /** 次日开盘强制卖出（隔夜策略用：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈） */
     private boolean sellAtOpen = false;
     /** 自动买入时间窗起点（HH:mm，含） */
@@ -144,6 +149,8 @@ public class PaperStrategyParams {
             params.vwapAboveRatio = number(node, "vwapAboveRatio", params.vwapAboveRatio, 0.5, 1);
             params.limitUpScore = integer(node, "limitUpScore", params.limitUpScore, 0, 100);
             params.limitUpWithinDays = integer(node, "limitUpWithinDays", params.limitUpWithinDays, 1, 120);
+            params.firstBoardScore = integer(node, "firstBoardScore", params.firstBoardScore, 0, 100);
+            params.boardHeightMax = integer(node, "boardHeightMax", params.boardHeightMax, 0, 10);
 
             params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);

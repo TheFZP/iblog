@@ -414,6 +414,10 @@ export interface PaperStrategyParams {
   limitUpScore?: number
   /** 质量因子·涨停回看天数（1–120 自然日） */
   limitUpWithinDays?: number
+  /** 涨停结构·首板加分（0–100 分）：上一交易日为首板时加分 */
+  firstBoardScore?: number
+  /** 涨停结构·连板高度上限（0–10）：0=不限，1=仅昨日首板，N=连板数≤N；>0 时为硬过滤 */
+  boardHeightMax?: number
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */
