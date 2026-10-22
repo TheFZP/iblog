@@ -433,3 +433,16 @@ CREATE TABLE IF NOT EXISTS `paper_signal`
     KEY `idx_account_date` (`account_id`, `trade_date`),
     KEY `idx_code_date` (`code`, `trade_date`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='模拟盘信号与选股结果';
+
+-- 规则模板：用户级多套命名规则，应用时把 params 复制进 paper_strategy.params
+CREATE TABLE IF NOT EXISTS `paper_rule`
+(
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT      NOT NULL COMMENT '所属用户',
+    `name`        VARCHAR(64) NOT NULL COMMENT '模板名称',
+    `params`      TEXT        NOT NULL COMMENT '策略参数 JSON（22 项）',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user` (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='模拟盘规则模板';

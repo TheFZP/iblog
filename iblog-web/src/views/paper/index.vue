@@ -400,6 +400,87 @@
                 <p class="advanced__sum">
                   因子权重合计 <strong>{{ weightSum }}</strong> 分（仅作参考，不影响入选总分上限）
                 </p>
+
+                <!-- 规则模板库：把当前 22 项参数存成命名模板，一键应用到账户 -->
+                <div class="rule-bar">
+                  <div class="rule-bar__row">
+                    <label class="rule-bar__select">
+                      <span class="field__label">规则模板</span>
+                      <select
+                        v-model.number="selectedRuleId"
+                        class="field__input"
+                        :disabled="(rulesLoading && !rules.length) || applyingRule"
+                      >
+                        <option v-if="!rules.length" :value="null">暂无模板</option>
+                        <option v-for="item in rules" :key="item.id" :value="item.id">
+                          {{ item.name }}{{ item.active ? '（当前生效）' : '' }}
+                        </option>
+                      </select>
+                      <span class="field__hint">
+                        {{ rules.length }} / {{ MAX_RULES }} 套 · 应用后账户仍可单独微调
+                      </span>
+                    </label>
+                    <div class="rule-bar__actions">
+                      <button
+                        class="btn btn--ghost"
+                        type="button"
+                        :disabled="!selectedRule || applyingRule || !strategy"
+                        @click="applyRule"
+                      >
+                        {{ applyingRule ? '应用中…' : '应用模板' }}
+                      </button>
+                      <button
+                        class="btn btn--ghost"
+                        type="button"
+                        :disabled="!canSaveRule"
+                        :title="
+                          rules.length >= MAX_RULES
+                            ? `最多 ${MAX_RULES} 套模板，请先删除一套`
+                            : '把当前 22 项参数另存为命名模板'
+                        "
+                        @click="openSaveRule"
+                      >
+                        另存为模板
+                      </button>
+                      <button
+                        class="btn btn--ghost rule-bar__danger"
+                        type="button"
+                        :disabled="!selectedRule || ruleDeleting"
+                        @click="armDeleteRule"
+                      >
+                        删除模板
+                      </button>
+                    </div>
+                  </div>
+                  <p v-if="rulesError" class="rule-bar__error">{{ rulesError }}</p>
+                  <p v-else-if="rulesLoading && !rules.length" class="rule-bar__error">
+                    规则模板加载中…
+                  </p>
+                  <div v-if="ruleDeleteArmed" class="rule-bar__confirm">
+                    <span>
+                      确定删除模板「{{ selectedRule?.name }}」？删除后无法恢复，删完会自动补一套默认规则。
+                    </span>
+                    <button
+                      class="btn btn--ghost rule-bar__danger"
+                      type="button"
+                      :disabled="ruleDeleting"
+                      @click="confirmDeleteRule"
+                    >
+                      {{ ruleDeleting ? '删除中…' : '确认删除' }}
+                    </button>
+                    <button
+                      class="btn btn--ghost"
+                      type="button"
+                      :disabled="ruleDeleting"
+                      @click="cancelDeleteRule"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  <p v-else-if="activeRule" class="rule-bar__active">
+                    当前生效：{{ activeRule.name }}
+                  </p>
+                </div>
               </div>
 
               <p v-if="strategyError" class="strategy__error">{{ strategyError }}</p>
@@ -1008,6 +1089,58 @@
       </div>
     </div>
 
+    <!-- 另存为规则模板 -->
+    <div v-if="saveRuleOpen" class="stock-modal" @click.self="closeSaveRule">
+      <div
+        class="stock-modal__box account-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rule-save-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="rule-save-title" class="stock-modal__title">另存为规则模板</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="closeSaveRule"
+          >
+            ×
+          </button>
+        </div>
+        <form class="account-form" @submit.prevent="submitSaveRule">
+          <label class="field">
+            <span class="field__label">模板名称</span>
+            <input
+              v-model="saveRuleName"
+              class="field__input"
+              type="text"
+              :maxlength="RULE_NAME_MAX"
+              placeholder="例如：稳健趋势"
+              :disabled="ruleSaving"
+            />
+            <span class="field__hint">
+              最多 {{ RULE_NAME_MAX }} 个字；同名模板会被拒绝，当前表单的 22 项参数会一起保存
+            </span>
+          </label>
+          <p v-if="saveRuleError" class="account-form__error">{{ saveRuleError }}</p>
+          <div class="account-form__actions">
+            <button class="btn" type="submit" :disabled="ruleSaving">
+              {{ ruleSaving ? '保存中…' : '保存模板' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="ruleSaving"
+              @click="closeSaveRule"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- 手动买卖弹窗 -->
     <TradeDialog
       :show="tradeOpen"
@@ -1033,15 +1166,19 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import NavChart from '@/components/paper/NavChart.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import {
+  applyPaperRule,
   cancelPaperOrder,
   createPaperAccount,
+  createPaperRule,
   deletePaperAccount,
+  deletePaperRule,
   fetchPaperAccount,
   fetchPaperAccounts,
   fetchPaperEngineStatus,
   fetchPaperNav,
   fetchPaperOrders,
   fetchPaperPositions,
+  fetchPaperRules,
   fetchPaperSelections,
   fetchPaperSignals,
   fetchPaperStrategies,
@@ -1060,6 +1197,7 @@ import type {
   PaperOrder,
   PaperOrderStatus,
   PaperPosition,
+  PaperRule,
   PaperSide,
   PaperSignal,
   PaperStrategy,
@@ -1078,6 +1216,10 @@ const SIGNALS_LIMIT = 50
 const SECONDARY_MIN_INTERVAL_MS = 60_000
 /** 每个用户最多可开的模拟盘数量（后端同样限制 5 个） */
 const MAX_ACCOUNTS = 5
+/** 规则模板名称长度上限（后端同样限制 32 个字符） */
+const RULE_NAME_MAX = 32
+/** 每个用户最多可存的规则模板数量（后端同样限制 20 套） */
+const MAX_RULES = 20
 
 /** 后端策略参数的完整默认值，与 PaperStrategyParams 一一对应 */
 const DEFAULT_STRATEGY_PARAMS: PaperStrategyParams = {
@@ -1323,6 +1465,19 @@ const signals = ref<PaperSignal[]>([])
 const signalsLoading = ref(false)
 const signalsError = ref('')
 
+// —— P4：规则模板库 ——
+const rules = ref<PaperRule[]>([])
+const rulesLoading = ref(false)
+const rulesError = ref('')
+const selectedRuleId = ref<number | null>(null)
+const applyingRule = ref(false)
+const ruleSaving = ref(false)
+const ruleDeleting = ref(false)
+const ruleDeleteArmed = ref(false)
+const saveRuleOpen = ref(false)
+const saveRuleName = ref('')
+const saveRuleError = ref('')
+
 // —— 派生数据 ——
 const positionMarketValue = computed(() =>
   positions.value.reduce((sum, item) => sum + (item.marketValue ?? 0), 0)
@@ -1339,6 +1494,13 @@ const canDeleteAccount = computed(() => accounts.value.length > 1)
 const weightSum = computed(() =>
   WEIGHT_KEYS.reduce((sum, key) => sum + (Number(strategyForm.value[key]) || 0), 0)
 )
+/** 当前下拉选中的规则模板 */
+const selectedRule = computed(
+  () => rules.value.find((item) => item.id === selectedRuleId.value) ?? null
+)
+/** 与当前账户生效参数一致的那套模板 */
+const activeRule = computed(() => rules.value.find((item) => item.active) ?? null)
+const canSaveRule = computed(() => !!strategy.value && rules.value.length < MAX_RULES && !ruleSaving.value)
 
 // —— 格式化（金额/百分比/时间） ——
 function money(value: number | null | undefined, symbol = '¥'): string {
@@ -1687,7 +1849,14 @@ async function loadSignals() {
 }
 
 async function loadSecondary() {
-  await Promise.all([loadEngine(), loadStrategies(), loadSelections(), loadSignals()])
+  await Promise.all([
+    loadEngine(),
+    loadStrategies(),
+    loadSelections(),
+    loadSignals(),
+    // 定时刷新保留用户当前的下拉选择；切账户后该值为空，会自动选中「当前生效」的一套
+    loadRules(selectedRuleId.value ?? 'active')
+  ])
   scheduleSecondary()
 }
 
@@ -1817,6 +1986,143 @@ function buySelection(item: PaperSignal) {
   tradeOpen.value = true
 }
 
+// —— P4：规则模板库 ——
+/** 拉取模板列表；prefer 为 id 时优先选中该模板，否则选「当前生效」的一套 */
+async function loadRules(prefer: 'active' | number = 'active') {
+  const epoch = accountEpoch
+  rulesLoading.value = true
+  try {
+    const list = (await fetchPaperRules(activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    rules.value = list
+    rulesError.value = ''
+    syncRuleSelection(prefer)
+  } catch (err) {
+    if (epoch !== accountEpoch) return
+    rulesError.value = errText(err)
+    rules.value = []
+    selectedRuleId.value = null
+  } finally {
+    if (epoch === accountEpoch) rulesLoading.value = false
+  }
+}
+
+function syncRuleSelection(prefer: 'active' | number) {
+  if (!rules.value.length) {
+    selectedRuleId.value = null
+    return
+  }
+  if (prefer !== 'active') {
+    const matched = rules.value.find((item) => item.id === prefer)
+    if (matched) {
+      selectedRuleId.value = matched.id
+      return
+    }
+  }
+  const active = rules.value.find((item) => item.active)
+  selectedRuleId.value = (active ?? rules.value[0]).id
+}
+
+/** 应用模板：参数复制进当前账户策略，之后账户仍可单独微调 */
+async function applyRule() {
+  const rule = selectedRule.value
+  const accountId = activeAccountId()
+  if (!rule || accountId == null || applyingRule.value) return
+  applyingRule.value = true
+  rulesError.value = ''
+  ruleDeleteArmed.value = false
+  try {
+    const updated = await applyPaperRule(accountId, rule.id)
+    replaceStrategy(updated)
+    strategyLoaded = true
+    strategyForm.value = normalizeStrategyParams(updated.params)
+    flash(`已应用模板「${rule.name}」`)
+    await Promise.all([loadRules('active'), loadEngine(), loadSignals(), loadStrategies()])
+  } catch (err) {
+    rulesError.value = errText(err)
+    flash(rulesError.value, 'error')
+  } finally {
+    applyingRule.value = false
+  }
+}
+
+/** 名称自增，跳过已占用的「规则 N」 */
+function suggestRuleName(): string {
+  for (let index = rules.value.length + 1; index <= MAX_RULES + 2; index += 1) {
+    const name = `规则 ${index}`
+    if (!rules.value.some((item) => item.name === name)) return name
+  }
+  return `规则 ${rules.value.length + 1}`
+}
+
+function openSaveRule() {
+  if (ruleSaving.value || rules.value.length >= MAX_RULES) return
+  saveRuleError.value = ''
+  saveRuleName.value = suggestRuleName()
+  saveRuleOpen.value = true
+}
+
+function closeSaveRule() {
+  if (ruleSaving.value) return
+  saveRuleOpen.value = false
+}
+
+async function submitSaveRule() {
+  if (ruleSaving.value) return
+  const name = saveRuleName.value.trim()
+  if (!name) {
+    saveRuleError.value = '请填写模板名称'
+    return
+  }
+  if (name.length > RULE_NAME_MAX) {
+    saveRuleError.value = `模板名称最多 ${RULE_NAME_MAX} 个字`
+    return
+  }
+  // 另存前先钳制，保证存下去的参数和表单一致可用
+  const params = clampStrategyForm()
+  strategyForm.value = params
+  ruleSaving.value = true
+  saveRuleError.value = ''
+  try {
+    const created = await createPaperRule({ name, params: JSON.stringify(params) })
+    saveRuleOpen.value = false
+    flash(`模板「${created.name}」已保存`)
+    await loadRules(created.id)
+  } catch (err) {
+    saveRuleError.value = errText(err)
+  } finally {
+    ruleSaving.value = false
+  }
+}
+
+function armDeleteRule() {
+  if (!selectedRule.value || ruleDeleting.value) return
+  ruleDeleteArmed.value = true
+}
+
+function cancelDeleteRule() {
+  ruleDeleteArmed.value = false
+}
+
+/** 删除模板；后端没有下限，删完再拉列表会自动补默认规则 */
+async function confirmDeleteRule() {
+  const rule = selectedRule.value
+  if (!rule || ruleDeleting.value) return
+  ruleDeleting.value = true
+  rulesError.value = ''
+  try {
+    await deletePaperRule(rule.id)
+    ruleDeleteArmed.value = false
+    flash(`模板「${rule.name}」已删除`)
+    await loadRules('active')
+  } catch (err) {
+    rulesError.value = errText(err)
+    flash(rulesError.value, 'error')
+  } finally {
+    ruleDeleting.value = false
+  }
+}
+
 // —— P3：账户管理 ——
 /** 切账户/增删账户后清空上一账户的数据，避免闪现旧账户内容 */
 function resetAccountScopedState() {
@@ -1832,11 +2138,22 @@ function resetAccountScopedState() {
   strategies.value = []
   selections.value = []
   signals.value = []
+  rules.value = []
   error.value = ''
   engineError.value = ''
   strategyError.value = ''
   selectionsError.value = ''
   signalsError.value = ''
+  rulesError.value = ''
+  rulesLoading.value = false
+  applyingRule.value = false
+  ruleSaving.value = false
+  ruleDeleting.value = false
+  selectedRuleId.value = null
+  ruleDeleteArmed.value = false
+  saveRuleOpen.value = false
+  saveRuleName.value = ''
+  saveRuleError.value = ''
   orderStatus.value = ''
   orderPage.value = 1
   tradePage.value = 1
@@ -3202,6 +3519,89 @@ onBeforeUnmount(() => {
   font-family: var(--f-mono);
 }
 
+/* ---------- P4：规则模板库 ---------- */
+.rule-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--c-border);
+}
+
+.rule-bar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-4);
+}
+
+.rule-bar__select {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rule-bar__select .field__input {
+  height: 40px;
+  padding-right: 10px;
+  font-family: var(--f-sans);
+  cursor: pointer;
+}
+
+.rule-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.rule-bar__actions .btn {
+  min-height: 40px;
+  padding: 0 var(--s-4);
+  font-size: var(--t-sm);
+}
+
+.rule-bar__danger {
+  border-color: color-mix(in srgb, var(--stock-up) 45%, var(--c-border));
+  color: var(--stock-up);
+}
+
+.rule-bar__danger:hover:not(:disabled) {
+  border-color: var(--stock-up);
+  background: color-mix(in srgb, var(--stock-up) 8%, transparent);
+}
+
+.rule-bar__error {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--stock-up);
+}
+
+.rule-bar__active {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--c-text-muted);
+}
+
+.rule-bar__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid color-mix(in srgb, var(--stock-up) 30%, var(--c-border));
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--stock-up) 6%, transparent);
+  font-size: var(--t-xs);
+  color: var(--c-text-secondary);
+}
+
+.rule-bar__confirm .btn {
+  min-height: 36px;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
   .asset-card {
@@ -3230,6 +3630,15 @@ onBeforeUnmount(() => {
 
   .account-bar {
     flex-wrap: wrap;
+  }
+
+  .rule-bar__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rule-bar__select {
+    flex-basis: auto;
   }
 }
 
@@ -3298,6 +3707,15 @@ onBeforeUnmount(() => {
 
   .account-chip {
     min-width: 132px;
+  }
+
+  .rule-bar__actions {
+    justify-content: flex-start;
+  }
+
+  .rule-bar__confirm {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .panel__actions {

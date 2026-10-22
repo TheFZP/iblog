@@ -449,6 +449,7 @@ sudo docker compose up -d --build iblog-server
 > 才会替该用户自动下单（默认关）。服务端总开关没开时，前端打开按钮会直接报错。
 > 多账户：每个用户最多 5 个模拟盘，每个账户独立持仓、资金和选股规则（`paper_strategy.params` 里
 > 的 22 项参数，在页面「高级规则（选股打分）」里按账户保存），适合并行对比不同选股策略。
+> 规则模板：同 22 项参数可另存为多套命名模板（`paper_rule` 表），在任意账户上一键应用 / 切换。
 
 参数都在 `iblog.paper.*`（环境变量 `IBLOG_PAPER_*`，完整字段见 `IblogProperties.Paper`）：
 
@@ -471,7 +472,8 @@ sudo docker compose up -d --build iblog-server
 | `force-trading-hours` | false | 忽略交易时段限制（**仅本地调试用**）|
 
 > 模拟盘数据在 MySQL 的 `paper_*` 表；已有库会在后端启动时自动执行 `db/05-migration-paper.sql` 补表，
-> 再执行 `db/06-migration-paper-multi.sql` 把账户唯一键升级为「一用户多账户」（幂等，可重复启动）。
+> 再执行 `db/06-migration-paper-multi.sql` 把账户唯一键升级为「一用户多账户」，
+> 最后执行 `db/07-migration-paper-rule.sql` 建规则模板表（均幂等，可重复启动）。
 > 「重置账户」只清当前账户的持仓 / 委托 / 成交 / 净值，不影响其他账户。
 
 ---

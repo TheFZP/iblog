@@ -473,3 +473,55 @@ export function setPaperAutoTrade(enabled: boolean, accountId?: number) {
     { enabled }
   ) as unknown as Promise<PaperAccount>
 }
+
+// ---------- P4：规则模板库 ----------
+
+/** 规则模板：每用户一套模板库，可一键应用到任意模拟盘账户 */
+export interface PaperRule {
+  id: number
+  name: string
+  /** 参数 JSON 文本（22 个字段，与策略 params 同构） */
+  params: string
+  /** 是否与查询账户当前生效参数一致 */
+  active: boolean
+  createTime?: string
+  updateTime?: string
+}
+
+/** 新建 / 更新规则模板请求体：name 新建必填，params 留空则用默认参数 */
+export interface PaperRuleSaveRequest {
+  name?: string
+  params?: string
+}
+
+/** 规则模板列表；active 标记与查询账户当前生效参数一致的那套 */
+export function fetchPaperRules(accountId?: number) {
+  return get<PaperRule[]>('/stock/paper/rules', withAccountId(undefined, accountId))
+}
+
+/** 另存为模板：params 传当前表单序列化后的 JSON；同名或超过 20 套后端返回业务错误 */
+export function createPaperRule(body: PaperRuleSaveRequest) {
+  return post<PaperRule>('/stock/paper/rules', body)
+}
+
+/** 更新模板名称或参数（字段为 undefined 表示不修改） */
+export function updatePaperRule(id: number, body: PaperRuleSaveRequest) {
+  return service.put(
+    `/stock/paper/rules/${encodeURIComponent(String(id))}`,
+    body
+  ) as unknown as Promise<PaperRule>
+}
+
+/** 删除模板；后端没有下限，删完再拉列表会自动补一套默认规则 */
+export function deletePaperRule(id: number) {
+  return service.delete(
+    `/stock/paper/rules/${encodeURIComponent(String(id))}`
+  ) as unknown as Promise<null>
+}
+
+/** 把模板参数一键应用到指定账户，返回更新后的策略（params 已规范化） */
+export function applyPaperRule(accountId: number, ruleId: number) {
+  return service.post(
+    `/stock/paper/accounts/${encodeURIComponent(String(accountId))}/apply-rule/${encodeURIComponent(String(ruleId))}`
+  ) as unknown as Promise<PaperStrategy>
+}

@@ -71,6 +71,15 @@ public class PaperStrategyService {
         return strategy;
     }
 
+    /** 用一段参数 JSON 覆盖账户当前策略（规则模板「一键应用」用），不做其它改动。 */
+    @Transactional
+    public PaperStrategy replaceParams(Long accountId, String paramsJson) {
+        PaperStrategy strategy = ensureDefault(accountId);
+        strategy.setParams(PaperStrategyParams.parse(objectMapper, paramsJson).toJson(objectMapper));
+        strategyMapper.updateById(strategy);
+        return strategy;
+    }
+
     public void touch(PaperStrategy strategy) {
         strategy.setLastRunTime(calendar.now());
         strategyMapper.updateById(strategy);

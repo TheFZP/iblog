@@ -6,6 +6,7 @@ import com.iblog.config.IblogProperties;
 import com.iblog.module.paper.dto.PaperAccountCreateRequest;
 import com.iblog.module.paper.dto.PaperAccountRenameRequest;
 import com.iblog.module.paper.dto.PaperOrderRequest;
+import com.iblog.module.paper.dto.PaperRuleSaveRequest;
 import com.iblog.module.paper.dto.PaperStrategyUpdateRequest;
 import com.iblog.module.paper.entity.PaperAccount;
 import com.iblog.module.paper.entity.PaperPosition;
@@ -14,6 +15,7 @@ import com.iblog.module.paper.entity.PaperStrategy;
 import com.iblog.module.paper.service.PaperAccountService;
 import com.iblog.module.paper.service.PaperOrderService;
 import com.iblog.module.paper.service.PaperPositionService;
+import com.iblog.module.paper.service.PaperRuleService;
 import com.iblog.module.paper.service.PaperSelectionService;
 import com.iblog.module.paper.service.PaperStrategyService;
 import com.iblog.module.paper.support.TradeCalendar;
@@ -21,6 +23,7 @@ import com.iblog.module.paper.vo.PaperAccountVO;
 import com.iblog.module.paper.vo.PaperNavVO;
 import com.iblog.module.paper.vo.PaperOrderVO;
 import com.iblog.module.paper.vo.PaperPositionVO;
+import com.iblog.module.paper.vo.PaperRuleVO;
 import com.iblog.security.UserContext;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +60,7 @@ public class PaperTradingController {
     private final PaperPositionService positionService;
     private final PaperOrderService orderService;
     private final PaperStrategyService strategyService;
+    private final PaperRuleService ruleService;
     private final PaperSelectionService selectionService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
@@ -156,9 +160,39 @@ public class PaperTradingController {
         return R.ok(strategyService.update(requireAccount(accountId).getId(), id, request));
     }
 
+    // ---------- 规则模板（每用户多套命名规则，可一键应用到账户） ----------
+
+    @GetMapping("/rules")
+    public R<List<PaperRuleVO>> rules(@RequestParam(required = false) Long accountId) {
+        Long userId = currentUserId();
+        Long resolved = accountService.require(userId, accountId).getId();
+        return R.ok(ruleService.list(userId, resolved));
+    }
+
+    @PostMapping("/rules")
+    public R<PaperRuleVO> createRule(@RequestBody PaperRuleSaveRequest request) {
+        return R.ok(ruleService.create(currentUserId(), request));
+    }
+
+    @PutMapping("/rules/{id}")
+    public R<PaperRuleVO> updateRule(@PathVariable Long id, @RequestBody PaperRuleSaveRequest request) {
+        return R.ok(ruleService.update(currentUserId(), id, request));
+    }
+
+    @DeleteMapping("/rules/{id}")
+    public R<Void> deleteRule(@PathVariable Long id) {
+        ruleService.delete(currentUserId(), id);
+        return R.ok();
+    }
+
+    /** 把模板参数复制进账户当前策略，返回更新后的策略。 */
+    @PostMapping("/accounts/{id}/apply-rule/{ruleId}")
+    public R<PaperStrategy> applyRule(@PathVariable Long id, @PathVariable Long ruleId) {
+        return R.ok(ruleService.apply(currentUserId(), id, ruleId));
+    }
+
     @GetMapping("/selections")
-    public R<List<PaperSignal>> selections(@RequestParam(required = false) Long accountId,
-                                           @RequestParam(required = false) String date) {
+    public R<List<PaperSignal>> selections(@RequestParam(required = false) Long accountId,                                           @RequestParam(required = false) String date) {
         PaperAccount account = requireAccount(accountId);
         return R.ok(date == null || date.isBlank()
                 ? selectionService.recentCandidates(account.getId())

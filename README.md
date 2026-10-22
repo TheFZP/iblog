@@ -104,6 +104,7 @@ iblog/
     单票 20%、总仓 80%、日亏 3% 熔断、每日 20 笔上限，默认关闭，需在页面显式开启
   - 每个账户独立：初始资金、持仓、委托、成交、每日净值快照，以及各自的选股规则（候选池、因子权重、
     RSI / 涨幅阈值等 22 项参数，存 `paper_strategy.params`）；最多 5 个账户，可对比不同规则，账户可重置或删除
+  - 规则模板：22 项参数可另存为多套命名模板（`paper_rule` 表），在任意账户上一键应用 / 切换，应用后仍可单独微调
   - 入口：官网导航 / 管理后台顶部「模拟盘」；后台入口经一次性票据直达，免二次登录
 
 ---
@@ -316,6 +317,8 @@ Authorization: Bearer <token>
 | GET / POST | `/api/stock/paper/orders` · `DELETE /orders/{id}` | 委托列表 / 下单 / 撤单 |
 | GET | `/api/stock/paper/trades` · `/nav` | 成交流水 / 每日净值 |
 | GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数（22 项选股规则，按账户保存）|
+| GET / POST | `/api/stock/paper/rules` · `PUT/DELETE /rules/{id}` | 规则模板列表 / 新建 / 改 / 删 |
+| POST | `/api/stock/paper/accounts/{id}/apply-rule/{ruleId}` | 把模板参数一键应用到指定账户 |
 | GET / POST | `/api/stock/paper/selections` · `/selections/refresh` | 今日选股结果 / 立即重新选股 |
 | GET | `/api/stock/paper/engine/status` | 引擎与自动交易状态 |
 | POST | `/api/stock/paper/account/auto-trade` · `/account/reset` | 开关自动交易 / 重置账户 |
