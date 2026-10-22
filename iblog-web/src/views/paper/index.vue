@@ -41,6 +41,69 @@
         </div>
       </header>
 
+      <!-- 账户栏：多开模拟盘，切换后整页数据都跟着换 -->
+      <section class="account-bar" aria-label="模拟盘账户">
+        <div class="account-bar__list" role="group" aria-label="选择模拟盘">
+          <button
+            v-for="item in accounts"
+            :key="item.accountId"
+            type="button"
+            class="account-chip"
+            :class="{ 'is-active': item.accountId === currentAccountId }"
+            :aria-pressed="item.accountId === currentAccountId"
+            :disabled="accountSwitching"
+            @click="switchAccount(item.accountId)"
+          >
+            <span class="account-chip__name">
+              {{ item.name }}
+              <span v-if="item.primary" class="account-chip__flag">主</span>
+            </span>
+            <span class="account-chip__asset">{{ money(item.totalAsset) }}</span>
+            <span class="account-chip__pct" :class="toneClass(item.totalProfitPct)">
+              {{ pct(item.totalProfitPct) }}
+            </span>
+          </button>
+          <span v-if="accountsLoading && !accounts.length" class="account-bar__state">
+            账户加载中…
+          </span>
+          <span
+            v-else-if="accountsError"
+            class="account-bar__state account-bar__state--error"
+          >
+            {{ accountsError }}
+          </span>
+        </div>
+        <div class="account-bar__actions">
+          <button
+            class="mini-btn"
+            type="button"
+            :disabled="!canCreateAccount"
+            :title="canCreateAccount ? '新建一个独立资金的模拟盘' : `最多 ${MAX_ACCOUNTS} 个模拟盘`"
+            @click="openCreateAccount"
+          >
+            新建模拟盘
+          </button>
+          <button
+            class="mini-btn"
+            type="button"
+            :disabled="!currentAccount"
+            title="给当前模拟盘改名"
+            @click="openRenameAccount"
+          >
+            改名
+          </button>
+          <button
+            class="mini-btn mini-btn--danger"
+            type="button"
+            :disabled="!canDeleteAccount"
+            :title="canDeleteAccount ? '删除当前模拟盘（需二次确认）' : '至少保留一个模拟盘'"
+            @click="openDeleteAccount"
+          >
+            删除
+          </button>
+        </div>
+      </section>
+
       <div class="stack">
         <!-- 资产卡 -->
         <section class="asset-card" aria-label="账户资产">
@@ -292,10 +355,57 @@
                   <span class="field__hint">超期自动卖出</span>
                 </label>
               </div>
+
+              <button
+                class="strategy__advanced-toggle"
+                type="button"
+                :aria-expanded="advancedOpen"
+                @click="advancedOpen = !advancedOpen"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" :class="{ 'is-open': advancedOpen }">
+                  <path d="m9 6 6 6-6 6" />
+                </svg>
+                高级规则（选股打分）
+                <span class="strategy__advanced-hint">{{
+                  advancedOpen ? '收起' : `共 ${ADVANCED_FIELDS.length} 项`
+                }}</span>
+              </button>
+
+              <div v-if="advancedOpen" class="strategy__advanced">
+                <div v-for="group in ADVANCED_GROUPS" :key="group.title" class="advanced__group">
+                  <h3 class="advanced__title">{{ group.title }}</h3>
+                  <div class="advanced__grid">
+                    <label
+                      v-for="item in group.fields"
+                      :key="item.key"
+                      class="field"
+                    >
+                      <span class="field__label">{{ item.label }}</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm[item.key]"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf(item.key).min"
+                          :max="ruleOf(item.key).max"
+                          :step="item.step"
+                          :disabled="!strategy"
+                        />
+                        <span v-if="item.unit" class="field__unit">{{ item.unit }}</span>
+                      </span>
+                      <span v-if="item.hint" class="field__hint">{{ item.hint }}</span>
+                    </label>
+                  </div>
+                </div>
+                <p class="advanced__sum">
+                  因子权重合计 <strong>{{ weightSum }}</strong> 分（仅作参考，不影响入选总分上限）
+                </p>
+              </div>
+
               <p v-if="strategyError" class="strategy__error">{{ strategyError }}</p>
               <div class="strategy__actions">
                 <button class="btn" type="submit" :disabled="strategyBusy || !strategy">
-                  {{ strategyBusy ? '保存中…' : '保存参数' }}
+                  {{ strategyBusy ? '保存中…' : '保存规则' }}
                 </button>
                 <span v-if="strategy?.lastRunTime" class="strategy__meta">
                   最近运行 {{ shortTime(strategy.lastRunTime) }}
@@ -738,12 +848,173 @@
       </div>
     </div>
 
+    <!-- 新建模拟盘 -->
+    <div v-if="createOpen" class="stock-modal" @click.self="closeCreateAccount">
+      <div
+        class="stock-modal__box account-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-create-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="account-create-title" class="stock-modal__title">新建模拟盘</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="closeCreateAccount"
+          >
+            ×
+          </button>
+        </div>
+        <form class="account-form" @submit.prevent="submitCreateAccount">
+          <label class="field">
+            <span class="field__label">账户名称</span>
+            <input
+              v-model="createName"
+              class="field__input"
+              type="text"
+              maxlength="20"
+              placeholder="例如：模拟盘 2"
+              :disabled="createBusy"
+            />
+            <span class="field__hint">最多 20 个字，创建后可随时改名</span>
+          </label>
+          <label class="field">
+            <span class="field__label">初始资金</span>
+            <span class="field__control">
+              <input
+                v-model.number="createCash"
+                class="field__input"
+                type="number"
+                min="1000"
+                max="100000000"
+                step="1000"
+                :disabled="createBusy"
+              />
+              <span class="field__unit">元</span>
+            </span>
+            <span class="field__hint">默认 30,000 元；创建后想恢复只能点「重置账户」</span>
+          </label>
+          <p v-if="createError" class="account-form__error">{{ createError }}</p>
+          <div class="account-form__actions">
+            <button class="btn" type="submit" :disabled="createBusy">
+              {{ createBusy ? '创建中…' : '创建并切换' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="createBusy"
+              @click="closeCreateAccount"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 账户改名 -->
+    <div v-if="renameOpen" class="stock-modal" @click.self="closeRenameAccount">
+      <div
+        class="stock-modal__box account-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-rename-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="account-rename-title" class="stock-modal__title">给模拟盘改名</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="closeRenameAccount"
+          >
+            ×
+          </button>
+        </div>
+        <form class="account-form" @submit.prevent="submitRenameAccount">
+          <label class="field">
+            <span class="field__label">账户名称</span>
+            <input
+              v-model="renameName"
+              class="field__input"
+              type="text"
+              maxlength="20"
+              :disabled="renameBusy"
+            />
+            <span class="field__hint">只改显示名，资金与持仓不受影响</span>
+          </label>
+          <p v-if="renameError" class="account-form__error">{{ renameError }}</p>
+          <div class="account-form__actions">
+            <button class="btn" type="submit" :disabled="renameBusy">
+              {{ renameBusy ? '保存中…' : '保存名称' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="renameBusy"
+              @click="closeRenameAccount"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 删除模拟盘（二次确认） -->
+    <div v-if="deleteOpen" class="stock-modal" @click.self="closeDeleteAccount">
+      <div
+        class="stock-modal__box account-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-delete-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="account-delete-title" class="stock-modal__title">删除模拟盘</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="closeDeleteAccount"
+          >
+            ×
+          </button>
+        </div>
+        <div class="account-form">
+          <p class="account-form__warn">
+            确定删除「{{ currentAccount?.name }}」？该账户的资金、持仓、委托、成交与信号记录都会一并清空，且无法恢复。
+          </p>
+          <div class="account-form__actions">
+            <button
+              class="btn account-form__danger"
+              type="button"
+              :disabled="deleteBusy"
+              @click="submitDeleteAccount"
+            >
+              {{ deleteBusy ? '删除中…' : '确认删除' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="deleteBusy"
+              @click="closeDeleteAccount"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 手动买卖弹窗 -->
     <TradeDialog
       :show="tradeOpen"
       :preset="tradePreset"
       :cash="account?.cash"
       :positions="positions"
+      :account-id="currentAccountId"
       @close="tradeOpen = false"
       @submitted="onTradeSubmitted"
     />
@@ -763,7 +1034,10 @@ import NavChart from '@/components/paper/NavChart.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import {
   cancelPaperOrder,
+  createPaperAccount,
+  deletePaperAccount,
   fetchPaperAccount,
+  fetchPaperAccounts,
   fetchPaperEngineStatus,
   fetchPaperNav,
   fetchPaperOrders,
@@ -773,12 +1047,14 @@ import {
   fetchPaperStrategies,
   fetchPaperTrades,
   refreshPaperSelections,
+  renamePaperAccount,
   resetPaperAccount,
   setPaperAutoTrade,
   updatePaperStrategy
 } from '@/api/paper'
 import type {
   PaperAccount,
+  PaperAccountSummary,
   PaperEngineStatus,
   PaperNavPoint,
   PaperOrder,
@@ -800,13 +1076,139 @@ const NAV_DAYS = [30, 90, 180]
 const SIGNALS_LIMIT = 50
 /** 引擎/选股/信号属于「慢数据」，最短 60s 刷新一次，避免频繁拉选股与信号 */
 const SECONDARY_MIN_INTERVAL_MS = 60_000
+/** 每个用户最多可开的模拟盘数量（后端同样限制 5 个） */
+const MAX_ACCOUNTS = 5
 
+/** 后端策略参数的完整默认值，与 PaperStrategyParams 一一对应 */
 const DEFAULT_STRATEGY_PARAMS: PaperStrategyParams = {
   minScore: 60,
   stopLossPct: 8,
   takeProfitPct: 15,
-  maxHoldDays: 10
+  maxHoldDays: 10,
+  universeSize: 20,
+  maxCandidates: 5,
+  selectionRefreshSec: 300,
+  maTrendScore: 25,
+  ma20Score: 10,
+  macdScore: 20,
+  volumeRatioScore: 15,
+  moneyFlowScore: 20,
+  moneyFlowPctScore: 5,
+  rsiScore: 10,
+  changeScore: 5,
+  hotRankScore: 5,
+  volumeRatioMin: 1.2,
+  moneyFlowPctMin: 5,
+  rsiMin: 40,
+  rsiMax: 70,
+  changeMinPct: 0,
+  changeMaxPct: 9
 }
+
+interface NumberRule {
+  min: number
+  max: number
+  /** 是否只接受整数（先取整再钳制） */
+  integer: boolean
+}
+
+/** 各字段的合法区间：保存前把非法/越界输入夹回区间内 */
+const STRATEGY_RULES: Record<keyof PaperStrategyParams, NumberRule> = {
+  minScore: { min: 0, max: 100, integer: true },
+  stopLossPct: { min: 0.5, max: 50, integer: false },
+  takeProfitPct: { min: 0.5, max: 200, integer: false },
+  maxHoldDays: { min: 1, max: 120, integer: true },
+  universeSize: { min: 5, max: 50, integer: true },
+  maxCandidates: { min: 1, max: 20, integer: true },
+  selectionRefreshSec: { min: 30, max: 3600, integer: true },
+  maTrendScore: { min: 0, max: 100, integer: true },
+  ma20Score: { min: 0, max: 100, integer: true },
+  macdScore: { min: 0, max: 100, integer: true },
+  volumeRatioScore: { min: 0, max: 100, integer: true },
+  moneyFlowScore: { min: 0, max: 100, integer: true },
+  moneyFlowPctScore: { min: 0, max: 100, integer: true },
+  rsiScore: { min: 0, max: 100, integer: true },
+  changeScore: { min: 0, max: 100, integer: true },
+  hotRankScore: { min: 0, max: 100, integer: true },
+  volumeRatioMin: { min: 0.1, max: 10, integer: false },
+  moneyFlowPctMin: { min: 0, max: 50, integer: false },
+  rsiMin: { min: 0, max: 100, integer: true },
+  rsiMax: { min: 0, max: 100, integer: true },
+  changeMinPct: { min: -10, max: 20, integer: false },
+  changeMaxPct: { min: -10, max: 20, integer: false }
+}
+
+function ruleOf(key: keyof PaperStrategyParams): NumberRule {
+  return STRATEGY_RULES[key]
+}
+
+interface AdvancedField {
+  key: keyof PaperStrategyParams
+  label: string
+  step: number
+  unit?: string
+  hint?: string
+}
+
+interface AdvancedGroup {
+  title: string
+  fields: AdvancedField[]
+}
+
+/** 「高级规则」表单分组：除最低分/止损/止盈/持有天数外的全部选股参数 */
+const ADVANCED_GROUPS: AdvancedGroup[] = [
+  {
+    title: '选股范围与节奏',
+    fields: [
+      { key: 'universeSize', label: '候选池大小', step: 1, unit: '只', hint: '从热榜取前 N 只' },
+      { key: 'maxCandidates', label: '最多候选', step: 1, unit: '只', hint: '每轮最多留几只' },
+      { key: 'selectionRefreshSec', label: '选股刷新间隔', step: 30, unit: '秒', hint: '自动选股的间隔' }
+    ]
+  },
+  {
+    title: '因子权重',
+    fields: [
+      { key: 'maTrendScore', label: '均线趋势', step: 1, unit: '分' },
+      { key: 'ma20Score', label: 'MA20 上方', step: 1, unit: '分' },
+      { key: 'macdScore', label: 'MACD 金叉', step: 1, unit: '分' },
+      { key: 'volumeRatioScore', label: '量比放大', step: 1, unit: '分' },
+      { key: 'moneyFlowScore', label: '资金流入', step: 1, unit: '分' },
+      { key: 'moneyFlowPctScore', label: '资金流占比', step: 1, unit: '分' },
+      { key: 'rsiScore', label: 'RSI 区间', step: 1, unit: '分' },
+      { key: 'changeScore', label: '当日涨幅', step: 1, unit: '分' },
+      { key: 'hotRankScore', label: '热榜排名', step: 1, unit: '分' }
+    ]
+  },
+  {
+    title: '入选阈值',
+    fields: [
+      { key: 'volumeRatioMin', label: '量比下限', step: 0.1, hint: '低于该量比不入选' },
+      { key: 'moneyFlowPctMin', label: '资金流占比下限', step: 0.5, unit: '%' },
+      { key: 'rsiMin', label: 'RSI 下限', step: 1 },
+      { key: 'rsiMax', label: 'RSI 上限', step: 1 },
+      { key: 'changeMinPct', label: '涨幅下限', step: 0.5, unit: '%' },
+      { key: 'changeMaxPct', label: '涨幅上限', step: 0.5, unit: '%' }
+    ]
+  }
+]
+
+const ADVANCED_FIELDS: AdvancedField[] = ADVANCED_GROUPS.reduce<AdvancedField[]>(
+  (all, group) => all.concat(group.fields),
+  []
+)
+
+/** 参与「权重合计」提示的因子权重字段 */
+const WEIGHT_KEYS: (keyof PaperStrategyParams)[] = [
+  'maTrendScore',
+  'ma20Score',
+  'macdScore',
+  'volumeRatioScore',
+  'moneyFlowScore',
+  'moneyFlowPctScore',
+  'rsiScore',
+  'changeScore',
+  'hotRankScore'
+]
 
 const ORDER_FILTERS: { value: PaperOrderStatus | ''; label: string }[] = [
   { value: '', label: '全部' },
@@ -827,6 +1229,29 @@ const ORDER_STATUS_TEXT: Record<PaperOrderStatus, string> = {
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+
+// —— P3：多账户 ——
+const accounts = ref<PaperAccountSummary[]>([])
+const accountsLoading = ref(false)
+const accountsError = ref('')
+const currentAccountId = ref<number | null>(null)
+const accountSwitching = ref(false)
+/** 切换代数：切账户后忽略上一账户在途请求的返回，避免串数据 */
+let accountEpoch = 0
+
+const createOpen = ref(false)
+const createName = ref('')
+const createCash = ref(30000)
+const createBusy = ref(false)
+const createError = ref('')
+
+const renameOpen = ref(false)
+const renameName = ref('')
+const renameBusy = ref(false)
+const renameError = ref('')
+
+const deleteOpen = ref(false)
+const deleteBusy = ref(false)
 
 const account = ref<PaperAccount | null>(null)
 const positions = ref<PaperPosition[]>([])
@@ -886,6 +1311,7 @@ const strategyBusy = ref(false)
 const strategyError = ref('')
 const autoTradeConfirm = ref(false)
 const autoTradeBusy = ref(false)
+const advancedOpen = ref(false)
 let strategyLoaded = false
 
 const selections = ref<PaperSignal[]>([])
@@ -905,6 +1331,14 @@ const orderPageCount = computed(() => Math.max(1, Math.ceil(ordersTotal.value / 
 const tradePageCount = computed(() => Math.max(1, Math.ceil(tradesTotal.value / TRADES_PAGE_SIZE)))
 /** 当前账户只有一条策略（趋势选股） */
 const strategy = computed(() => strategies.value[0] ?? null)
+const currentAccount = computed(
+  () => accounts.value.find((item) => item.accountId === currentAccountId.value) ?? null
+)
+const canCreateAccount = computed(() => accounts.value.length < MAX_ACCOUNTS)
+const canDeleteAccount = computed(() => accounts.value.length > 1)
+const weightSum = computed(() =>
+  WEIGHT_KEYS.reduce((sum, key) => sum + (Number(strategyForm.value[key]) || 0), 0)
+)
 
 // —— 格式化（金额/百分比/时间） ——
 function money(value: number | null | undefined, symbol = '¥'): string {
@@ -982,69 +1416,117 @@ function captureError(err: unknown, silent: boolean) {
   }
 }
 
-async function loadAccount(silent = false) {
+/** 当前账户 id；不传时后端按主账户处理 */
+function activeAccountId(): number | undefined {
+  return currentAccountId.value ?? undefined
+}
+
+async function loadAccounts(): Promise<void> {
+  accountsLoading.value = true
   try {
-    account.value = await fetchPaperAccount()
+    const list = await fetchPaperAccounts()
+    accounts.value = list ?? []
+    accountsError.value = ''
+    // 当前账户被删、或首次加载时，回落到主账户 / 第一个账户
+    if (accounts.value.length) {
+      const exists = accounts.value.some((item) => item.accountId === currentAccountId.value)
+      if (!exists) {
+        const preferred = accounts.value.find((item) => item.primary) ?? accounts.value[0]
+        currentAccountId.value = preferred.accountId
+      }
+    } else {
+      currentAccountId.value = null
+    }
   } catch (err) {
-    captureError(err, silent)
+    accountsError.value = errText(err)
+  } finally {
+    accountsLoading.value = false
+  }
+}
+
+async function loadAccount(silent = false) {
+  const epoch = accountEpoch
+  try {
+    const data = await fetchPaperAccount(activeAccountId())
+    if (epoch !== accountEpoch) return
+    account.value = data
+  } catch (err) {
+    if (epoch === accountEpoch) captureError(err, silent)
   }
 }
 
 async function loadPositions(silent = false) {
+  const epoch = accountEpoch
   try {
-    positions.value = (await fetchPaperPositions()) ?? []
+    const data = (await fetchPaperPositions(activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    positions.value = data
   } catch (err) {
-    captureError(err, silent)
+    if (epoch === accountEpoch) captureError(err, silent)
   }
 }
 
 async function loadNav(silent = false) {
+  const epoch = accountEpoch
   navLoading.value = true
   try {
-    nav.value = (await fetchPaperNav(navDays.value)) ?? []
+    const data = (await fetchPaperNav(navDays.value, activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    nav.value = data
   } catch (err) {
-    captureError(err, silent)
+    if (epoch === accountEpoch) captureError(err, silent)
   } finally {
-    navLoading.value = false
+    if (epoch === accountEpoch) navLoading.value = false
   }
 }
 
 async function loadOrders(silent = false) {
+  const epoch = accountEpoch
   ordersLoading.value = true
   try {
     const page = await fetchPaperOrders({
       status: orderStatus.value || undefined,
       page: orderPage.value,
-      size: ORDERS_PAGE_SIZE
+      size: ORDERS_PAGE_SIZE,
+      accountId: activeAccountId()
     })
+    if (epoch !== accountEpoch) return
     orders.value = page.records ?? []
     ordersTotal.value = page.total ?? 0
   } catch (err) {
-    captureError(err, silent)
+    if (epoch === accountEpoch) captureError(err, silent)
   } finally {
-    ordersLoading.value = false
+    if (epoch === accountEpoch) ordersLoading.value = false
   }
 }
 
 async function loadTrades(silent = false) {
+  const epoch = accountEpoch
   tradesLoading.value = true
   try {
-    const page = await fetchPaperTrades({ page: tradePage.value, size: TRADES_PAGE_SIZE })
+    const page = await fetchPaperTrades({
+      page: tradePage.value,
+      size: TRADES_PAGE_SIZE,
+      accountId: activeAccountId()
+    })
+    if (epoch !== accountEpoch) return
     trades.value = page.records ?? []
     tradesTotal.value = page.total ?? 0
   } catch (err) {
-    captureError(err, silent)
+    if (epoch === accountEpoch) captureError(err, silent)
   } finally {
-    tradesLoading.value = false
+    if (epoch === accountEpoch) tradesLoading.value = false
   }
 }
 
-async function refreshAll(silent = false) {
-  if (refreshing.value) return
+async function refreshAll(silent = false, force = false) {
+  if (refreshing.value && !force) return
   refreshing.value = true
+  const epoch = accountEpoch
   if (!silent) error.value = ''
   try {
     await Promise.all([
+      loadAccounts(),
       loadAccount(silent),
       loadPositions(silent),
       loadNav(silent),
@@ -1053,6 +1535,7 @@ async function refreshAll(silent = false) {
     ])
   } finally {
     refreshing.value = false
+    if (epoch !== accountEpoch) return
     marketState.value = getMarketState()
     scheduleRefresh()
     // 交易时段切换时补上慢数据轮询（已在跑就不打断它的节奏）
@@ -1101,23 +1584,18 @@ function errText(err: unknown): string {
 
 /** 后端 params 是 JSON 文本；解析失败或字段缺失时回退默认值 */
 function normalizeStrategyParams(text: string | null | undefined): PaperStrategyParams {
-  const base: PaperStrategyParams = { ...DEFAULT_STRATEGY_PARAMS }
-  if (!text) return base
+  const result: PaperStrategyParams = { ...DEFAULT_STRATEGY_PARAMS }
+  if (!text) return result
   try {
     const node = JSON.parse(text) as Record<string, unknown>
-    const readNum = (key: keyof PaperStrategyParams): number => {
+    ;(Object.keys(DEFAULT_STRATEGY_PARAMS) as (keyof PaperStrategyParams)[]).forEach((key) => {
       const value = node[key]
-      return typeof value === 'number' && Number.isFinite(value) ? value : base[key]
-    }
-    return {
-      minScore: Math.round(readNum('minScore')),
-      stopLossPct: readNum('stopLossPct'),
-      takeProfitPct: readNum('takeProfitPct'),
-      maxHoldDays: Math.round(readNum('maxHoldDays'))
-    }
+      if (typeof value === 'number' && Number.isFinite(value)) result[key] = value
+    })
   } catch {
-    return base
+    return { ...DEFAULT_STRATEGY_PARAMS }
   }
+  return result
 }
 
 /** 首次拉到策略时填充表单；之后定时刷新不覆盖用户正在改的输入 */
@@ -1125,22 +1603,48 @@ function applyStrategyForm() {
   strategyForm.value = normalizeStrategyParams(strategy.value?.params)
 }
 
+function clampRuleValue(key: keyof PaperStrategyParams): number {
+  const rule = STRATEGY_RULES[key]
+  const fallback = DEFAULT_STRATEGY_PARAMS[key]
+  let value = Number(strategyForm.value[key])
+  if (!Number.isFinite(value)) value = fallback
+  value = Math.min(rule.max, Math.max(rule.min, value))
+  return rule.integer ? Math.round(value) : Math.round(value * 100) / 100
+}
+
+/** 保存前把全部字段钳制到合法区间，并修正区间类参数的上下限关系 */
+function clampStrategyForm(): PaperStrategyParams {
+  const result = { ...DEFAULT_STRATEGY_PARAMS }
+  ;(Object.keys(DEFAULT_STRATEGY_PARAMS) as (keyof PaperStrategyParams)[]).forEach((key) => {
+    result[key] = clampRuleValue(key)
+  })
+  if (result.rsiMax < result.rsiMin) result.rsiMax = result.rsiMin
+  if (result.changeMaxPct < result.changeMinPct) result.changeMaxPct = result.changeMinPct
+  return result
+}
+
 async function loadEngine() {
+  const epoch = accountEpoch
   engineLoading.value = true
   try {
-    engine.value = await fetchPaperEngineStatus()
+    const data = await fetchPaperEngineStatus(activeAccountId())
+    if (epoch !== accountEpoch) return
+    engine.value = data
     engineError.value = ''
   } catch (err) {
-    engineError.value = errText(err)
+    if (epoch === accountEpoch) engineError.value = errText(err)
   } finally {
-    engineLoading.value = false
+    if (epoch === accountEpoch) engineLoading.value = false
   }
 }
 
 async function loadStrategies() {
+  const epoch = accountEpoch
   const hadData = strategies.value.length > 0
   try {
-    strategies.value = (await fetchPaperStrategies()) ?? []
+    const data = (await fetchPaperStrategies(activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    strategies.value = data
     // 首轮加载失败后的恢复：清掉加载错误；已拿到数据时不动，避免覆盖保存参数的报错
     if (!hadData) strategyError.value = ''
     if (!strategyLoaded) {
@@ -1148,31 +1652,37 @@ async function loadStrategies() {
       applyStrategyForm()
     }
   } catch (err) {
-    strategyError.value = errText(err)
+    if (epoch === accountEpoch) strategyError.value = errText(err)
   }
 }
 
 async function loadSelections() {
+  const epoch = accountEpoch
   selectionsLoading.value = true
   try {
-    selections.value = (await fetchPaperSelections()) ?? []
+    const data = (await fetchPaperSelections(activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    selections.value = data
     selectionsError.value = ''
   } catch (err) {
-    selectionsError.value = errText(err)
+    if (epoch === accountEpoch) selectionsError.value = errText(err)
   } finally {
-    selectionsLoading.value = false
+    if (epoch === accountEpoch) selectionsLoading.value = false
   }
 }
 
 async function loadSignals() {
+  const epoch = accountEpoch
   signalsLoading.value = true
   try {
-    signals.value = (await fetchPaperSignals(SIGNALS_LIMIT)) ?? []
+    const data = (await fetchPaperSignals(SIGNALS_LIMIT, activeAccountId())) ?? []
+    if (epoch !== accountEpoch) return
+    signals.value = data
     signalsError.value = ''
   } catch (err) {
-    signalsError.value = errText(err)
+    if (epoch === accountEpoch) signalsError.value = errText(err)
   } finally {
-    signalsLoading.value = false
+    if (epoch === accountEpoch) signalsLoading.value = false
   }
 }
 
@@ -1197,21 +1707,6 @@ function scheduleSecondary() {
   }, interval)
 }
 
-function validateStrategyForm(): string {
-  const form = strategyForm.value
-  const values = [form.minScore, form.stopLossPct, form.takeProfitPct, form.maxHoldDays]
-  if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-    return '请填写有效的数字参数'
-  }
-  if (form.minScore < 0 || form.minScore > 100) return '最低分需在 0–100 之间'
-  if (form.stopLossPct <= 0 || form.stopLossPct > 50) return '止损比例需在 0–50% 之间'
-  if (form.takeProfitPct <= 0 || form.takeProfitPct > 200) return '止盈比例需在 0–200% 之间'
-  if (!Number.isInteger(form.maxHoldDays) || form.maxHoldDays < 1 || form.maxHoldDays > 120) {
-    return '最长持有天数需为 1–120 的整数'
-  }
-  return ''
-}
-
 function replaceStrategy(updated: PaperStrategy) {
   strategies.value = strategies.value.map((item) => (item.id === updated.id ? updated : item))
 }
@@ -1219,22 +1714,21 @@ function replaceStrategy(updated: PaperStrategy) {
 async function saveStrategy() {
   const target = strategy.value
   if (!target || strategyBusy.value) return
-  const message = validateStrategyForm()
-  if (message) {
-    strategyError.value = message
-    flash(message, 'error')
-    return
-  }
+  // 非法/越界输入不报错，直接钳制到合法区间后再提交
+  const params = clampStrategyForm()
+  strategyForm.value = params
   strategyBusy.value = true
   strategyError.value = ''
   try {
-    const updated = await updatePaperStrategy(target.id, {
-      params: JSON.stringify(strategyForm.value)
-    })
+    const updated = await updatePaperStrategy(
+      target.id,
+      { params: JSON.stringify(params) },
+      activeAccountId()
+    )
     replaceStrategy(updated)
     applyStrategyForm()
-    flash('策略参数已保存')
-    await loadEngine()
+    flash('规则已保存')
+    await Promise.all([loadEngine(), loadSignals()])
   } catch (err) {
     strategyError.value = errText(err)
     flash(strategyError.value, 'error')
@@ -1252,7 +1746,7 @@ async function onStrategyToggle(event: Event) {
   strategyBusy.value = true
   strategyError.value = ''
   try {
-    const updated = await updatePaperStrategy(target.id, { enabled: next })
+    const updated = await updatePaperStrategy(target.id, { enabled: next }, activeAccountId())
     replaceStrategy(updated)
     flash(next ? '策略已启用' : '策略已停用')
     await loadEngine()
@@ -1278,11 +1772,11 @@ async function applyAutoTrade(enabled: boolean) {
   if (autoTradeBusy.value) return
   autoTradeBusy.value = true
   try {
-    const updated = await setPaperAutoTrade(enabled)
+    const updated = await setPaperAutoTrade(enabled, activeAccountId())
     account.value = updated
     autoTradeConfirm.value = false
     flash(enabled ? '自动交易已开启' : '自动交易已关闭')
-    await loadEngine()
+    await Promise.all([loadEngine(), loadAccounts()])
   } catch (err) {
     autoTradeConfirm.value = false
     flash(errText(err), 'error')
@@ -1296,7 +1790,7 @@ async function refreshSelections() {
   selectionsRefreshing.value = true
   selectionsError.value = ''
   try {
-    selections.value = (await refreshPaperSelections()) ?? []
+    selections.value = (await refreshPaperSelections(activeAccountId())) ?? []
     flash(
       selections.value.length
         ? `选股完成，共 ${selections.value.length} 只候选`
@@ -1321,6 +1815,183 @@ function buySelection(item: PaperSignal) {
     currency: '¥'
   }
   tradeOpen.value = true
+}
+
+// —— P3：账户管理 ——
+/** 切账户/增删账户后清空上一账户的数据，避免闪现旧账户内容 */
+function resetAccountScopedState() {
+  accountEpoch += 1
+  account.value = null
+  positions.value = []
+  nav.value = []
+  orders.value = []
+  ordersTotal.value = 0
+  trades.value = []
+  tradesTotal.value = 0
+  engine.value = null
+  strategies.value = []
+  selections.value = []
+  signals.value = []
+  error.value = ''
+  engineError.value = ''
+  strategyError.value = ''
+  selectionsError.value = ''
+  signalsError.value = ''
+  orderStatus.value = ''
+  orderPage.value = 1
+  tradePage.value = 1
+  confirmCancelId.value = null
+  tradeOpen.value = false
+  resetArmed.value = false
+  autoTradeConfirm.value = false
+  advancedOpen.value = false
+  strategyLoaded = false
+  strategyForm.value = { ...DEFAULT_STRATEGY_PARAMS }
+}
+
+async function switchAccount(accountId: number) {
+  if (accountId === currentAccountId.value || accountSwitching.value) return
+  accountSwitching.value = true
+  try {
+    currentAccountId.value = accountId
+    resetAccountScopedState()
+    await refreshAll(false, true)
+    void loadSecondary()
+    const target = accounts.value.find((item) => item.accountId === accountId)
+    flash(`已切换到「${target?.name ?? '模拟盘'}」`)
+  } finally {
+    accountSwitching.value = false
+  }
+}
+
+/** 名称自增，跳过已占用的「模拟盘 N」 */
+function suggestAccountName(): string {
+  for (let index = accounts.value.length + 1; index <= MAX_ACCOUNTS + 2; index += 1) {
+    const name = `模拟盘 ${index}`
+    if (!accounts.value.some((item) => item.name === name)) return name
+  }
+  return `模拟盘 ${accounts.value.length + 1}`
+}
+
+function openCreateAccount() {
+  if (!canCreateAccount.value) return
+  createName.value = suggestAccountName()
+  createCash.value = 30000
+  createError.value = ''
+  createOpen.value = true
+}
+
+function closeCreateAccount() {
+  if (createBusy.value) return
+  createOpen.value = false
+}
+
+async function submitCreateAccount() {
+  if (createBusy.value) return
+  const name = createName.value.trim()
+  const cash = Number(createCash.value)
+  if (!name) {
+    createError.value = '请填写账户名称'
+    return
+  }
+  if (name.length > 20) {
+    createError.value = '账户名称最多 20 个字'
+    return
+  }
+  if (!Number.isFinite(cash) || cash < 1000 || cash > 100_000_000) {
+    createError.value = '初始资金需在 1,000 – 100,000,000 元之间'
+    return
+  }
+  createBusy.value = true
+  createError.value = ''
+  try {
+    const created = await createPaperAccount({ name, initialCash: Math.round(cash) })
+    createOpen.value = false
+    currentAccountId.value = created.accountId
+    resetAccountScopedState()
+    await refreshAll(false, true)
+    void loadSecondary()
+    flash(`已新建「${created.name}」，初始资金 ${money(created.initialCash)}`)
+  } catch (err) {
+    createError.value = errText(err)
+  } finally {
+    createBusy.value = false
+  }
+}
+
+function openRenameAccount() {
+  const target = currentAccount.value
+  if (!target) return
+  renameName.value = target.name
+  renameError.value = ''
+  renameOpen.value = true
+}
+
+function closeRenameAccount() {
+  if (renameBusy.value) return
+  renameOpen.value = false
+}
+
+async function submitRenameAccount() {
+  const target = currentAccount.value
+  if (!target || renameBusy.value) return
+  const name = renameName.value.trim()
+  if (!name) {
+    renameError.value = '请填写账户名称'
+    return
+  }
+  if (name.length > 20) {
+    renameError.value = '账户名称最多 20 个字'
+    return
+  }
+  renameBusy.value = true
+  renameError.value = ''
+  try {
+    const updated = await renamePaperAccount(target.accountId, name)
+    renameOpen.value = false
+    accounts.value = accounts.value.map((item) =>
+      item.accountId === updated.accountId ? { ...item, name: updated.name } : item
+    )
+    if (account.value && account.value.accountId === updated.accountId) {
+      account.value = { ...account.value, name: updated.name }
+    }
+    flash('账户已改名')
+  } catch (err) {
+    renameError.value = errText(err)
+  } finally {
+    renameBusy.value = false
+  }
+}
+
+function openDeleteAccount() {
+  if (!canDeleteAccount.value || !currentAccount.value) return
+  deleteOpen.value = true
+}
+
+function closeDeleteAccount() {
+  if (deleteBusy.value) return
+  deleteOpen.value = false
+}
+
+async function submitDeleteAccount() {
+  const target = currentAccount.value
+  if (!target || deleteBusy.value) return
+  deleteBusy.value = true
+  try {
+    await deletePaperAccount(target.accountId)
+    deleteOpen.value = false
+    flash(`已删除「${target.name}」`)
+    // loadAccounts 会在当前账户消失后自动回落到主账户 / 第一个账户
+    await loadAccounts()
+    resetAccountScopedState()
+    await refreshAll(false, true)
+    void loadSecondary()
+  } catch (err) {
+    deleteOpen.value = false
+    flash(errText(err), 'error')
+  } finally {
+    deleteBusy.value = false
+  }
 }
 
 // —— 提示 ——
@@ -1404,7 +2075,7 @@ async function cancelOrder(order: PaperOrder) {
   confirmCancelId.value = null
   cancelingId.value = order.id
   try {
-    await cancelPaperOrder(order.id)
+    await cancelPaperOrder(order.id, activeAccountId())
     flash(`${order.name} 已撤单`)
     await refreshAll(true)
   } catch (err) {
@@ -1430,12 +2101,13 @@ async function doReset() {
   resetting.value = true
   tradeOpen.value = false
   try {
-    await resetPaperAccount()
+    await resetPaperAccount(activeAccountId())
     flash('账户已重置：资金恢复初始值，持仓 / 委托 / 成交已清空')
     orderPage.value = 1
     tradePage.value = 1
     orderStatus.value = ''
     await refreshAll(false)
+    void loadSecondary()
   } catch (err) {
     flash(err instanceof Error ? err.message : '重置失败，请稍后重试', 'error')
   } finally {
@@ -1445,6 +2117,7 @@ async function doReset() {
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', onVisibilityChange)
+  await loadAccounts()
   await refreshAll(false)
   loading.value = false
   void loadSecondary()
@@ -2307,6 +2980,228 @@ onBeforeUnmount(() => {
   color: var(--stock-down);
 }
 
+/* ---------- P3：多账户 ---------- */
+.account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-6);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.account-bar__list {
+  display: flex;
+  flex: 1;
+  gap: var(--s-2);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.account-bar__list::-webkit-scrollbar {
+  display: none;
+}
+
+.account-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 150px;
+  padding: 10px var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease, ease),
+    background-color 0.15s var(--ease, ease);
+}
+
+.account-chip:hover:not(:disabled) {
+  border-color: var(--c-border-strong);
+}
+
+.account-chip.is-active {
+  border-color: var(--c-brand);
+  background: var(--c-brand-soft);
+}
+
+.account-chip:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.account-chip__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  color: var(--c-text-secondary);
+}
+
+.account-chip__flag {
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--c-brand) 14%, transparent);
+  color: var(--c-brand);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.account-chip__asset {
+  font-family: var(--f-mono);
+  font-size: var(--t-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+
+.account-chip__pct {
+  font-size: var(--t-xs);
+}
+
+.account-bar__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--s-2);
+}
+
+.account-bar__state {
+  padding: var(--s-2) 0;
+  font-size: var(--t-xs);
+  color: var(--c-text-muted);
+}
+
+.account-bar__state--error {
+  color: var(--stock-up);
+}
+
+.account-modal__box {
+  width: min(460px, 100%);
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.account-form__error {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--stock-up);
+}
+
+.account-form__warn {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  color: var(--c-text-secondary);
+}
+
+.account-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.account-form__danger {
+  border-color: var(--stock-up);
+  color: var(--stock-up);
+}
+
+.account-form__danger:hover:not(:disabled) {
+  border-color: var(--stock-up);
+  background: color-mix(in srgb, var(--stock-up) 12%, transparent);
+}
+
+/* ---------- P3：高级规则 ---------- */
+.strategy__advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-4);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-text-secondary);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.strategy__advanced-toggle:hover {
+  color: var(--c-brand);
+}
+
+.strategy__advanced-toggle svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  transition: transform 0.15s var(--ease, ease);
+}
+
+.strategy__advanced-toggle svg.is-open {
+  transform: rotate(90deg);
+}
+
+.strategy__advanced-hint {
+  font-size: var(--t-xs);
+  font-weight: 400;
+  color: var(--c-text-faint);
+}
+
+.strategy__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px dashed var(--c-border);
+}
+
+.advanced__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.advanced__title {
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--c-text-faint);
+}
+
+.advanced__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+
+.advanced__sum {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--c-text-muted);
+}
+
+.advanced__sum strong {
+  color: var(--c-text);
+  font-family: var(--f-mono);
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
   .asset-card {
@@ -2327,6 +3222,14 @@ onBeforeUnmount(() => {
 
   .strategy__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .advanced__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-bar {
+    flex-wrap: wrap;
   }
 }
 
@@ -2378,6 +3281,23 @@ onBeforeUnmount(() => {
 
   .strategy__grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .advanced__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .account-bar__actions {
+    justify-content: flex-start;
+  }
+
+  .account-chip {
+    min-width: 132px;
   }
 
   .panel__actions {

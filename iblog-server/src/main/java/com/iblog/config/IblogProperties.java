@@ -82,6 +82,8 @@ public class IblogProperties {
         private int maxOrdersPerDay = 20;
         /** 每日最多买入候选数 */
         private int maxCandidates = 5;
+        /** 每个用户最多可开的模拟盘账户数 */
+        private int maxAccounts = 5;
         /** 节假日（逗号分隔 yyyy-MM-dd），每年更新；留空只按周末判断 */
         private String holidayDates = "";
         /** 本地调试：非交易时段也允许下单/运行引擎 */

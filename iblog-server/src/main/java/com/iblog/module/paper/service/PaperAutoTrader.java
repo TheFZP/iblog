@@ -32,7 +32,7 @@ import java.util.List;
  * <p>刻意把卖出放在买入前面：先释放仓位和资金，再考虑新开仓；
  * 日亏熔断放在卖出之后、买入之前，当天亏损超阈值时只允许减仓不允许加仓。</p>
  *
- * <p>所有下单都复用 {@link PaperOrderService#place(Long, PaperOrderRequest, String, Long)}，
+ * <p>所有下单都复用 {@link PaperOrderService#place(PaperAccount, PaperOrderRequest, String, Long)}，
  * 因此自动交易同样受 T+1、涨跌停、整手、每日笔数上限等约束，不存在「自动交易特权」。</p>
  */
 @Service
@@ -74,7 +74,7 @@ public class PaperAutoTrader {
             return;
         }
 
-        account = accountService.find(account.getUserId());
+        account = accountMapper.selectById(account.getId());
         if (account == null) {
             return;
         }
@@ -106,7 +106,7 @@ public class PaperAutoTrader {
             request.setType(PaperConstants.TYPE_MARKET);
             request.setQuantity(available);
             try {
-                var filled = orderService.place(account.getUserId(), request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
+                var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
                 recordSignal(account, strategy, position.getCode(), position.getName(), PaperConstants.ACTION_SELL,
                         "自动卖出（" + reason + "）", filled.getAvgPrice());
             } catch (BizException ex) {
@@ -121,10 +121,10 @@ public class PaperAutoTrader {
             return null;
         }
         double profitPct = position.getProfitPct() == null ? 0 : position.getProfitPct().doubleValue();
-        if (profitPct <= -params.stopLossPct()) {
+        if (profitPct <= -params.getStopLossPct()) {
             return "止损 " + profitPct + "%";
         }
-        if (profitPct >= params.takeProfitPct()) {
+        if (profitPct >= params.getTakeProfitPct()) {
             return "止盈 " + profitPct + "%";
         }
         if (profitPct > 0) {
@@ -133,8 +133,8 @@ public class PaperAutoTrader {
                 return "跌破 MA10";
             }
         }
-        if (holdingDays(position) >= params.maxHoldDays()) {
-            return "持有超过 " + params.maxHoldDays() + " 天";
+        if (holdingDays(position) >= params.getMaxHoldDays()) {
+            return "持有超过 " + params.getMaxHoldDays() + " 天";
         }
         return null;
     }
@@ -210,7 +210,7 @@ public class PaperAutoTrader {
             request.setType(PaperConstants.TYPE_MARKET);
             request.setQuantity(quantity);
             try {
-                var filled = orderService.place(account.getUserId(), request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
+                var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
                 recordSignal(account, strategy, candidate.getCode(), candidate.getName(), PaperConstants.ACTION_BUY,
                         "自动买入：" + candidate.getReason(), filled.getAvgPrice());
             } catch (BizException ex) {

@@ -16,6 +16,12 @@ public class PaperAccountVO {
 
     private String name;
 
+    /** 展示排序（主账户=1） */
+    private Integer sortNo;
+
+    /** 是否主账户：不传 accountId 时接口默认落到它 */
+    private Boolean primary;
+
     private BigDecimal initialCash;
 
     /** 可用现金 */

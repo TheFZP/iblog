@@ -43,9 +43,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class PaperSelectionService {
 
-    /** 每轮最多扫描的候选数（热榜条目里跳过港股/ST 后） */
-    private static final int UNIVERSE_SIZE = 20;
-
     /** 打分至少需要的日 K 根数 */
     private static final int MIN_BARS = 60;
 
@@ -55,7 +52,6 @@ public class PaperSelectionService {
     private final PaperQuoteService quoteService;
     private final PaperSignalMapper signalMapper;
     private final PaperStrategyService strategyService;
-    private final IblogProperties properties;
     private final TradeCalendar calendar;
     private final ObjectMapper objectMapper;
 
@@ -79,7 +75,7 @@ public class PaperSelectionService {
         Set<String> seen = new HashSet<>();
         int scanned = 0;
         for (HotStockItem item : hot) {
-            if (scanned >= UNIVERSE_SIZE) {
+            if (scanned >= params.getUniverseSize()) {
                 break;
             }
             String code = StockCode.normalize(item.getCode());
@@ -102,7 +98,7 @@ public class PaperSelectionService {
         }
 
         selected.sort(Comparator.comparingInt(PaperSignal::getScore).reversed());
-        int limit = Math.max(1, properties.getPaper().getMaxCandidates());
+        int limit = Math.max(1, params.getMaxCandidates());
         if (selected.size() > limit) {
             selected = new ArrayList<>(selected.subList(0, limit));
         }
@@ -125,8 +121,11 @@ public class PaperSelectionService {
 
     /** 候选池为空/太旧时按最小间隔重扫，自动交易每 tick 调用。 */
     public List<PaperSignal> refreshIfStale(Long accountId) {
+        PaperStrategy strategy = strategyService.ensureDefault(accountId);
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        long intervalMs = Math.max(30, params.getSelectionRefreshSec()) * 1000L;
         Long at = lastRefreshAt.get(accountId);
-        if (at != null && System.currentTimeMillis() - at < properties.getPaper().getSelectionRefreshMs()) {
+        if (at != null && System.currentTimeMillis() - at < intervalMs) {
             return recentCandidates(accountId);
         }
         return refresh(accountId);
@@ -199,40 +198,40 @@ public class PaperSelectionService {
         int score = 0;
         List<String> reasons = new ArrayList<>();
         if (close > ma5 && ma5 > ma10 && ma10 > ma20) {
-            score += 25;
+            score += params.getMaTrendScore();
             reasons.add("均线多头");
         } else if (close > ma20) {
-            score += 10;
+            score += params.getMa20Score();
             reasons.add("站上20日线");
         }
         if (!Double.isNaN(macd.hist()) && macd.hist() > 0 && macd.dif() > macd.dea()) {
-            score += 20;
+            score += params.getMacdScore();
             reasons.add("MACD红柱");
         }
-        if (!Double.isNaN(volumeRatio) && volumeRatio >= 1.2) {
-            score += 15;
+        if (!Double.isNaN(volumeRatio) && volumeRatio >= params.getVolumeRatioMin()) {
+            score += params.getVolumeRatioScore();
             reasons.add(String.format("量比 %.1f", volumeRatio));
         }
         if (flow != null && !flow.isUnavailable() && flow.getMainNetInflow() > 0) {
-            score += 20;
+            score += params.getMoneyFlowScore();
             reasons.add("主力净流入");
-            if (flow.getMainNetPct() >= 5) {
-                score += 5;
+            if (flow.getMainNetPct() >= params.getMoneyFlowPctMin()) {
+                score += params.getMoneyFlowPctScore();
             }
         }
-        if (!Double.isNaN(rsi) && rsi >= 40 && rsi <= 70) {
-            score += 10;
+        if (!Double.isNaN(rsi) && rsi >= params.getRsiMin() && rsi <= params.getRsiMax()) {
+            score += params.getRsiScore();
             reasons.add(String.format("RSI %.0f", rsi));
         }
-        if (changePct > 0 && changePct < 9) {
-            score += 5;
+        if (changePct > params.getChangeMinPct() && changePct < params.getChangeMaxPct()) {
+            score += params.getChangeScore();
             reasons.add("当日温和上涨");
         }
         if (hot != null && hot.getHotRankChg() > 0) {
-            score += 5;
+            score += params.getHotRankScore();
             reasons.add("热度上升");
         }
-        if (score < params.minScore() || reasons.isEmpty()) {
+        if (score < params.getMinScore() || reasons.isEmpty()) {
             return null;
         }
         PaperSignal signal = new PaperSignal();

@@ -26,6 +26,8 @@ const props = defineProps<{
   cash?: number
   /** 当前持仓，用于卖出前的可卖数量校验（含 T+1 可用数量） */
   positions?: PaperPosition[]
+  /** 当前模拟盘账户 id：多账户下所有读写都必须带上它 */
+  accountId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -260,13 +262,16 @@ async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    const order = await placePaperOrder({
-      code: selected.value!.code,
-      side: side.value,
-      type: orderType.value,
-      price: orderType.value === 'LIMIT' ? priceInput.value ?? undefined : undefined,
-      quantity: quantity.value as number
-    })
+    const order = await placePaperOrder(
+      {
+        code: selected.value!.code,
+        side: side.value,
+        type: orderType.value,
+        price: orderType.value === 'LIMIT' ? priceInput.value ?? undefined : undefined,
+        quantity: quantity.value as number
+      },
+      props.accountId ?? undefined
+    )
     emit('submitted', order)
     emit('close')
   } catch (err) {

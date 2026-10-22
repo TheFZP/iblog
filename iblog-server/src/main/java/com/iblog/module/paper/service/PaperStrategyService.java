@@ -1,10 +1,12 @@
 package com.iblog.module.paper.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iblog.common.exception.BizException;
 import com.iblog.module.paper.dto.PaperStrategyUpdateRequest;
 import com.iblog.module.paper.entity.PaperStrategy;
 import com.iblog.module.paper.mapper.PaperStrategyMapper;
+import com.iblog.module.paper.support.PaperStrategyParams;
 import com.iblog.module.paper.support.TradeCalendar;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,9 @@ import java.util.List;
 /**
  * 模拟盘策略 CRUD。当前只有一条默认的「趋势选股」策略，
  * 但表结构预留了多策略，后面加回测/多策略组合不用改表。
+ *
+ * <p>一个账户一套规则（paper_strategy 有 uk_account），params 是完整 JSON；
+ * update 时会先解析再落库，脏字段/越界值被钳制，避免前端传坏配置。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -22,6 +27,7 @@ public class PaperStrategyService {
 
     private final PaperStrategyMapper strategyMapper;
     private final TradeCalendar calendar;
+    private final ObjectMapper objectMapper;
 
     public PaperStrategy ensureDefault(Long accountId) {
         PaperStrategy existing = strategyMapper.selectOne(Wrappers.<PaperStrategy>lambdaQuery()
@@ -35,7 +41,7 @@ public class PaperStrategyService {
         strategy.setAccountId(accountId);
         strategy.setName("趋势选股");
         strategy.setType("AUTO");
-        strategy.setParams("{\"minScore\":60,\"stopLossPct\":8,\"takeProfitPct\":15,\"maxHoldDays\":10}");
+        strategy.setParams(PaperStrategyParams.defaultJson(objectMapper));
         strategy.setEnabled(1);
         strategyMapper.insert(strategy);
         return strategy;
@@ -58,7 +64,8 @@ public class PaperStrategyService {
             strategy.setEnabled(request.getEnabled() ? 1 : 0);
         }
         if (request.getParams() != null) {
-            strategy.setParams(request.getParams());
+            PaperStrategyParams normalized = PaperStrategyParams.parse(objectMapper, request.getParams());
+            strategy.setParams(normalized.toJson(objectMapper));
         }
         strategyMapper.updateById(strategy);
         return strategy;

@@ -3,6 +3,8 @@ package com.iblog.module.paper.controller;
 import com.iblog.common.exception.BizException;
 import com.iblog.common.result.R;
 import com.iblog.config.IblogProperties;
+import com.iblog.module.paper.dto.PaperAccountCreateRequest;
+import com.iblog.module.paper.dto.PaperAccountRenameRequest;
 import com.iblog.module.paper.dto.PaperOrderRequest;
 import com.iblog.module.paper.dto.PaperStrategyUpdateRequest;
 import com.iblog.module.paper.entity.PaperAccount;
@@ -24,6 +26,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -41,6 +44,9 @@ import java.util.Map;
  *
  * <p>挂在 {@code /api/stock/paper} 下，复用行情模块已有的登录拦截
  * （后台 header 令牌或官网 Cookie 都认），不需要再开一套鉴权。</p>
+ *
+ * <p>多账户：一个用户最多 5 个模拟盘，每个账户独立资金/持仓/策略。
+ * 写操作和查询都可以带 {@code ?accountId=}，不传则落到主账户（sort_no 最小）。</p>
  */
 @RestController
 @RequestMapping("/api/stock/paper")
@@ -55,71 +61,105 @@ public class PaperTradingController {
     private final IblogProperties properties;
     private final TradeCalendar calendar;
 
-    // ---------- P1：账户/持仓/委托/成交 ----------
+    // ---------- 账户管理 ----------
+
+    @GetMapping("/accounts")
+    public R<List<PaperAccountVO>> accounts() {
+        return R.ok(accountService.list(currentUserId()).stream()
+                .map(accountService::toVO)
+                .toList());
+    }
+
+    @PostMapping("/accounts")
+    public R<PaperAccountVO> createAccount(@RequestBody PaperAccountCreateRequest request) {
+        PaperAccount created = accountService.create(currentUserId(), request.getName(), request.getInitialCash());
+        strategyService.ensureDefault(created.getId());
+        return R.ok(accountService.toVO(created));
+    }
+
+    @PatchMapping("/accounts/{id}")
+    public R<PaperAccountVO> renameAccount(@PathVariable Long id,
+                                           @Valid @RequestBody PaperAccountRenameRequest request) {
+        return R.ok(accountService.toVO(accountService.rename(currentUserId(), id, request.getName())));
+    }
+
+    @DeleteMapping("/accounts/{id}")
+    public R<Void> deleteAccount(@PathVariable Long id) {
+        accountService.delete(currentUserId(), id);
+        return R.ok();
+    }
+
+    // ---------- 账户/持仓/委托/成交 ----------
 
     @GetMapping("/account")
-    public R<PaperAccountVO> account() {
-        return R.ok(refreshAccount());
+    public R<PaperAccountVO> account(@RequestParam(required = false) Long accountId) {
+        return R.ok(refreshAccount(requireAccount(accountId)));
     }
 
     @GetMapping("/positions")
-    public R<List<PaperPositionVO>> positions() {
-        PaperAccount account = currentAccount();
+    public R<List<PaperPositionVO>> positions(@RequestParam(required = false) Long accountId) {
+        PaperAccount account = requireAccount(accountId);
         List<PaperPosition> positions = positionService.refreshQuotes(account.getId());
         accountService.recompute(account, positions);
         return R.ok(positionService.toVOList(positions));
     }
 
     @GetMapping("/orders")
-    public R<Map<String, Object>> orders(@RequestParam(required = false) String status,
+    public R<Map<String, Object>> orders(@RequestParam(required = false) Long accountId,
+                                         @RequestParam(required = false) String status,
                                          @RequestParam(defaultValue = "1") int page,
                                          @RequestParam(defaultValue = "20") int size) {
-        return R.ok(orderService.orders(currentAccount().getId(), status, page, size));
+        return R.ok(orderService.orders(requireAccount(accountId).getId(), status, page, size));
     }
 
     @PostMapping("/orders")
-    public R<PaperOrderVO> place(@Valid @RequestBody PaperOrderRequest request) {
-        return R.ok(orderService.place(currentUserId(), request));
+    public R<PaperOrderVO> place(@RequestParam(required = false) Long accountId,
+                                 @Valid @RequestBody PaperOrderRequest request) {
+        return R.ok(orderService.place(requireAccount(accountId), request));
     }
 
     @DeleteMapping("/orders/{id}")
-    public R<PaperOrderVO> cancel(@PathVariable Long id) {
-        return R.ok(orderService.cancel(currentUserId(), id));
+    public R<PaperOrderVO> cancel(@PathVariable Long id, @RequestParam(required = false) Long accountId) {
+        return R.ok(orderService.cancel(requireAccount(accountId), id));
     }
 
     @GetMapping("/trades")
-    public R<Map<String, Object>> trades(@RequestParam(defaultValue = "1") int page,
+    public R<Map<String, Object>> trades(@RequestParam(required = false) Long accountId,
+                                         @RequestParam(defaultValue = "1") int page,
                                          @RequestParam(defaultValue = "20") int size) {
-        return R.ok(orderService.trades(currentAccount().getId(), page, size));
+        return R.ok(orderService.trades(requireAccount(accountId).getId(), page, size));
     }
 
     @GetMapping("/nav")
-    public R<List<PaperNavVO>> nav(@RequestParam(defaultValue = "90") int days) {
-        return R.ok(accountService.navList(currentAccount().getId(), days));
+    public R<List<PaperNavVO>> nav(@RequestParam(required = false) Long accountId,
+                                   @RequestParam(defaultValue = "90") int days) {
+        return R.ok(accountService.navList(requireAccount(accountId).getId(), days));
     }
 
     @PostMapping("/account/reset")
-    public R<PaperAccountVO> reset() {
-        Long userId = currentUserId();
-        accountService.reset(userId);
-        return R.ok(refreshAccount());
+    public R<PaperAccountVO> reset(@RequestParam(required = false) Long accountId) {
+        accountService.reset(currentUserId(), accountId);
+        return R.ok(refreshAccount(requireAccount(accountId)));
     }
 
-    // ---------- P2：策略/选股/引擎 ----------
+    // ---------- 策略/选股/引擎 ----------
 
     @GetMapping("/strategies")
-    public R<List<PaperStrategy>> strategies() {
-        return R.ok(strategyService.list(currentAccount().getId()));
+    public R<List<PaperStrategy>> strategies(@RequestParam(required = false) Long accountId) {
+        return R.ok(strategyService.list(requireAccount(accountId).getId()));
     }
 
     @PutMapping("/strategies/{id}")
-    public R<PaperStrategy> updateStrategy(@PathVariable Long id, @RequestBody PaperStrategyUpdateRequest request) {
-        return R.ok(strategyService.update(currentAccount().getId(), id, request));
+    public R<PaperStrategy> updateStrategy(@PathVariable Long id,
+                                           @RequestParam(required = false) Long accountId,
+                                           @RequestBody PaperStrategyUpdateRequest request) {
+        return R.ok(strategyService.update(requireAccount(accountId).getId(), id, request));
     }
 
     @GetMapping("/selections")
-    public R<List<PaperSignal>> selections(@RequestParam(required = false) String date) {
-        PaperAccount account = currentAccount();
+    public R<List<PaperSignal>> selections(@RequestParam(required = false) Long accountId,
+                                           @RequestParam(required = false) String date) {
+        PaperAccount account = requireAccount(accountId);
         return R.ok(date == null || date.isBlank()
                 ? selectionService.recentCandidates(account.getId())
                 : selectionService.recent(account.getId(), date));
@@ -127,18 +167,19 @@ public class PaperTradingController {
 
     /** 立即重新选股（页面上的「重新选股」按钮；一轮约几秒，期间会请求上游行情）。 */
     @PostMapping("/selections/refresh")
-    public R<List<PaperSignal>> refreshSelections() {
-        return R.ok(selectionService.refresh(currentAccount().getId()));
+    public R<List<PaperSignal>> refreshSelections(@RequestParam(required = false) Long accountId) {
+        return R.ok(selectionService.refresh(requireAccount(accountId).getId()));
     }
 
     @GetMapping("/signals")
-    public R<List<PaperSignal>> signals(@RequestParam(defaultValue = "50") int limit) {
-        return R.ok(selectionService.history(currentAccount().getId(), limit));
+    public R<List<PaperSignal>> signals(@RequestParam(required = false) Long accountId,
+                                        @RequestParam(defaultValue = "50") int limit) {
+        return R.ok(selectionService.history(requireAccount(accountId).getId(), limit));
     }
 
     @GetMapping("/engine/status")
-    public R<Map<String, Object>> engineStatus() {
-        PaperAccount account = refreshAccountEntity();
+    public R<Map<String, Object>> engineStatus(@RequestParam(required = false) Long accountId) {
+        PaperAccount account = refreshAccountEntity(requireAccount(accountId));
         PaperStrategy strategy = strategyService.ensureDefault(account.getId());
         PaperAccountVO vo = accountService.toVO(account);
         Map<String, Object> data = new LinkedHashMap<>();
@@ -156,8 +197,8 @@ public class PaperTradingController {
 
     /** 打开/关闭自动交易（服务端总开关关闭时不允许打开）。 */
     @PostMapping("/account/auto-trade")
-    public R<PaperAccountVO> autoTrade(@RequestBody Map<String, Boolean> body) {
-        Long userId = currentUserId();
+    public R<PaperAccountVO> autoTrade(@RequestParam(required = false) Long accountId,
+                                       @RequestBody Map<String, Boolean> body) {
         Boolean enabled = body.get("enabled");
         if (enabled == null) {
             throw new BizException(400, "缺少 enabled 参数");
@@ -165,24 +206,23 @@ public class PaperTradingController {
         if (enabled && !properties.getPaper().isEnabled()) {
             throw new BizException(400, "服务端未开启模拟盘自动交易（iblog.paper.enabled=false）");
         }
-        accountService.setAutoTrade(userId, enabled);
-        return R.ok(refreshAccount());
+        PaperAccount account = accountService.setAutoTrade(currentUserId(), accountId, enabled);
+        return R.ok(refreshAccount(account));
     }
 
     // ---------- 内部 ----------
 
-    private PaperAccountVO refreshAccount() {
-        return accountService.toVO(refreshAccountEntity());
+    private PaperAccountVO refreshAccount(PaperAccount account) {
+        return accountService.toVO(refreshAccountEntity(account));
     }
 
-    private PaperAccount refreshAccountEntity() {
-        PaperAccount account = currentAccount();
+    private PaperAccount refreshAccountEntity(PaperAccount account) {
         List<PaperPosition> positions = positionService.refreshQuotes(account.getId());
         return accountService.recompute(account, positions);
     }
 
-    private PaperAccount currentAccount() {
-        return accountService.ensure(currentUserId());
+    private PaperAccount requireAccount(Long accountId) {
+        return accountService.require(currentUserId(), accountId);
     }
 
     private Long currentUserId() {

@@ -98,11 +98,12 @@ iblog/
   - 价格提醒：突破 / 跌破目标价提醒，可叠加放量条件
   - 提醒由全局巡查器统一巡检（关掉行情页也照样生效），刷新间隔随市场状态自动调整
     （交易 15 秒 / 午休 60 秒 / 其余 5 分钟，页面在后台时再降 4 倍）
-- 模拟盘：服务端记账的 A 股模拟交易，手动买卖默认可用，自动选股 / 自动交易默认关闭
+- 模拟盘：服务端记账的 A 股模拟交易，手动买卖默认可用，自动选股 / 自动交易默认关闭；支持多账户（默认最多 5 个）
   - 手动盘：市价 / 限价委托、T+1、100 股整手、涨跌停与停牌校验、佣金 / 印花税 / 过户费、滑点
   - 自动交易：热榜候选 + 均线 / MACD / 量比 / 主力资金流打分选股；止损 / 止盈 / 跌破 MA10 / 时间止损卖出；
     单票 20%、总仓 80%、日亏 3% 熔断、每日 20 笔上限，默认关闭，需在页面显式开启
-  - 每个账户独立：初始资金、持仓、委托、成交、每日净值快照；账户可随时重置
+  - 每个账户独立：初始资金、持仓、委托、成交、每日净值快照，以及各自的选股规则（候选池、因子权重、
+    RSI / 涨幅阈值等 22 项参数，存 `paper_strategy.params`）；最多 5 个账户，可对比不同规则，账户可重置或删除
   - 入口：官网导航 / 管理后台顶部「模拟盘」；后台入口经一次性票据直达，免二次登录
 
 ---
@@ -262,6 +263,11 @@ iblog:
 页面点「自动交易」才会开启（默认关），服务端总开关没开时不允许打开。费率、滑点、仓位上限、
 熔断阈值等参数都在 `iblog.paper.*`（完整字段见 `IblogProperties.Paper`）。
 
+多账户：默认每个用户最多 5 个模拟盘（`iblog.paper.max-accounts` / `IBLOG_PAPER_MAX_ACCOUNTS`），
+每个账户有独立的初始资金、持仓和选股规则；在 `/paper` 顶部账户栏切换、新建、改名、删除。
+选股规则在「高级规则（选股打分）」里按账户保存，改完立即影响该账户下一轮自动选股。
+新建账户的初始资金取 `iblog.paper.initial-cash`（可用 `IBLOG_PAPER_INITIAL_CASH` 覆盖）。
+
 ---
 
 ## 五、接口约定
@@ -303,14 +309,18 @@ Authorization: Bearer <token>
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| GET / POST | `/api/stock/paper/accounts` | 账户列表 / 新建账户 |
+| PATCH / DELETE | `/api/stock/paper/accounts/{id}` | 账户改名 / 删除（至少保留一个）|
 | GET | `/api/stock/paper/account` | 账户总览（资产 / 今日盈亏 / 持仓数 / 自动交易开关）|
 | GET | `/api/stock/paper/positions` | 持仓（含可用数量、浮动盈亏）|
 | GET / POST | `/api/stock/paper/orders` · `DELETE /orders/{id}` | 委托列表 / 下单 / 撤单 |
 | GET | `/api/stock/paper/trades` · `/nav` | 成交流水 / 每日净值 |
-| GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数 |
+| GET / PUT | `/api/stock/paper/strategies` · `/strategies/{id}` | 策略开关与参数（22 项选股规则，按账户保存）|
 | GET / POST | `/api/stock/paper/selections` · `/selections/refresh` | 今日选股结果 / 立即重新选股 |
 | GET | `/api/stock/paper/engine/status` | 引擎与自动交易状态 |
 | POST | `/api/stock/paper/account/auto-trade` · `/account/reset` | 开关自动交易 / 重置账户 |
+
+> 除 `/accounts` 外，所有模拟盘接口都接受可选 `?accountId=`；不传时使用当前用户的主账户（最早创建的那个）。
 
 ---
 

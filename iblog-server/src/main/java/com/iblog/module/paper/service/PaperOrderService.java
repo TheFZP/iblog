@@ -63,19 +63,22 @@ public class PaperOrderService {
     private final IblogProperties properties;
 
     @Transactional
-    public PaperOrderVO place(Long userId, PaperOrderRequest request) {
-        return place(userId, request, PaperConstants.SOURCE_MANUAL, null);
+    public PaperOrderVO place(PaperAccount account, PaperOrderRequest request) {
+        return place(account, request, PaperConstants.SOURCE_MANUAL, null);
     }
 
     /**
      * 下单入口（自动交易也走这里，只是 source=STRATEGY）。
      *
+     * @param account    下单账户（多账户时由 Controller/AutoTrader 解析，避免取错户）
      * @param source     MANUAL / STRATEGY
      * @param strategyId 自动交易时记录策略 id，便于回溯
      */
     @Transactional
-    public PaperOrderVO place(Long userId, PaperOrderRequest request, String source, Long strategyId) {
-        PaperAccount account = accountService.ensure(userId);
+    public PaperOrderVO place(PaperAccount account, PaperOrderRequest request, String source, Long strategyId) {
+        if (account == null) {
+            throw new BizException(401, "未登录，请先登录后台");
+        }
         if (!calendar.allowOrders()) {
             throw new BizException(400, "当前非交易时段，模拟盘暂不受理委托");
         }
@@ -144,8 +147,10 @@ public class PaperOrderService {
     }
 
     @Transactional
-    public PaperOrderVO cancel(Long userId, Long orderId) {
-        PaperAccount account = accountService.ensure(userId);
+    public PaperOrderVO cancel(PaperAccount account, Long orderId) {
+        if (account == null) {
+            throw new BizException(401, "未登录，请先登录后台");
+        }
         PaperOrder order = orderMapper.selectById(orderId);
         if (order == null || !account.getId().equals(order.getAccountId())) {
             throw new BizException(404, "委托不存在");

@@ -285,17 +285,18 @@ CREATE TABLE IF NOT EXISTS `stock_watchlist_change`
 
 -- -------------------------------------------------------------
 --  模拟盘（paper trading）
---  与 05-migration-paper.sql 保持一致，改一处必须改另一处。
+--  与 05-migration-paper.sql / 06-migration-paper-multi.sql 保持一致，改一处必须改另一处。
 --  口径：金额 DECIMAL(20,2)，价格 DECIMAL(16,4)，数量 INT（股），
 --  日期 VARCHAR(16) 存 yyyy-MM-dd；所有查询按 account_id，索引从它开始。
 -- -------------------------------------------------------------
 
--- 模拟账户：一个后台用户一个账户；auto_trade 为自动交易总开关
+-- 模拟账户：一个后台用户最多 5 个账户（多开对比不同规则）；auto_trade 为自动交易总开关
 CREATE TABLE IF NOT EXISTS `paper_account`
 (
     `id`               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
     `user_id`          BIGINT         NOT NULL COMMENT '后台用户 id',
     `name`             VARCHAR(64)    NOT NULL DEFAULT '模拟盘' COMMENT '账户名称',
+    `sort_no`          INT            NOT NULL DEFAULT 0 COMMENT '展示排序',
     `initial_cash`     DECIMAL(20, 2) NOT NULL DEFAULT 0 COMMENT '初始资金',
     `cash`             DECIMAL(20, 2) NOT NULL DEFAULT 0 COMMENT '可用现金',
     `frozen_cash`      DECIMAL(20, 2) NOT NULL DEFAULT 0 COMMENT '冻结资金（保留字段）',
@@ -307,7 +308,7 @@ CREATE TABLE IF NOT EXISTS `paper_account`
     `create_time`      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_user` (`user_id`)
+    KEY `idx_user` (`user_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='模拟盘账户';
 
 -- 持仓：available_quantity 是 T+1 的载体（当天买入不可卖，收盘结算后转可用）
@@ -411,7 +412,7 @@ CREATE TABLE IF NOT EXISTS `paper_strategy`
     `create_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    KEY `idx_account` (`account_id`)
+    UNIQUE KEY `uk_account` (`account_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='模拟盘策略';
 
 -- 信号 / 选股结果：action = CANDIDATE / BUY / SELL

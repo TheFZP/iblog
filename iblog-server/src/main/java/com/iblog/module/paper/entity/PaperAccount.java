@@ -25,6 +25,9 @@ public class PaperAccount {
 
     private String name;
 
+    /** 展示排序（主账户=1） */
+    private Integer sortNo;
+
     /** 初始资金 */
     private BigDecimal initialCash;
 
