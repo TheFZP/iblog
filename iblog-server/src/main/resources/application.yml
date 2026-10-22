@@ -4,6 +4,11 @@ server:
   # 本地开发的端口在 application-dev.yml 里覆盖（10730），
   # 因为本机同时开着多个项目，8080 是最容易被抢的端口。
   port: 8080
+  # 线上 nginx 反代时会把外部的 https 协议、域名写进 X-Forwarded-*。
+  # 不识别这些头的话，Spring 看到的仍是内网 http://iblog-server:8080，与浏览器
+  # Origin 的 https://<域名> 不同源，连 PATCH 改名这类同源请求都会被 CORS 判成
+  # 跨域并拒成 403（"Invalid CORS request"）。
+  forward-headers-strategy: framework
   servlet:
     encoding:
       charset: UTF-8

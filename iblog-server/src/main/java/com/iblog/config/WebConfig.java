@@ -31,7 +31,11 @@ public class WebConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
                 .allowedOriginPatterns("*")
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                // 必须把实际用到的动词都列出来：nginx 反向代理后 Spring 看到的是内网
+                // http://iblog-server:8080，与浏览器 Origin 的 https://<域名> 不同源，
+                // 于是带 Origin 头的同源请求也会走 CORS 校验；未列出的动词（例如改名用的
+                // PATCH）会被 CORS 直接拒成 HTTP 403「Invalid CORS request」。
+                .allowedMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)
                 .maxAge(3600);
