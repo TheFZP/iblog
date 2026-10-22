@@ -675,7 +675,7 @@
                   </p>
                   <div v-if="ruleDeleteArmed" class="rule-bar__confirm">
                     <span>
-                      确定删除模板「{{ selectedRule?.name }}」？删除后无法恢复，删完会自动补一套默认规则。
+                      确定删除模板「{{ selectedRule?.name }}」？删除后无法恢复，删完会自动补一套基础规则。
                     </span>
                     <button
                       class="btn btn--ghost rule-bar__danger"
@@ -2406,7 +2406,7 @@ function cancelDeleteRule() {
   ruleDeleteArmed.value = false
 }
 
-/** 删除模板；后端没有下限，删完再拉列表会自动补默认规则 */
+/** 删除模板；后端没有下限，删完再拉列表会自动补一套基础规则 */
 async function confirmDeleteRule() {
   const rule = selectedRule.value
   if (!rule || ruleDeleting.value) return

@@ -31,8 +31,8 @@ public class PaperRuleService {
 
     /** 每用户最多保存的模板数，防止无限堆积。 */
     private static final int MAX_RULES = 20;
-    /** 首次进入时自动落一套默认规则，保证下拉框不为空。 */
-    private static final String DEFAULT_RULE_NAME = "默认规则";
+    /** 首次进入时自动落一套基础规则，保证下拉框不为空；名字要能看出规则取向。 */
+    private static final String DEFAULT_RULE_NAME = "趋势跟随·均衡版";
     private static final int MAX_NAME_LENGTH = 32;
 
     private final PaperRuleMapper ruleMapper;

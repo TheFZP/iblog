@@ -538,7 +538,7 @@ export function updatePaperRule(id: number, body: PaperRuleSaveRequest) {
   ) as unknown as Promise<PaperRule>
 }
 
-/** 删除模板；后端没有下限，删完再拉列表会自动补一套默认规则 */
+/** 删除模板；后端没有下限，删完再拉列表会自动补一套基础规则 */
 export function deletePaperRule(id: number) {
   return service.delete(
     `/stock/paper/rules/${encodeURIComponent(String(id))}`

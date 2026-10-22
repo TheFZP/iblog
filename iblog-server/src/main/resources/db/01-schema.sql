@@ -440,7 +440,7 @@ CREATE TABLE IF NOT EXISTS `paper_rule`
     `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     `user_id`     BIGINT      NOT NULL COMMENT '所属用户',
     `name`        VARCHAR(64) NOT NULL COMMENT '模板名称',
-    `params`      TEXT        NOT NULL COMMENT '策略参数 JSON（22 项）',
+    `params`      TEXT        NOT NULL COMMENT '策略参数 JSON（35 项）',
     `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
