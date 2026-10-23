@@ -10,6 +10,7 @@ import com.iblog.module.service.UserService;
 import com.iblog.module.vo.PortalAuthVO;
 import com.iblog.security.AuthCookie;
 import com.iblog.security.JwtUtil;
+import com.iblog.security.SessionStore;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,6 +42,7 @@ public class PortalAuthController {
     private final JwtUtil jwtUtil;
     private final IblogProperties properties;
     private final StringRedisTemplate stringRedisTemplate;
+    private final SessionStore sessionStore;
     private final UserService userService;
     private final AuthCookie authCookie;
 
@@ -61,8 +63,7 @@ public class PortalAuthController {
         }
 
         // 后台可能已经退出登录：此时票据对应的会话已作废，不能放行
-        String cached = stringRedisTemplate.opsForValue().get(CacheKeys.LOGIN_TOKEN + userId);
-        if (cached == null || !cached.equals(token)) {
+        if (!sessionStore.isValid(userId, token)) {
             throw new BizException(401, "后台登录已失效，请重新登录管理后台");
         }
 
@@ -85,8 +86,7 @@ public class PortalAuthController {
         if (token != null) {
             try {
                 Long userId = Long.valueOf(jwtUtil.parseToken(token).getSubject());
-                String cached = stringRedisTemplate.opsForValue().get(CacheKeys.LOGIN_TOKEN + userId);
-                if (token.equals(cached)) {
+                if (sessionStore.isValid(userId, token)) {
                     User user = userService.getById(userId);
                     if (user != null && Integer.valueOf(1).equals(user.getStatus())) {
                         return R.ok(toVO(user));

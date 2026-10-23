@@ -10,6 +10,7 @@ import com.iblog.module.service.UserService;
 import com.iblog.module.vo.LoginVO;
 import com.iblog.security.AuthCookie;
 import com.iblog.security.JwtUtil;
+import com.iblog.security.SessionStore;
 import com.iblog.security.UserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +42,7 @@ public class AdminAuthController {
     private final UserService userService;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final SessionStore sessionStore;
     private final StringRedisTemplate stringRedisTemplate;
     private final IblogProperties properties;
     private final AuthCookie authCookie;
@@ -57,10 +59,8 @@ public class AdminAuthController {
         }
 
         String token = jwtUtil.createToken(user.getId(), user.getUsername());
-        stringRedisTemplate.opsForValue().set(
-                CacheKeys.LOGIN_TOKEN + user.getId(),
-                token,
-                Duration.ofSeconds(properties.getJwt().getExpire()));
+        // 多设备在线：登记为新会话，不覆盖其它设备已持有的令牌
+        sessionStore.register(user.getId(), token);
         // 同一台机器 / 同一主域下，官网 https://host/ 与后台 https://host:81/ 共享这份登录态
         authCookie.write(response, token);
 
@@ -73,12 +73,17 @@ public class AdminAuthController {
                 .build());
     }
 
-    @Operation(summary = "退出登录")
+    @Operation(summary = "退出登录（仅注销当前设备，其它设备保持在线）")
     @PostMapping("/logout")
-    public R<Void> logout(HttpServletResponse response) {
+    public R<Void> logout(HttpServletRequest request, HttpServletResponse response) {
         Long userId = UserContext.get();
         if (userId != null) {
-            stringRedisTemplate.delete(CacheKeys.LOGIN_TOKEN + userId);
+            // 优先用请求头令牌；后台没带 header 时退回 Cookie，尽量把当前会话注销干净
+            String token = jwtUtil.resolveToken(request.getHeader(properties.getJwt().getHeader()));
+            if (token == null) {
+                token = authCookie.read(request);
+            }
+            sessionStore.revoke(userId, token);
         }
         authCookie.clear(response);
         return R.ok();

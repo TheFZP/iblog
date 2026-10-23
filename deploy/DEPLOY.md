@@ -405,7 +405,9 @@ curl http://localhost:8080/api/portal/site
 | 完全不同的注册域名 | 配 `VITE_WEB_URL`，不用 Cookie 跨域 | 从后台顶部「行情」按钮进入：先取 120 秒、单次有效的 ticket，官网用票据换登录态，后台会话不受影响 |
 
 > ⚠️ `Secure` Cookie 只在 HTTPS 页面写入。如果先用 http 登录后台、再切到 https，需要重新登录一次。
-> 后台「退出登录」会同时删除 Redis 会话并清 Cookie，官网随即失效。
+> 后台「退出登录」只注销**当前设备**的那一个令牌并清掉本机 Cookie：同一账号在手机、另一台电脑、
+> 另一个浏览器上的会话都继续有效（每台设备一个独立令牌，存在 Redis `iblog:login:sessions:<userId>` 里）。
+> 想让某账号的全部设备同时下线，删掉这个 Redis key 即可：`redis-cli DEL iblog:login:sessions:<userId>`。
 
 跨域场景下，管理后台需要知道官网完整地址（相对路径 `/` 拼不出跨站链接）。构建后台时注入：
 

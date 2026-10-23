@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.UUID;
 
 /**
  * JWT 生成与解析。
@@ -32,6 +33,9 @@ public class JwtUtil {
         Date now = new Date();
         Date expiration = new Date(now.getTime() + expireSeconds * 1000);
         return Jwts.builder()
+                // 每次登录生成唯一 jti：同一秒内多次登录也会得到不同令牌，
+                // 多设备会话（见 SessionStore）才能各自独立注销。
+                .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .issuedAt(now)

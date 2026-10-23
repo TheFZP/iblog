@@ -1,6 +1,5 @@
 package com.iblog.security;
 
-import com.iblog.common.constant.CacheKeys;
 import com.iblog.common.exception.BizException;
 import com.iblog.config.IblogProperties;
 import io.jsonwebtoken.Claims;
@@ -8,7 +7,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -18,6 +16,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p>令牌来源：默认只认请求头（后台接口，避免 Cookie 带来的 CSRF）；
  * 官网行情接口 /api/stock/** 额外允许从 HttpOnly Cookie 读取，
  * 这样后台登录后官网无需再登录一次。</p>
+ *
+ * <p>会话是「每账号多个令牌」的结构（见 {@link SessionStore}）：
+ * 手机、电脑可以同时在线，退出登录只注销当前设备的令牌。</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -25,7 +26,7 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
     private final IblogProperties properties;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final SessionStore sessionStore;
     private final AuthCookie authCookie;
 
     @Override
@@ -49,8 +50,8 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         Long userId = Long.valueOf(claims.getSubject());
-        String cached = stringRedisTemplate.opsForValue().get(CacheKeys.LOGIN_TOKEN + userId);
-        if (cached == null || !cached.equals(token)) {
+        // 多设备登录：只要求该令牌仍在会话集合里，后登录不会挤掉先登录的设备
+        if (!sessionStore.isValid(userId, token)) {
             throw new BizException(401, "登录已过期或被注销，请重新登录");
         }
 
