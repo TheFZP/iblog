@@ -272,16 +272,21 @@ public class PaperSelectionService {
         double changePct = quote != null && quote.getPrice() > 0 ? quote.getChangePct() : 0;
 
         MoneyFlow flow = null;
-        try {
-            flow = eastmoneyService.fetchMoneyFlow(code);
-        } catch (RuntimeException ex) {
-            log.debug("选股：资金流获取失败 code={} msg={}", code, ex.getMessage());
+        // 东财资金流在本轮里已经熔断（连续失败）就直接跳过：每只票再问一次都是白等，
+        // 而资金流只是加分项之一，跳过不影响其余日 K 因子打分
+        if (!eastmoneyService.isUpstreamDown()) {
+            try {
+                flow = eastmoneyService.fetchMoneyFlow(code);
+            } catch (RuntimeException ex) {
+                log.debug("选股：资金流获取失败 code={} msg={}", code, ex.getMessage());
+            }
         }
 
         // ---------- 用户自定义硬条件（严格过滤）：不满足直接剔除，不参与打分 ----------
-        // 早盘放量/站上均价两项都要分时，先拉一次共用，避免重复请求
+        // 早盘放量/竞价量/站上均价三项都要分时，先拉一次共用，避免重复请求
         IntradayData intraday = null;
-        if (params.getOpenTurnoverMinPct() > 0 || params.isRequireAboveVwap()) {
+        if (params.getOpenTurnoverMinPct() > 0 || params.getAuctionTurnoverMinPct() > 0
+                || params.isRequireAboveVwap()) {
             try {
                 intraday = tencentService.fetchIntraday(code);
             } catch (RuntimeException ex) {
@@ -541,6 +546,7 @@ public class PaperSelectionService {
         }
         // 9) 早盘放量 + 实际换手率 + 股东户数 + 盈利：都要基本面，按真实上游请求数扣预算
         boolean needFundamental = params.getOpenTurnoverMinPct() > 0
+                || params.getAuctionTurnoverMinPct() > 0
                 || params.getRealTurnoverMinPct() > 0
                 || params.isRequireHolderShrink()
                 || params.getProfitRequire() > 0;
@@ -551,6 +557,23 @@ public class PaperSelectionService {
             long used = fundamentalService.upstreamRequests() - fundamentalBudget[0];
             if (used >= MAX_FUNDAMENTAL_CHECKS) {
                 return "本轮基本面请求已达上限 " + MAX_FUNDAMENTAL_CHECKS + " 次";
+            }
+            if (params.getAuctionTurnoverMinPct() > 0) {
+                if (intraday == null || intraday.getItems() == null || intraday.getItems().isEmpty()) {
+                    return "无分时数据（集合竞价量）";
+                }
+                double auction = PaperScreenRules.auctionVolume(intraday.getItems());
+                if (auction <= 0) {
+                    return "无集合竞价成交（开盘价即竞价，未撮合或分时不全）";
+                }
+                Double pct = fundamentalService.realTurnoverPct(code, auction);
+                if (pct == null) {
+                    return "无自由流通股数据（集合竞价换手率）";
+                }
+                if (pct < params.getAuctionTurnoverMinPct()) {
+                    return String.format("集合竞价换手率 %.3f%% 低于 %.3f%%",
+                            pct, params.getAuctionTurnoverMinPct());
+                }
             }
             if (params.getOpenTurnoverMinPct() > 0) {
                 if (intraday == null || intraday.getItems() == null || intraday.getItems().isEmpty()) {

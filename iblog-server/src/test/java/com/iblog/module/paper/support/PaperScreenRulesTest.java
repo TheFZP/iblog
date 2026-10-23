@@ -320,6 +320,27 @@ class PaperScreenRulesTest {
         assertEquals(0, PaperScreenRules.windowVolume(null, "09:25", "09:40"), 1e-9);
     }
 
+    @Test
+    void auctionVolumeOnlyReadsTheOpenAuctionBar() {
+        List<IntradayItem> items = List.of(
+                intradayItem("09:30", 9674),
+                intradayItem("09:31", 986),
+                intradayItem("09:35", 200));
+        // 09:30 那根就是竞价撮合量，不能被 09:31 起的连续竞价污染
+        assertEquals(9674, PaperScreenRules.auctionVolume(items), 1e-9);
+        // 分时被截断（只有下午）时不能把第一根当竞价量，返回 0
+        assertEquals(0, PaperScreenRules.auctionVolume(List.of(
+                intradayItem("13:05", 500), intradayItem("13:06", 600))), 1e-9);
+        // 首根不是 09:30（缺失）同样返回 0
+        assertEquals(0, PaperScreenRules.auctionVolume(List.of(
+                intradayItem("09:31", 986))), 1e-9);
+        assertEquals(0, PaperScreenRules.auctionVolume(List.of()), 1e-9);
+        assertEquals(0, PaperScreenRules.auctionVolume(null), 1e-9);
+        // 负量按 0 处理（脏数据不能变成负换手率）
+        assertEquals(0, PaperScreenRules.auctionVolume(List.of(
+                intradayItem("09:30", -5))), 1e-9);
+    }
+
     private static IntradayItem intradayItem(String time, double volume) {
         IntradayItem item = new IntradayItem();
         item.setTime(time);

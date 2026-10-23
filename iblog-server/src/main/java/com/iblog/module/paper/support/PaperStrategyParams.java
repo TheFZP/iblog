@@ -125,6 +125,15 @@ public class PaperStrategyParams {
     private String openTurnoverStart = "09:25";
     /** 早盘换手率统计窗口终点（HH:mm，含） */
     private String openTurnoverEnd = "09:40";
+    /**
+     * 集合竞价换手率下限（%）：9:25–9:30 集合竞价成交量 ÷ 自由流通股 × 100；0 表示不限。
+     *
+     * <p>与 {@link #openTurnoverMinPct} 的区别：那个是「竞价 + 开盘后一段」的累计量，
+     * 这个只看竞价那一下（9:25 撮合的量），专门用来筛「竞价就被资金盯上」的票。
+     * 数据仍取自分钟分时的 09:30 那根 —— 腾讯把集合竞价单独放在这一根里
+     * （09:31 才是连续竞价第一分钟），所以取这一根就等价于竞价量，不需要额外数据源。</p>
+     */
+    private double auctionTurnoverMinPct = 0;
     /** 全天实际换手率下限（%）：成交量 ÷ 自由流通股 × 100；0 表示不限 */
     private double realTurnoverMinPct = 0;
     /** 现价必须高于今日开盘价 */
@@ -210,6 +219,8 @@ public class PaperStrategyParams {
             params.openTurnoverMinPct = number(node, "openTurnoverMinPct", params.openTurnoverMinPct, 0, 100);
             params.openTurnoverStart = timeText(node, "openTurnoverStart", params.openTurnoverStart);
             params.openTurnoverEnd = timeText(node, "openTurnoverEnd", params.openTurnoverEnd);
+            params.auctionTurnoverMinPct = number(node, "auctionTurnoverMinPct",
+                    params.auctionTurnoverMinPct, 0, 100);
             params.realTurnoverMinPct = number(node, "realTurnoverMinPct", params.realTurnoverMinPct, 0, 100);
             params.requireAboveOpen = bool(node, "requireAboveOpen", params.requireAboveOpen);
             params.requireAboveVwap = bool(node, "requireAboveVwap", params.requireAboveVwap);

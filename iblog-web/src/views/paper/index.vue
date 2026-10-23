@@ -1751,6 +1751,7 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   lowRatioMax: 0,
   sortByLowRatioAsc: false,
   openTurnoverMinPct: 0,
+  auctionTurnoverMinPct: 0,
   openTurnoverStart: DEFAULT_OPEN_TURNOVER_START,
   openTurnoverEnd: DEFAULT_OPEN_TURNOVER_END,
   realTurnoverMinPct: 0,
@@ -1815,6 +1816,7 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   shrinkVolumeMaxRatio: { min: 0.1, max: 1, integer: false },
   lowRatioMax: { min: 0, max: 100, integer: false },
   openTurnoverMinPct: { min: 0, max: 100, integer: false },
+  auctionTurnoverMinPct: { min: 0, max: 100, integer: false },
   realTurnoverMinPct: { min: 0, max: 100, integer: false },
   hardVolumeRatioMin: { min: 0, max: 100, integer: false },
   ma5OverMa20Min: { min: 0, max: 100, integer: false },
@@ -1885,7 +1887,7 @@ const ADVANCED_FIELDS: AdvancedField[] = ADVANCED_GROUPS.reduce<AdvancedField[]>
   []
 )
 
-/** 严格过滤区的 8 个数值项：与开关、下拉、时间窗一起单独渲染在「严格过滤（硬条件）」分组内 */
+/** 严格过滤区的 9 个数值项：与开关、下拉、时间窗一起单独渲染在「严格过滤（硬条件）」分组内 */
 const STRICT_NUMERIC_FIELDS: AdvancedField[] = [
   {
     key: 'lowRatioMax',
@@ -1900,6 +1902,13 @@ const STRICT_NUMERIC_FIELDS: AdvancedField[] = [
     step: 0.5,
     unit: '%',
     hint: '早盘窗口内成交量 ÷ 自由流通股 × 100'
+  },
+  {
+    key: 'auctionTurnoverMinPct',
+    label: '集合竞价换手率(%)',
+    step: 0.1,
+    unit: '%',
+    hint: '9:25 竞价量 ÷ 自由流通股 × 100，0=不限'
   },
   {
     key: 'realTurnoverMinPct',

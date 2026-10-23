@@ -247,6 +247,36 @@ public final class PaperScreenRules {
         return sum;
     }
 
+    /**
+     * 集合竞价成交量（单位「手」）。
+     *
+     * <p>腾讯分钟分时的 <b>09:30 那根就是集合竞价单独一根</b>：它的成交量等于
+     * 9:25 撮合成交的量，09:31 那根才是连续竞价的第一分钟（已用东财逐笔
+     * {@code 09:25:00} 行的 cumVol 交叉验证过三只票，完全相等）。
+     * 所以取时间最早的那根即可，不需要另接逐笔接口。</p>
+     *
+     * <p>容错：分时被截断（只有下午的数据）或第一根不是 09:30 时，返回 0 而不是
+     * 「第一根的成交量」—— 后者会把某一分钟的连续竞价量当成竞价量，制造假信号。</p>
+     */
+    public static double auctionVolume(List<IntradayItem> items) {
+        if (items == null || items.isEmpty()) {
+            return 0;
+        }
+        for (IntradayItem item : items) {
+            if (item == null) {
+                continue;
+            }
+            int t = minutes(item.getTime(), -1);
+            if (t == OPEN_AUCTION_MINUTE) {
+                return Math.max(item.getVolume(), 0);
+            }
+        }
+        return 0;
+    }
+
+    /** 集合竞价撮合时刻（09:30 那根分钟 bar 代表竞价成交）。 */
+    private static final int OPEN_AUCTION_MINUTE = 9 * 60 + 30;
+
     /** "09:30" → 570；解析失败返回 fallback。 */
     private static int minutes(String hhmm, int fallback) {
         if (hhmm == null || hhmm.length() != 5 || hhmm.charAt(2) != ':') {

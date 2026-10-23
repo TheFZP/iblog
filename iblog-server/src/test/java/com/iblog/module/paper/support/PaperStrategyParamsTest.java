@@ -118,6 +118,25 @@ class PaperStrategyParamsTest {
     }
 
     @Test
+    void auctionTurnoverParamParsesAndClamps() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"auctionTurnoverMinPct\":2.5}");
+        assertEquals(2.5, params.getAuctionTurnoverMinPct(), 1e-9);
+        // 默认关闭
+        assertEquals(0, PaperStrategyParams.parse(mapper, "{}").getAuctionTurnoverMinPct(), 1e-9);
+        // 越界钳制到 0~100
+        assertEquals(100, PaperStrategyParams.parse(mapper,
+                "{\"auctionTurnoverMinPct\":500}").getAuctionTurnoverMinPct(), 1e-9);
+        assertEquals(0, PaperStrategyParams.parse(mapper,
+                "{\"auctionTurnoverMinPct\":-3}").getAuctionTurnoverMinPct(), 1e-9);
+        // 与早盘累计窗口是两个独立参数，改一个不影响另一个
+        PaperStrategyParams both = PaperStrategyParams.parse(mapper,
+                "{\"openTurnoverMinPct\":2,\"auctionTurnoverMinPct\":0.5}");
+        assertEquals(2, both.getOpenTurnoverMinPct(), 1e-9);
+        assertEquals(0.5, both.getAuctionTurnoverMinPct(), 1e-9);
+    }
+
+    @Test
     void jsonRoundTripKeepsNewFields() throws Exception {
         PaperStrategyParams params = PaperStrategyParams.parse(mapper,
                 "{\"sellAtOpen\":true,\"buyStartTime\":\"14:30\",\"buyEndTime\":\"15:00\"}");

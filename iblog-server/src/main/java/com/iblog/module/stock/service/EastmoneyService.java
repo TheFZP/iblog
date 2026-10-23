@@ -7,6 +7,7 @@ import com.iblog.module.stock.support.EmMoneyFlowFields;
 import com.iblog.module.stock.support.StockCode;
 import com.iblog.module.stock.support.StockHttpClient;
 import com.iblog.module.stock.support.StockHttpClient.StockDataException;
+import com.iblog.module.stock.support.UpstreamBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -69,6 +70,22 @@ public class EastmoneyService {
     private static final long RETRY_BUDGET_MS = 6000L;
     /** 单次请求超时：上游正常在 250-600ms 返回，给到 3s 已经很宽松 */
     private static final Duration FETCH_TIMEOUT = Duration.ofSeconds(3);
+
+    /**
+     * 上游熔断：连续失败 6 次就判定「东财这个出口现在被限流」，冷却 60 秒内直接失败。
+     *
+     * <p>选股一轮会问几十上百只票，被限流时每只都白等 5 次重试 × 2 个域名，
+     * 整轮从几十秒涨到几分钟（线上实测过 3 分钟仍未跑完，前端/nginx 先超时）。
+     * 熔断把这些时间省下来：反正这一轮拿不到资金流，不如早点放弃，
+     * 让选股靠日 K 打分的项继续跑完。</p>
+     *
+     * <p>阈值取 6 而不是 1：单只票的 5 次重试里有 2~3 次失败是常态（通道间歇性 reset），
+     * 连续 6 次全失败才说明是整体性问题，不是偶发抖动。</p>
+     */
+    private static final int BREAKER_THRESHOLD = 6;
+    private static final long BREAKER_COOLDOWN_MS = 60_000L;
+
+    private final UpstreamBreaker breaker = new UpstreamBreaker(BREAKER_THRESHOLD, BREAKER_COOLDOWN_MS);
 
     // ==================== 当日快照 ====================
 
@@ -230,6 +247,11 @@ public class EastmoneyService {
      * 立刻告诉他「暂时取不到」还糟。所以给整段重试一个硬预算，超了就放弃。</p>
      */
     private FetchResult safeFetch(String url) {
+        // 熔断期内直接放弃：这一轮反正拿不到资金流，不要让每只票都白等 5 次重试
+        if (breaker.isOpen()) {
+            log.debug("资金流向已熔断，跳过 url={}", url);
+            return FetchResult.failed();
+        }
         long deadline = System.currentTimeMillis() + RETRY_BUDGET_MS;
         RuntimeException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -240,10 +262,16 @@ public class EastmoneyService {
             try {
                 String text = http.getTextNoKeepAlive(url, REFERER, java.nio.charset.StandardCharsets.UTF_8,
                         FETCH_TIMEOUT);
+                breaker.recordSuccess();
                 return FetchResult.ok(EmFflowParser.parseKlines(text));
             } catch (Exception e) {
                 last = e instanceof RuntimeException re ? re : new StockDataException(e.getMessage());
                 log.warn("资金流向请求失败 url={} attempt={}/{} err={}", url, attempt, MAX_ATTEMPTS, e.getMessage());
+                if (breaker.recordFailure()) {
+                    log.warn("资金流向上游连续失败 {} 次，熔断 {} 秒（期间不再请求东财资金流）",
+                            BREAKER_THRESHOLD, BREAKER_COOLDOWN_MS / 1000);
+                    return FetchResult.failed();
+                }
                 if (attempt < MAX_ATTEMPTS) {
                     sleepQuietly(RETRY_BACKOFF_MS);
                 }
@@ -251,6 +279,11 @@ public class EastmoneyService {
         }
         log.warn("资金流向请求最终失败 url={} err={}", url, last == null ? "unknown" : last.getMessage());
         return FetchResult.failed();
+    }
+
+    /** 东财资金流当前是否处于熔断期（选股等批量调用方可据此提前跳过，省掉整轮询问）。 */
+    public boolean isUpstreamDown() {
+        return breaker.isOpen();
     }
 
     private static void sleepQuietly(long ms) {

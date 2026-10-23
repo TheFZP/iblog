@@ -438,6 +438,8 @@ export interface PaperStrategyParams {
   openTurnoverStart?: string
   /** 早盘量窗口终点（HH:mm，含） */
   openTurnoverEnd?: string
+  /** 硬条件·集合竞价换手率下限（%）：9:25 竞价成交量 ÷ 自由流通股 × 100（0=不限） */
+  auctionTurnoverMinPct?: number
   /** 硬条件·全天实际换手率下限（%）：成交量 ÷ 自由流通股 × 100 */
   realTurnoverMinPct?: number
   /** 硬条件·现价必须高于今开 */
@@ -520,13 +522,16 @@ export function fetchPaperSelections(accountId?: number) {
 /**
  * 立即重新选股并覆盖当日候选。
  *
- * <p>一轮要现场拉热榜 + 日 K，耗时可能超过默认 15s 超时，这里单独放宽到 60s。</p>
+ * <p>这是同步接口：一轮要现场拉热榜 + 几十只票的日 K/分时/基本面，
+ * 严格过滤全开时实测 1~3 分钟。默认 15s 必然超时，这里放宽到 180s，
+ * 并与 iblog-web/nginx.conf 里该路径单独的 proxy_read_timeout 300s 配套
+ * （nginx 的 20s 通用行情超时会先返回 504，后端却还在跑）。</p>
  */
 export function refreshPaperSelections(accountId?: number) {
   return service.post(
     `/stock/paper/selections/refresh${accountQuery(accountId)}`,
     undefined,
-    { timeout: 60000 }
+    { timeout: 180000 }
   ) as unknown as Promise<PaperSignal[]>
 }
 
