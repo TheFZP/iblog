@@ -367,7 +367,7 @@
                 </svg>
                 高级规则（选股打分）
                 <span class="strategy__advanced-hint">{{
-                  advancedOpen ? '收起' : `共 ${PARAM_FIELD_COUNT} 项`
+                  advancedOpen ? '收起' : `共 ${ADVANCED_PANEL_FIELD_COUNT} 项`
                 }}</span>
               </button>
 
@@ -689,6 +689,125 @@
                       </span>
                     </label>
                   </div>
+                </div>
+                <div class="advanced__group">
+                  <h3 class="advanced__title">严格过滤（硬条件）</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.strictFilters"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">启用严格过滤</span>
+                    <span class="trade-window__hint">
+                      总开关：打开后下面的硬条件才生效，不满足的候选直接剔除；关闭时仅打分项参与排序。
+                    </span>
+                  </label>
+                  <div class="advanced__grid">
+                    <label v-for="item in STRICT_NUMERIC_FIELDS" :key="item.key" class="field">
+                      <span class="field__label">{{ item.label }}</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm[item.key]"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf(item.key).min"
+                          :max="ruleOf(item.key).max"
+                          :step="item.step"
+                          :disabled="!strategy"
+                        />
+                        <span v-if="item.unit" class="field__unit">{{ item.unit }}</span>
+                      </span>
+                      <span v-if="item.hint" class="field__hint">{{ item.hint }}</span>
+                    </label>
+                  </div>
+                  <div class="strict__checks">
+                    <label class="trade-window__check">
+                      <input
+                        v-model="strategyForm.sortByLowRatioAsc"
+                        type="checkbox"
+                        :disabled="!strategy"
+                      />
+                      <span class="trade-window__label">候选按「现价/一年低点」升序</span>
+                      <span class="trade-window__hint">优先级：越接近一年低点越靠前</span>
+                    </label>
+                    <label class="trade-window__check">
+                      <input
+                        v-model="strategyForm.requireAboveOpen"
+                        type="checkbox"
+                        :disabled="!strategy"
+                      />
+                      <span class="trade-window__label">现价必须高于今开</span>
+                      <span class="trade-window__hint">低于或等于今开的候选直接剔除</span>
+                    </label>
+                    <label class="trade-window__check">
+                      <input
+                        v-model="strategyForm.requireAboveVwap"
+                        type="checkbox"
+                        :disabled="!strategy"
+                      />
+                      <span class="trade-window__label">现价必须高于分时均价</span>
+                      <span class="trade-window__hint">低于或等于均价线的候选直接剔除</span>
+                    </label>
+                    <label class="trade-window__check">
+                      <input
+                        v-model="strategyForm.requireHolderShrink"
+                        type="checkbox"
+                        :disabled="!strategy"
+                      />
+                      <span class="trade-window__label">股东户数较上一期减少</span>
+                      <span class="trade-window__hint">筹码集中度变高的标的优先</span>
+                    </label>
+                    <label class="trade-window__check">
+                      <input
+                        v-model="strategyForm.affordableOnly"
+                        type="checkbox"
+                        :disabled="!strategy"
+                      />
+                      <span class="trade-window__label">只保留当前资金买得起的标的</span>
+                      <span class="trade-window__hint">科创板按 200 股起算，避免选出来却下不了单</span>
+                    </label>
+                  </div>
+                  <div class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">盈利要求</span>
+                      <select
+                        v-model.number="strategyForm.profitRequire"
+                        class="field__input"
+                        :disabled="!strategy"
+                      >
+                        <option :value="0">不限</option>
+                        <option :value="1">最新报告期盈利</option>
+                        <option :value="2">二季报或年报盈利</option>
+                        <option :value="3">二季报/二季报预告/年报盈利</option>
+                      </select>
+                    </label>
+                    <label class="field trade-window__field">
+                      <span class="field__label">早盘量窗口（开始）</span>
+                      <input
+                        v-model="strategyForm.openTurnoverStart"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                    <span class="trade-window__dash" aria-hidden="true">至</span>
+                    <label class="field trade-window__field">
+                      <span class="field__label">早盘量窗口（结束）</span>
+                      <input
+                        v-model="strategyForm.openTurnoverEnd"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                  </div>
+                  <p v-if="openTurnoverInvalid" class="trade-window__warn">
+                    早盘量窗口起止非法（需 HH:mm 且开始早于结束），后端会当作不限制该窗口（仍可保存）。
+                  </p>
+                  <p v-else class="trade-window__hint">
+                    早盘换手率只统计该窗口内的成交量；窗口外不影响全天换手率与其它硬条件。
+                  </p>
                 </div>
                 <div class="advanced__group">
                   <h3 class="advanced__title">交易时段</h3>
@@ -1558,10 +1677,20 @@ const MAX_RULES = 20
 
 /** 策略表单：API 里 3 个新增字段可选，表单内部统一补全 */
 type StrategyForm = Required<PaperStrategyParams>
-/** 数值型参数 key：时间窗与开关单独渲染，不参与区间钳制 */
+/** 数值型参数 key：时间窗、开关与下拉单独渲染，不参与区间钳制 */
 type NumericParamKey = Exclude<
   keyof PaperStrategyParams,
-  'sellAtOpen' | 'buyStartTime' | 'buyEndTime'
+  | 'sellAtOpen'
+  | 'buyStartTime'
+  | 'buyEndTime'
+  | 'strictFilters'
+  | 'sortByLowRatioAsc'
+  | 'openTurnoverStart'
+  | 'openTurnoverEnd'
+  | 'requireAboveOpen'
+  | 'requireAboveVwap'
+  | 'requireHolderShrink'
+  | 'affordableOnly'
 >
 
 /** 次日开盘强制卖出默认关闭 */
@@ -1569,6 +1698,9 @@ const DEFAULT_SELL_AT_OPEN = false
 /** 自动买入时间窗默认覆盖整个交易时段（含） */
 const DEFAULT_BUY_START_TIME = '09:30'
 const DEFAULT_BUY_END_TIME = '15:00'
+/** 早盘量窗口默认 09:25–09:40（与后端 PaperStrategyParams 一致） */
+const DEFAULT_OPEN_TURNOVER_START = '09:25'
+const DEFAULT_OPEN_TURNOVER_END = '09:40'
 /** HH:mm 时间格式（与后端 DateTimeFormatter "HH:mm" 一致） */
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 
@@ -1614,7 +1746,24 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   newHighScore: 0,
   newHighWithinDays: 5,
   shrinkVolumeScore: 0,
-  shrinkVolumeMaxRatio: 0.9
+  shrinkVolumeMaxRatio: 0.9,
+  strictFilters: false,
+  lowRatioMax: 0,
+  sortByLowRatioAsc: false,
+  openTurnoverMinPct: 0,
+  openTurnoverStart: DEFAULT_OPEN_TURNOVER_START,
+  openTurnoverEnd: DEFAULT_OPEN_TURNOVER_END,
+  realTurnoverMinPct: 0,
+  requireAboveOpen: false,
+  requireAboveVwap: false,
+  hardVolumeRatioMin: 0,
+  ma5OverMa20Min: 0,
+  vol5OverVol20Min: 0,
+  totalCapMinYi: 0,
+  noLimitUpWithinDays: 0,
+  requireHolderShrink: false,
+  profitRequire: 0,
+  affordableOnly: false
 }
 
 interface NumberRule {
@@ -1663,7 +1812,16 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   newHighScore: { min: 0, max: 100, integer: true },
   newHighWithinDays: { min: 1, max: 10, integer: true },
   shrinkVolumeScore: { min: 0, max: 100, integer: true },
-  shrinkVolumeMaxRatio: { min: 0.1, max: 1, integer: false }
+  shrinkVolumeMaxRatio: { min: 0.1, max: 1, integer: false },
+  lowRatioMax: { min: 0, max: 100, integer: false },
+  openTurnoverMinPct: { min: 0, max: 100, integer: false },
+  realTurnoverMinPct: { min: 0, max: 100, integer: false },
+  hardVolumeRatioMin: { min: 0, max: 100, integer: false },
+  ma5OverMa20Min: { min: 0, max: 100, integer: false },
+  vol5OverVol20Min: { min: 0, max: 100, integer: false },
+  totalCapMinYi: { min: 0, max: 100000, integer: false },
+  noLimitUpWithinDays: { min: 0, max: 120, integer: true },
+  profitRequire: { min: 0, max: 3, integer: true }
 }
 
 const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
@@ -1727,6 +1885,54 @@ const ADVANCED_FIELDS: AdvancedField[] = ADVANCED_GROUPS.reduce<AdvancedField[]>
   []
 )
 
+/** 严格过滤区的 8 个数值项：与开关、下拉、时间窗一起单独渲染在「严格过滤（硬条件）」分组内 */
+const STRICT_NUMERIC_FIELDS: AdvancedField[] = [
+  {
+    key: 'lowRatioMax',
+    label: '现价/一年低点上限',
+    step: 0.1,
+    unit: '倍',
+    hint: '0=不限；如 1.3 表示现价不超过一年内最低价的 1.3 倍'
+  },
+  {
+    key: 'openTurnoverMinPct',
+    label: '早盘换手率下限',
+    step: 0.5,
+    unit: '%',
+    hint: '早盘窗口内成交量 ÷ 自由流通股 × 100'
+  },
+  {
+    key: 'realTurnoverMinPct',
+    label: '全天换手率下限',
+    step: 0.5,
+    unit: '%',
+    hint: '全天成交量 ÷ 自由流通股 × 100'
+  },
+  { key: 'hardVolumeRatioMin', label: '量比下限（硬）', step: 0.1, unit: '倍' },
+  {
+    key: 'ma5OverMa20Min',
+    label: '5 日/20 日均价下限',
+    step: 0.01,
+    unit: '倍',
+    hint: '5 日均价 ÷ 20 日均价 的下限'
+  },
+  {
+    key: 'vol5OverVol20Min',
+    label: '5 日/20 日均量下限',
+    step: 0.01,
+    unit: '倍',
+    hint: '5 日均量 ÷ 20 日均量 的下限'
+  },
+  { key: 'totalCapMinYi', label: '总市值下限', step: 10, unit: '亿' },
+  {
+    key: 'noLimitUpWithinDays',
+    label: '近期不得涨停',
+    step: 1,
+    unit: '天',
+    hint: '近 N 个交易日内不得涨停，0=不限'
+  }
+]
+
 /** 交易时段区固定 3 项：次日开盘强制卖出开关 + 自动买入时间窗起止 */
 const TRADE_WINDOW_FIELD_COUNT = 3
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
@@ -1735,13 +1941,20 @@ const QUALITY_FIELD_COUNT = 10
 const BOARD_FIELD_COUNT = 2
 /** 新高与量能区固定 4 项：两年新高权重 + 回看窗口 + 缩量上涨权重 + 缩量阈值 */
 const NEW_HIGH_FIELD_COUNT = 4
-/** 高级规则表单可编辑的参数总数（模板保存提示用） */
-const PARAM_FIELD_COUNT =
+/** 严格过滤区固定 17 项：8 个数值项 + 6 个开关 + profitRequire 下拉 + 早盘窗口起止 2 个时间 */
+const STRICT_FILTER_FIELD_COUNT = STRICT_NUMERIC_FIELDS.length + 9
+/** 表单顶部固定的 4 项基础参数：最低分、止损、止盈、最长持有天数 */
+const BASIC_FIELD_COUNT = 4
+/** 高级规则面板内的可编辑参数数（不含顶部 4 项基础参数），用于折叠按钮上的「共 N 项」 */
+const ADVANCED_PANEL_FIELD_COUNT =
   ADVANCED_FIELDS.length +
   TRADE_WINDOW_FIELD_COUNT +
   QUALITY_FIELD_COUNT +
   BOARD_FIELD_COUNT +
-  NEW_HIGH_FIELD_COUNT
+  NEW_HIGH_FIELD_COUNT +
+  STRICT_FILTER_FIELD_COUNT
+/** 策略参数总数（含顶部 4 项基础参数），与后端 PaperStrategyParams 的 58 个字段一致 */
+const PARAM_FIELD_COUNT = BASIC_FIELD_COUNT + ADVANCED_PANEL_FIELD_COUNT
 
 /** 参与「权重合计」提示的因子权重字段（用户借此判断分数上限，需与实际加分项保持一致） */
 const WEIGHT_KEYS: NumericParamKey[] = [
@@ -1910,6 +2123,13 @@ const buyWindowInvalid = computed(() => {
   const start = strategyForm.value.buyStartTime
   const end = strategyForm.value.buyEndTime
   return TIME_PATTERN.test(start) && TIME_PATTERN.test(end) && start >= end
+})
+/** 早盘量窗口非法（格式错误或 start >= end）时仅提示：后端会当作窗口无效不限制 */
+const openTurnoverInvalid = computed(() => {
+  const start = strategyForm.value.openTurnoverStart
+  const end = strategyForm.value.openTurnoverEnd
+  if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) return true
+  return start >= end
 })
 /** 当前下拉选中的规则模板 */
 const selectedRule = computed(
@@ -2189,6 +2409,17 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     result.sellAtOpen = toBoolean(node.sellAtOpen)
     result.buyStartTime = toTimeText(node.buyStartTime, DEFAULT_BUY_START_TIME)
     result.buyEndTime = toTimeText(node.buyEndTime, DEFAULT_BUY_END_TIME)
+    result.strictFilters = toBoolean(node.strictFilters)
+    result.sortByLowRatioAsc = toBoolean(node.sortByLowRatioAsc)
+    result.requireAboveOpen = toBoolean(node.requireAboveOpen)
+    result.requireAboveVwap = toBoolean(node.requireAboveVwap)
+    result.requireHolderShrink = toBoolean(node.requireHolderShrink)
+    result.affordableOnly = toBoolean(node.affordableOnly)
+    result.openTurnoverStart = toTimeText(
+      node.openTurnoverStart,
+      DEFAULT_OPEN_TURNOVER_START
+    )
+    result.openTurnoverEnd = toTimeText(node.openTurnoverEnd, DEFAULT_OPEN_TURNOVER_END)
   } catch {
     return { ...DEFAULT_STRATEGY_PARAMS }
   }
@@ -2224,6 +2455,20 @@ function clampStrategyForm(): StrategyForm {
   result.sellAtOpen = strategyForm.value.sellAtOpen === true
   result.buyStartTime = toTimeText(strategyForm.value.buyStartTime, DEFAULT_BUY_START_TIME)
   result.buyEndTime = toTimeText(strategyForm.value.buyEndTime, DEFAULT_BUY_END_TIME)
+  result.strictFilters = strategyForm.value.strictFilters === true
+  result.sortByLowRatioAsc = strategyForm.value.sortByLowRatioAsc === true
+  result.requireAboveOpen = strategyForm.value.requireAboveOpen === true
+  result.requireAboveVwap = strategyForm.value.requireAboveVwap === true
+  result.requireHolderShrink = strategyForm.value.requireHolderShrink === true
+  result.affordableOnly = strategyForm.value.affordableOnly === true
+  result.openTurnoverStart = toTimeText(
+    strategyForm.value.openTurnoverStart,
+    DEFAULT_OPEN_TURNOVER_START
+  )
+  result.openTurnoverEnd = toTimeText(
+    strategyForm.value.openTurnoverEnd,
+    DEFAULT_OPEN_TURNOVER_END
+  )
   return result
 }
 
@@ -4019,6 +4264,15 @@ onBeforeUnmount(() => {
   font-size: var(--t-xs);
   line-height: 1.7;
   color: var(--c-accent);
+}
+
+/* ---------- P9：严格过滤（硬条件） ---------- */
+.strict__checks {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--c-border);
 }
 
 /* ---------- P6：质量因子 ---------- */

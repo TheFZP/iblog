@@ -113,6 +113,41 @@ public class PaperStrategyParams {
     /** 自动买入时间窗终点（HH:mm，含） */
     private String buyEndTime = "15:00";
 
+    /** 严格硬过滤总开关：下列硬条件（阈值 >0 或开关打开的那几条）不满足就直接剔除，不参与打分 */
+    private boolean strictFilters = false;
+    /** 现价 / 一年内最低价 的上限（>0 时生效，越小越接近底部） */
+    private double lowRatioMax = 0;
+    /** 候选按「现价 / 一年内最低价」升序排列（替代默认按得分降序） */
+    private boolean sortByLowRatioAsc = false;
+    /** 早盘自由流通换手率下限（%）：[openTurnoverStart, openTurnoverEnd] 成交量 ÷ 自由流通股 × 100 */
+    private double openTurnoverMinPct = 0;
+    /** 早盘换手率统计窗口起点（HH:mm，含） */
+    private String openTurnoverStart = "09:25";
+    /** 早盘换手率统计窗口终点（HH:mm，含） */
+    private String openTurnoverEnd = "09:40";
+    /** 全天实际换手率下限（%）：成交量 ÷ 自由流通股 × 100；0 表示不限 */
+    private double realTurnoverMinPct = 0;
+    /** 现价必须高于今日开盘价 */
+    private boolean requireAboveOpen = false;
+    /** 现价必须高于今日分时均价 */
+    private boolean requireAboveVwap = false;
+    /** 量比硬下限（0 表示不限） */
+    private double hardVolumeRatioMin = 0;
+    /** 5 日均价 / 20 日均价 硬下限（0 表示不限，>1 表示短期均线在长期之上） */
+    private double ma5OverMa20Min = 0;
+    /** 5 日均量 / 20 日均量 硬下限（0 表示不限，>1 表示近期放量） */
+    private double vol5OverVol20Min = 0;
+    /** 总市值下限（亿元；0 表示不限） */
+    private double totalCapMinYi = 0;
+    /** 近 N 个交易日内不得出现涨停（0 表示不限） */
+    private int noLimitUpWithinDays = 0;
+    /** 股东户数较上一期减少（筹码集中度变小/集中） */
+    private boolean requireHolderShrink = false;
+    /** 盈利要求：0=不限；1=最近报告期盈利；2=二季报或年报盈利；3=二季报、二季报预告或年报盈利 */
+    private int profitRequire = 0;
+    /** 只保留当前可用资金买得起的标的（按各板最小申报单位估算一手成本） */
+    private boolean affordableOnly = false;
+
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     public static PaperStrategyParams parse(ObjectMapper mapper, String json) {
@@ -168,6 +203,24 @@ public class PaperStrategyParams {
             params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);
             params.buyEndTime = timeText(node, "buyEndTime", params.buyEndTime);
+
+            params.strictFilters = bool(node, "strictFilters", params.strictFilters);
+            params.lowRatioMax = number(node, "lowRatioMax", params.lowRatioMax, 0, 100);
+            params.sortByLowRatioAsc = bool(node, "sortByLowRatioAsc", params.sortByLowRatioAsc);
+            params.openTurnoverMinPct = number(node, "openTurnoverMinPct", params.openTurnoverMinPct, 0, 100);
+            params.openTurnoverStart = timeText(node, "openTurnoverStart", params.openTurnoverStart);
+            params.openTurnoverEnd = timeText(node, "openTurnoverEnd", params.openTurnoverEnd);
+            params.realTurnoverMinPct = number(node, "realTurnoverMinPct", params.realTurnoverMinPct, 0, 100);
+            params.requireAboveOpen = bool(node, "requireAboveOpen", params.requireAboveOpen);
+            params.requireAboveVwap = bool(node, "requireAboveVwap", params.requireAboveVwap);
+            params.hardVolumeRatioMin = number(node, "hardVolumeRatioMin", params.hardVolumeRatioMin, 0, 100);
+            params.ma5OverMa20Min = number(node, "ma5OverMa20Min", params.ma5OverMa20Min, 0, 100);
+            params.vol5OverVol20Min = number(node, "vol5OverVol20Min", params.vol5OverVol20Min, 0, 100);
+            params.totalCapMinYi = number(node, "totalCapMinYi", params.totalCapMinYi, 0, 100000);
+            params.noLimitUpWithinDays = integer(node, "noLimitUpWithinDays", params.noLimitUpWithinDays, 0, 120);
+            params.requireHolderShrink = bool(node, "requireHolderShrink", params.requireHolderShrink);
+            params.profitRequire = integer(node, "profitRequire", params.profitRequire, 0, 3);
+            params.affordableOnly = bool(node, "affordableOnly", params.affordableOnly);
         } catch (Exception ignored) {
             // 脏 JSON 用默认值
         }
@@ -205,6 +258,24 @@ public class PaperStrategyParams {
             }
             LocalTime now = at.toLocalTime();
             return !now.isBefore(start) && !now.isAfter(end);
+        } catch (RuntimeException ex) {
+            return true;
+        }
+    }
+
+    /** 分时时间点（HH:mm）是否落在早盘换手率统计窗口内；窗口非法时视为全部收录。 */
+    public boolean inOpenTurnoverWindow(String hhmm) {
+        if (hhmm == null || hhmm.isBlank()) {
+            return false;
+        }
+        try {
+            LocalTime start = LocalTime.parse(openTurnoverStart, TIME_FORMAT);
+            LocalTime end = LocalTime.parse(openTurnoverEnd, TIME_FORMAT);
+            if (!start.isBefore(end)) {
+                return true;
+            }
+            LocalTime at = LocalTime.parse(hhmm.trim(), TIME_FORMAT);
+            return !at.isBefore(start) && !at.isAfter(end);
         } catch (RuntimeException ex) {
             return true;
         }

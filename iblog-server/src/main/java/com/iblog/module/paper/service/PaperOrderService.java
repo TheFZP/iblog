@@ -14,6 +14,7 @@ import com.iblog.module.paper.mapper.PaperOrderMapper;
 import com.iblog.module.paper.mapper.PaperPositionMapper;
 import com.iblog.module.paper.mapper.PaperTradeMapper;
 import com.iblog.module.paper.support.FeeCalculator;
+import com.iblog.module.paper.support.LotRule;
 import com.iblog.module.paper.support.PaperConstants;
 import com.iblog.module.paper.support.PaperNumbers;
 import com.iblog.module.paper.support.PriceLimit;
@@ -48,8 +49,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 public class PaperOrderService {
-
-    private static final BigDecimal LOT_SIZE = new BigDecimal("100");
 
     private final PaperAccountMapper accountMapper;
     private final PaperOrderMapper orderMapper;
@@ -95,8 +94,8 @@ public class PaperOrderService {
         if (quantity <= 0) {
             throw new BizException(400, "委托数量必须大于 0");
         }
-        if (BigDecimal.valueOf(quantity).remainder(LOT_SIZE).signum() != 0) {
-            throw new BizException(400, "A 股委托数量需为 100 股的整数倍");
+        if (!LotRule.isValidQuantity(code, quantity)) {
+            throw new BizException(400, LotRule.describe(code));
         }
         if (todayOrderCount(account.getId()) >= properties.getPaper().getMaxOrdersPerDay()) {
             throw new BizException(400, "今日委托笔数已达上限（" + properties.getPaper().getMaxOrdersPerDay() + " 笔）");

@@ -51,6 +51,13 @@ public class StockQuote {
      */
     private double floatMarketCap;
 
+    /**
+     * 总市值（亿元，腾讯字段 [45]）。
+     *
+     * <p>「市值 > 50 亿」这类条件要的是总市值而不是流通市值（银行、国企两者差一个量级）。</p>
+     */
+    private double totalMarketCap;
+
     /** 市盈率 */
     private double pe;
 

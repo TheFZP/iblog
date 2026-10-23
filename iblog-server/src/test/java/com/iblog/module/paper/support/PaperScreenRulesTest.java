@@ -253,6 +253,92 @@ class PaperScreenRulesTest {
         return bar;
     }
 
+    // ==================== 一年最低价比 / 均量比 / 早盘窗口量 ====================
+
+    @Test
+    void lowRatioUsesLowestLowWithinLookback() {
+        // 一年内最低 5.00，现价 10.00 → 比值 2.0
+        List<KlineItem> bars = new ArrayList<>();
+        for (int i = 0; i < 241; i++) {
+            bars.add(barLow(10.0, 10.0, 10.0));
+        }
+        bars.add(barLow(10.0, 5.0, 10.0)); // 最后一根带一年低点 5.00
+        assertEquals(2.0, PaperScreenRules.lowRatio(bars, PaperScreenRules.ONE_YEAR_BARS), 1e-9);
+
+        // 低点落在窗口之外时不算：250 根里只有第 1 根带 5.00，一年窗口只覆盖最后 242 根
+        List<KlineItem> outside = new ArrayList<>();
+        outside.add(barLow(10.0, 5.0, 10.0));
+        for (int i = 0; i < 249; i++) {
+            outside.add(barLow(10.0, 10.0, 10.0));
+        }
+        assertEquals(1.0, PaperScreenRules.lowRatio(outside, PaperScreenRules.ONE_YEAR_BARS), 1e-9);
+
+        // 数据不足 / 空 / 无最低价 → NaN
+        assertTrue(Double.isNaN(PaperScreenRules.lowRatio(List.of(), PaperScreenRules.ONE_YEAR_BARS)));
+        assertTrue(Double.isNaN(PaperScreenRules.lowRatio(null, PaperScreenRules.ONE_YEAR_BARS)));
+        assertTrue(Double.isNaN(PaperScreenRules.lowRatio(List.of(barLow(0, 0, 10.0)),
+                PaperScreenRules.ONE_YEAR_BARS)));
+    }
+
+    @Test
+    void volumeTrendRatioComparesShortAndLongAverages() {
+        // 前 20 根量 1000，最后 5 根量 2000 → 5日均 2000 / 20日均 1250 = 1.6
+        List<KlineItem> bars = new ArrayList<>();
+        for (int i = 0; i < 15; i++) {
+            bars.add(barVol(10.0, 1000));
+        }
+        for (int i = 0; i < 5; i++) {
+            bars.add(barVol(10.0, 2000));
+        }
+        assertEquals(1.6, PaperScreenRules.volumeTrendRatio(bars, 5, 20), 1e-9);
+        // 均量持平 → 1.0
+        List<KlineItem> flat = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            flat.add(barVol(10.0, 1000));
+        }
+        assertEquals(1.0, PaperScreenRules.volumeTrendRatio(flat, 5, 20), 1e-9);
+        // 数据不足 / 零量 → NaN
+        assertTrue(Double.isNaN(PaperScreenRules.volumeTrendRatio(flat.subList(0, 10), 5, 20)));
+        assertTrue(Double.isNaN(PaperScreenRules.volumeTrendRatio(null, 5, 20)));
+    }
+
+    @Test
+    void windowVolumeSumsOnlyMinutesInsideWindow() {
+        List<IntradayItem> items = List.of(
+                intradayItem("09:30", 100),
+                intradayItem("09:35", 200),
+                intradayItem("09:40", 300),
+                intradayItem("09:41", 400),
+                intradayItem("10:00", 500));
+        // 闭区间：09:30 / 09:35 / 09:40 合计 600，09:41 起不算
+        assertEquals(600, PaperScreenRules.windowVolume(items, "09:25", "09:40"), 1e-9);
+        // 起点正好是 09:40：09:40 / 09:41 / 10:00 三根都在窗口内
+        assertEquals(1200, PaperScreenRules.windowVolume(items, "09:40", "10:00"), 1e-9);
+        // 倒置窗口 / 空数据返回 0
+        assertEquals(0, PaperScreenRules.windowVolume(items, "10:00", "09:30"), 1e-9);
+        assertEquals(0, PaperScreenRules.windowVolume(List.of(), "09:25", "09:40"), 1e-9);
+        assertEquals(0, PaperScreenRules.windowVolume(null, "09:25", "09:40"), 1e-9);
+    }
+
+    private static IntradayItem intradayItem(String time, double volume) {
+        IntradayItem item = new IntradayItem();
+        item.setTime(time);
+        item.setVolume(volume);
+        item.setPrice(10.0);
+        item.setAvgPrice(10.0);
+        return item;
+    }
+
+    private static KlineItem barLow(double high, double low, double close) {
+        KlineItem bar = new KlineItem();
+        bar.setOpen(close);
+        bar.setHigh(high);
+        bar.setLow(low);
+        bar.setClose(close);
+        bar.setVolume(1000);
+        return bar;
+    }
+
     private static KlineItem barVol(double close, double volume) {
         KlineItem bar = bar(close, close, close);
         bar.setVolume(volume);

@@ -10,6 +10,7 @@ import com.iblog.module.paper.entity.PaperSignal;
 import com.iblog.module.paper.entity.PaperStrategy;
 import com.iblog.module.paper.mapper.PaperAccountMapper;
 import com.iblog.module.paper.mapper.PaperSignalMapper;
+import com.iblog.module.paper.support.LotRule;
 import com.iblog.module.paper.support.PaperConstants;
 import com.iblog.module.paper.support.PaperNumbers;
 import com.iblog.module.paper.support.PaperStrategyParams;
@@ -210,8 +211,11 @@ public class PaperAutoTrader {
             // 留 2% 余量给滑点和费用，避免最后一分钱不够导致下单被拒
             BigDecimal budget = totalAsset.multiply(BigDecimal.valueOf(maxPositionPct)).min(room)
                     .multiply(new BigDecimal("0.98"));
-            int quantity = budget.divide(price, 0, RoundingMode.DOWN).intValue() / 100 * 100;
-            if (quantity < 100) {
+            // 各板最小申报单位不同（科创板 200 股起、可 1 股递增），必须按板块取整，
+            // 否则小资金账户算出 150 股这种数量会被下单校验直接拒掉
+            int quantity = LotRule.roundDown(candidate.getCode(),
+                    budget.divide(price, 0, RoundingMode.DOWN).intValue());
+            if (quantity <= 0) {
                 continue;
             }
             PaperOrderRequest request = new PaperOrderRequest();

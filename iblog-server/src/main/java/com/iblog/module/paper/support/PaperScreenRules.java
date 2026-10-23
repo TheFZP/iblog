@@ -147,6 +147,121 @@ public final class PaperScreenRules {
     public static final int TWO_YEAR_BARS = 486;
 
     /**
+     * 硬过滤要用的一组技术指标，一次算好传下去，避免调用方反复从 bars 重算。
+     *
+     * @param volumeRatio 量比（最后一日量 ÷ 前 5 日均量）
+     * @param ma5         5 日均价
+     * @param ma20        20 日均价
+     * @param volumeTrend 5 日均量 ÷ 20 日均量
+     */
+    public record Technicals(double volumeRatio, double ma5, double ma20, double volumeTrend) {
+    }
+
+    /** 一年大约 242 个交易日，用于「现价 / 一年内最低价」。 */
+    public static final int ONE_YEAR_BARS = 242;
+
+    /**
+     * 现价与近 {@code lookbackBars} 根日 K 内最低价的比值（现价 ÷ 最低价）。
+     *
+     * <p>比值越接近 1 说明离一年低点越近，用户要的「从小到大排列」就是按这个值升序。
+     * 用复权后的最低价（与现价同口径），停牌/数据不足返回 {@link Double#NaN}。</p>
+     */
+    public static double lowRatio(List<KlineItem> bars, int lookbackBars) {
+        if (bars == null || bars.isEmpty()) {
+            return Double.NaN;
+        }
+        int last = bars.size() - 1;
+        KlineItem latest = bars.get(last);
+        if (latest == null || latest.getClose() <= 0) {
+            return Double.NaN;
+        }
+        int lookback = Math.min(Math.max(lookbackBars, 20), bars.size());
+        double lowest = 0;
+        for (int i = last - lookback + 1; i <= last; i++) {
+            if (i < 0) {
+                continue;
+            }
+            KlineItem bar = bars.get(i);
+            if (bar == null || bar.getLow() <= 0) {
+                continue;
+            }
+            lowest = lowest <= 0 ? bar.getLow() : Math.min(lowest, bar.getLow());
+        }
+        if (lowest <= 0) {
+            return Double.NaN;
+        }
+        return latest.getClose() / lowest;
+    }
+
+    /**
+     * 短均量 / 长均量（如 5 日均量 ÷ 20 日均量）。数据不足返回 {@link Double#NaN}。
+     */
+    public static double volumeTrendRatio(List<KlineItem> bars, int shortPeriod, int longPeriod) {
+        if (bars == null || bars.size() < Math.max(shortPeriod, longPeriod)) {
+            return Double.NaN;
+        }
+        int size = bars.size();
+        double shortSum = 0;
+        for (int i = size - shortPeriod; i < size; i++) {
+            shortSum += bars.get(i).getVolume();
+        }
+        double longSum = 0;
+        for (int i = size - longPeriod; i < size; i++) {
+            longSum += bars.get(i).getVolume();
+        }
+        if (longSum <= 0 || shortSum <= 0) {
+            return Double.NaN;
+        }
+        return (shortSum / shortPeriod) / (longSum / longPeriod);
+    }
+
+    /**
+     * 分时窗口 [start, end]（HH:mm，含两端）内的成交量之和，单位「手」。
+     *
+     * <p>用于「9:25-9:40 成交量 ÷ 自由流通股」这类早盘放量条件。
+     * 腾讯分时从 09:30 才开始给分钟点（集合竞价的量并进 09:30 那根），
+     * 所以窗口起点早于 09:30 时按 09:30 起算，不会漏掉竞价成交。</p>
+     */
+    public static double windowVolume(List<IntradayItem> items, String start, String end) {
+        if (items == null || items.isEmpty()) {
+            return 0;
+        }
+        int from = minutes(start, 9 * 60 + 25);
+        int to = minutes(end, 9 * 60 + 40);
+        if (to < from) {
+            return 0;
+        }
+        double sum = 0;
+        for (IntradayItem item : items) {
+            if (item == null || item.getVolume() <= 0) {
+                continue;
+            }
+            int t = minutes(item.getTime(), -1);
+            if (t < 0) {
+                continue;
+            }
+            if (t >= from && t <= to) {
+                sum += item.getVolume();
+            }
+        }
+        return sum;
+    }
+
+    /** "09:30" → 570；解析失败返回 fallback。 */
+    private static int minutes(String hhmm, int fallback) {
+        if (hhmm == null || hhmm.length() != 5 || hhmm.charAt(2) != ':') {
+            return fallback;
+        }
+        try {
+            int h = Integer.parseInt(hhmm.substring(0, 2));
+            int m = Integer.parseInt(hhmm.substring(3, 5));
+            return h * 60 + m;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /**
      * 最近 {@code withinDays} 个交易日内，是否有一天的最高价超过此前
      * {@code lookbackBars} 根日 K 的最高价（即创出阶段新高）。
      *

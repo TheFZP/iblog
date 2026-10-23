@@ -426,6 +426,40 @@ export interface PaperStrategyParams {
   shrinkVolumeScore?: number
   /** 新高与量能·缩量阈值（0.1–1）：当日成交量 ≤ 前一日成交量 × 该系数 */
   shrinkVolumeMaxRatio?: number
+  /** 严格过滤开关：打开后下列硬条件不满足直接剔除（不再只影响打分） */
+  strictFilters?: boolean
+  /** 硬条件·现价/一年内最低价比上限（0=不限）：如 1.3 表示现价不超过一年低点的 1.3 倍 */
+  lowRatioMax?: number
+  /** 硬条件·候选按「现价/一年内最低价」从小到大排序 */
+  sortByLowRatioAsc?: boolean
+  /** 硬条件·早盘自由流通换手率下限（%）：窗口内成交量 ÷ 自由流通股 × 100 */
+  openTurnoverMinPct?: number
+  /** 早盘量窗口起点（HH:mm） */
+  openTurnoverStart?: string
+  /** 早盘量窗口终点（HH:mm，含） */
+  openTurnoverEnd?: string
+  /** 硬条件·全天实际换手率下限（%）：成交量 ÷ 自由流通股 × 100 */
+  realTurnoverMinPct?: number
+  /** 硬条件·现价必须高于今开 */
+  requireAboveOpen?: boolean
+  /** 硬条件·现价必须高于分时均价 */
+  requireAboveVwap?: boolean
+  /** 硬条件·量比下限（硬） */
+  hardVolumeRatioMin?: number
+  /** 硬条件·5 日均价 / 20 日均价 下限 */
+  ma5OverMa20Min?: number
+  /** 硬条件·5 日均量 / 20 日均量 下限 */
+  vol5OverVol20Min?: number
+  /** 硬条件·总市值下限（亿元） */
+  totalCapMinYi?: number
+  /** 硬条件·近 N 个交易日内不得涨停（0=不限） */
+  noLimitUpWithinDays?: number
+  /** 硬条件·股东户数较上一期减少（筹码集中度变小） */
+  requireHolderShrink?: boolean
+  /** 硬条件·盈利要求：0=不限 1=最新报告期盈利 2=二季报或年报盈利 3=二季报/二季报预告/年报盈利 */
+  profitRequire?: number
+  /** 硬条件·只保留当前资金买得起的标的（科创板 200 股起） */
+  affordableOnly?: boolean
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */

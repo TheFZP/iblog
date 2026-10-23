@@ -56,6 +56,21 @@ public class TencentService {
     /** 匹配 v_sh600519="..." 形式的行情行 */
     private static final Pattern QUOTE_LINE = Pattern.compile("v_([a-z0-9]+)=\"([^\"]*)\"");
 
+    /**
+     * ifzq 系列接口的域名候选，按顺序回退。
+     *
+     * <p><b>为什么需要回退</b>：{@code web.ifzq.gtimg.cn} 在部分出口 IP 上会被腾讯 WAF
+     * 直接拦成 <b>HTTP 501</b>（响应体是 {@code waf.tencent.com/501page.html} 跳转脚本，
+     * 2026-10-23 实测本机整天 100% 命中，换 Referer/UA 都无效），而同样的路径换到
+     * {@code ifzq.gtimg.cn} 或 {@code proxy.finance.qq.com/ifzqgtimg} 就 200。
+     * 三个域名是同源镜像、响应结构完全一致，所以先试可用的、再退回老域名。</p>
+     */
+    private static final String[] IFZQ_HOSTS = {
+            "https://ifzq.gtimg.cn",
+            "https://proxy.finance.qq.com/ifzqgtimg",
+            "https://web.ifzq.gtimg.cn"
+    };
+
     // ==================== 实时行情 ====================
 
     /**
@@ -86,8 +101,7 @@ public class TencentService {
      */
     private StockQuote fetchHkQuote(String code) {
         String tCode = StockCode.toTencent(code);
-        String url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + tCode;
-        JsonNode root = getJson(url, StockHttpClient.REFERER_IFZQ);
+        JsonNode root = getIfzqJson("/appstock/app/minute/query?code=" + tCode);
 
         JsonNode arr = root.path("data").path(tCode).path("qt").path(tCode);
         if (!arr.isArray() || arr.size() < 60) {
@@ -141,8 +155,9 @@ public class TencentService {
         q.setPe(num(at(f, 39)));
         // 振幅是 [43]；[46] 是市净率 —— 这两个极易混淆
         q.setAmplitude(num(at(f, 43)));
-        // [44] 流通市值、[45] 总市值，单位都是亿元；选股按流通市值筛选要用 [44]
+        // [44] 流通市值、[45] 总市值，单位都是亿元；选股按流通市值筛选要用 [44]、按市值下限要用 [45]
         q.setFloatMarketCap(num(at(f, 44)));
+        q.setTotalMarketCap(num(at(f, 45)));
         q.setMarket(StockCode.marketOf(code));
         q.setCurrency("¥");
         q.setQuoteTime(fixQuoteTime(at(f, 30)));
@@ -353,15 +368,15 @@ public class TencentService {
         }
 
         String tCode = StockCode.toTencent(code);
-        String url;
+        String path;
         String dataKey;
         if (isMinute) {
             // 分钟 K：mkline，单次约 320 根（5 分≈6.7 交易日 / 60 分≈2.5 个月）
-            url = "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=" + tCode + "," + p + ",,320";
+            path = "/appstock/app/kline/mkline?param=" + tCode + "," + p + ",,320";
             dataKey = p;
         } else {
             // 日/周/月：fqkline 前复权，根数可配（上限 640）
-            url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" + tCode + "," + p + ",,,"
+            path = "/appstock/app/fqkline/get?param=" + tCode + "," + p + ",,,"
                     + Math.min(Math.max(limit, 1), 640) + ",qfq";
             dataKey = switch (p) {
                 case "week" -> "qfqweek";
@@ -370,7 +385,7 @@ public class TencentService {
             };
         }
 
-        JsonNode root = getJson(url, StockHttpClient.REFERER_IFZQ);
+        JsonNode root = getIfzqJson(path);
         JsonNode node = root.path("data").path(tCode);
 
         JsonNode klines = node.path(dataKey);
@@ -420,8 +435,7 @@ public class TencentService {
     public IntradayData fetchIntraday(String rawCode) {
         String code = StockCode.normalize(rawCode);
         String tCode = StockCode.toTencent(code);
-        String url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + tCode;
-        JsonNode root = getJson(url, StockHttpClient.REFERER_IFZQ);
+        JsonNode root = getIfzqJson("/appstock/app/minute/query?code=" + tCode);
 
         JsonNode stockData = root.path("data").path(tCode);
         if (stockData.isMissingNode()) {
@@ -552,6 +566,26 @@ public class TencentService {
         } catch (Exception e) {
             throw new StockDataException("解析 JSON 失败：" + e.getMessage());
         }
+    }
+
+    /**
+     * 按 {@link #IFZQ_HOSTS} 顺序请求 ifzq 系列接口，前一个域名失败自动换下一个。
+     *
+     * <p>只有「全部域名都失败」才抛最后一次的异常，避免 WAF 单点把整条链路打死。</p>
+     *
+     * @param path 以 {@code /} 开头的路径 + 查询串，例如 {@code /appstock/app/minute/query?code=sh600519}
+     */
+    private JsonNode getIfzqJson(String path) {
+        StockDataException last = null;
+        for (String host : IFZQ_HOSTS) {
+            try {
+                return getJson(host + path, StockHttpClient.REFERER_IFZQ);
+            } catch (StockDataException e) {
+                last = e;
+                log.debug("ifzq 域名不可用 host={} path={} msg={}", host, path, e.getMessage());
+            }
+        }
+        throw last == null ? new StockDataException("分时/K线数据源全部不可用") : last;
     }
 
     /**

@@ -56,6 +56,68 @@ class PaperStrategyParamsTest {
     }
 
     @Test
+    void strictFilterFieldsParseAndClamp() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"strictFilters\":true,\"lowRatioMax\":1.15,\"sortByLowRatioAsc\":true,"
+                        + "\"openTurnoverMinPct\":2,\"openTurnoverStart\":\"09:25\",\"openTurnoverEnd\":\"09:40\","
+                        + "\"realTurnoverMinPct\":2,\"requireAboveOpen\":true,\"requireAboveVwap\":true,"
+                        + "\"hardVolumeRatioMin\":1,\"ma5OverMa20Min\":1,\"vol5OverVol20Min\":1,"
+                        + "\"totalCapMinYi\":50,\"noLimitUpWithinDays\":3,"
+                        + "\"requireHolderShrink\":true,\"profitRequire\":3,\"affordableOnly\":true}");
+        assertTrue(params.isStrictFilters());
+        assertEquals(1.15, params.getLowRatioMax(), 1e-9);
+        assertTrue(params.isSortByLowRatioAsc());
+        assertEquals(2, params.getOpenTurnoverMinPct(), 1e-9);
+        assertEquals("09:25", params.getOpenTurnoverStart());
+        assertEquals("09:40", params.getOpenTurnoverEnd());
+        assertEquals(2, params.getRealTurnoverMinPct(), 1e-9);
+        assertTrue(params.isRequireAboveOpen());
+        assertTrue(params.isRequireAboveVwap());
+        assertEquals(1, params.getHardVolumeRatioMin(), 1e-9);
+        assertEquals(1, params.getMa5OverMa20Min(), 1e-9);
+        assertEquals(1, params.getVol5OverVol20Min(), 1e-9);
+        assertEquals(50, params.getTotalCapMinYi(), 1e-9);
+        assertEquals(3, params.getNoLimitUpWithinDays());
+        assertTrue(params.isRequireHolderShrink());
+        assertEquals(3, params.getProfitRequire());
+        assertTrue(params.isAffordableOnly());
+
+        // 越界值被钳制：profitRequire 只有 0~3，noLimitUpWithinDays 不能为负
+        PaperStrategyParams clamped = PaperStrategyParams.parse(mapper,
+                "{\"profitRequire\":9,\"noLimitUpWithinDays\":-5,\"lowRatioMax\":-1}");
+        assertEquals(3, clamped.getProfitRequire());
+        assertEquals(0, clamped.getNoLimitUpWithinDays());
+        assertEquals(0, clamped.getLowRatioMax(), 1e-9);
+    }
+
+    @Test
+    void strictFiltersOffByDefault() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper, "{}");
+        assertFalse(params.isStrictFilters());
+        assertFalse(params.isSortByLowRatioAsc());
+        assertFalse(params.isRequireAboveOpen());
+        assertFalse(params.isRequireAboveVwap());
+        assertFalse(params.isRequireHolderShrink());
+        assertFalse(params.isAffordableOnly());
+        assertEquals(0, params.getProfitRequire());
+        assertEquals(0, params.getLowRatioMax(), 1e-9);
+        assertEquals("09:25", params.getOpenTurnoverStart());
+        assertEquals("09:40", params.getOpenTurnoverEnd());
+    }
+
+    @Test
+    void openTurnoverWindowMatchesOnlyConfiguredMinutes() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"openTurnoverStart\":\"09:25\",\"openTurnoverEnd\":\"09:40\"}");
+        assertTrue(params.inOpenTurnoverWindow("09:25"));
+        assertTrue(params.inOpenTurnoverWindow("09:33"));
+        assertTrue(params.inOpenTurnoverWindow("09:40"));
+        assertFalse(params.inOpenTurnoverWindow("09:24"));
+        assertFalse(params.inOpenTurnoverWindow("09:41"));
+        assertFalse(params.inOpenTurnoverWindow(""));
+    }
+
+    @Test
     void jsonRoundTripKeepsNewFields() throws Exception {
         PaperStrategyParams params = PaperStrategyParams.parse(mapper,
                 "{\"sellAtOpen\":true,\"buyStartTime\":\"14:30\",\"buyEndTime\":\"15:00\"}");
