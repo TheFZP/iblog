@@ -615,6 +615,82 @@
                   </div>
                 </div>
                 <div class="advanced__group">
+                  <h3 class="advanced__title">新高与量能</h3>
+                  <div class="advanced__grid">
+                    <label class="field">
+                      <span class="field__label">两年新高</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.newHighScore"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('newHighScore').min"
+                          :max="ruleOf('newHighScore').max"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">
+                        近 N 个交易日内最高价超过前两年（约 486 个交易日）最高价时加分
+                      </span>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">新高回看窗口</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.newHighWithinDays"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('newHighWithinDays').min"
+                          :max="ruleOf('newHighWithinDays').max"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">个交易日</span>
+                      </span>
+                      <span class="field__hint">
+                        「近 N 个交易日」的 N：越小越强调刚创新高，默认 5
+                      </span>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">缩量上涨</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.shrinkVolumeScore"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('shrinkVolumeScore').min"
+                          :max="ruleOf('shrinkVolumeScore').max"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">
+                        当日收涨且较前一日缩量时加分，不是硬性过滤
+                      </span>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">缩量阈值</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.shrinkVolumeMaxRatio"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf('shrinkVolumeMaxRatio').min"
+                          :max="ruleOf('shrinkVolumeMaxRatio').max"
+                          step="0.01"
+                          :disabled="!strategy"
+                        />
+                      </span>
+                      <span class="field__hint">
+                        当日成交量 ≤ 前一日成交量 × 该系数（0.1–1，默认 0.9）
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <div class="advanced__group">
                   <h3 class="advanced__title">交易时段</h3>
                   <label class="trade-window__check">
                     <input
@@ -1534,7 +1610,11 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   limitUpScore: 10,
   limitUpWithinDays: 20,
   firstBoardScore: 0,
-  boardHeightMax: 0
+  boardHeightMax: 0,
+  newHighScore: 0,
+  newHighWithinDays: 5,
+  shrinkVolumeScore: 0,
+  shrinkVolumeMaxRatio: 0.9
 }
 
 interface NumberRule {
@@ -1579,7 +1659,11 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   limitUpScore: { min: 0, max: 100, integer: true },
   limitUpWithinDays: { min: 1, max: 120, integer: true },
   firstBoardScore: { min: 0, max: 100, integer: true },
-  boardHeightMax: { min: 0, max: 10, integer: true }
+  boardHeightMax: { min: 0, max: 10, integer: true },
+  newHighScore: { min: 0, max: 100, integer: true },
+  newHighWithinDays: { min: 1, max: 10, integer: true },
+  shrinkVolumeScore: { min: 0, max: 100, integer: true },
+  shrinkVolumeMaxRatio: { min: 0.1, max: 1, integer: false }
 }
 
 const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
@@ -1649,11 +1733,17 @@ const TRADE_WINDOW_FIELD_COUNT = 3
 const QUALITY_FIELD_COUNT = 10
 /** 涨停结构区固定 2 项：首板加分 + 连板高度上限 */
 const BOARD_FIELD_COUNT = 2
+/** 新高与量能区固定 4 项：两年新高权重 + 回看窗口 + 缩量上涨权重 + 缩量阈值 */
+const NEW_HIGH_FIELD_COUNT = 4
 /** 高级规则表单可编辑的参数总数（模板保存提示用） */
 const PARAM_FIELD_COUNT =
-  ADVANCED_FIELDS.length + TRADE_WINDOW_FIELD_COUNT + QUALITY_FIELD_COUNT + BOARD_FIELD_COUNT
+  ADVANCED_FIELDS.length +
+  TRADE_WINDOW_FIELD_COUNT +
+  QUALITY_FIELD_COUNT +
+  BOARD_FIELD_COUNT +
+  NEW_HIGH_FIELD_COUNT
 
-/** 参与「权重合计」提示的因子权重字段 */
+/** 参与「权重合计」提示的因子权重字段（用户借此判断分数上限，需与实际加分项保持一致） */
 const WEIGHT_KEYS: NumericParamKey[] = [
   'maTrendScore',
   'ma20Score',
@@ -1667,7 +1757,10 @@ const WEIGHT_KEYS: NumericParamKey[] = [
   'turnoverScore',
   'floatCapScore',
   'vwapScore',
-  'limitUpScore'
+  'limitUpScore',
+  'newHighScore',
+  'shrinkVolumeScore',
+  'firstBoardScore'
 ]
 
 const ORDER_FILTERS: { value: PaperOrderStatus | ''; label: string }[] = [

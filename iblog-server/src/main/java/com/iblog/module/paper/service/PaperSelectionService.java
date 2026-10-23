@@ -58,6 +58,14 @@ public class PaperSelectionService {
      */
     private static final int MAX_VWAP_CHECKS = 15;
 
+    /**
+     * 每次选股最多拉多少只的两年深历史（约 500 根日 K）。
+     *
+     * <p>深历史不能走 120 根的常规缓存，单只回源更慢；只对「靠新高加分刚好能越线」
+     * 的候选按扫描顺序拉前 10 只，和分时校验同样的思路。</p>
+     */
+    private static final int MAX_DEEP_CHECKS = 10;
+
     private final HotListService hotListService;
     private final KlineCacheService klineCacheService;
     private final EastmoneyService eastmoneyService;
@@ -88,6 +96,7 @@ public class PaperSelectionService {
         Set<String> seen = new HashSet<>();
         int scanned = 0;
         int[] vwapBudget = {MAX_VWAP_CHECKS};
+        int[] deepBudget = {MAX_DEEP_CHECKS};
         for (HotStockItem item : hot) {
             if (scanned >= params.getUniverseSize()) {
                 break;
@@ -102,7 +111,7 @@ public class PaperSelectionService {
             }
             scanned++;
             try {
-                PaperSignal signal = evaluate(strategy, params, code, name, item, vwapBudget);
+                PaperSignal signal = evaluate(strategy, params, code, name, item, vwapBudget, deepBudget);
                 if (signal != null) {
                     selected.add(signal);
                 }
@@ -171,7 +180,7 @@ public class PaperSelectionService {
     // ---------- 打分 ----------
 
     private PaperSignal evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
-                                 HotStockItem hot, int[] vwapBudget) {
+                                 HotStockItem hot, int[] vwapBudget, int[] deepBudget) {
         List<KlineItem> bars = klineCacheService.load(code, MIN_BARS);
         if (bars.size() < 30) {
             return null;
@@ -275,6 +284,31 @@ public class PaperSelectionService {
             score += params.getFirstBoardScore();
             if (params.getBoardHeightMax() <= 0) {
                 reasons.add("昨日首板");
+            }
+        }
+        // 缩量上涨：日 K 就能判断，不额外请求
+        if (params.getShrinkVolumeScore() > 0
+                && PaperScreenRules.shrinkVolumeRise(bars, params.getShrinkVolumeMaxRatio())) {
+            score += params.getShrinkVolumeScore();
+            reasons.add("缩量上涨");
+        }
+        // 两年新高：需要约 500 根日 K，按预算只对可能越线的候选拉深历史
+        if (params.getNewHighScore() > 0
+                && score + params.getNewHighScore() >= params.getMinScore()
+                && deepBudget != null && deepBudget[0] > 0) {
+            deepBudget[0]--;
+            try {
+                List<KlineItem> deep = klineCacheService.deepLoad(code,
+                        PaperScreenRules.TWO_YEAR_BARS + params.getNewHighWithinDays());
+                // 深历史拉取失败时会退回到 120 根常规缓存，这时不能冒充「两年新高」
+                boolean enough = deep != null && deep.size() >= 250;
+                if (enough && PaperScreenRules.newHighWithin(deep, params.getNewHighWithinDays(),
+                        PaperScreenRules.TWO_YEAR_BARS)) {
+                    score += params.getNewHighScore();
+                    reasons.add("近 " + params.getNewHighWithinDays() + " 日创两年新高");
+                }
+            } catch (RuntimeException ex) {
+                log.debug("选股：深历史获取失败 code={} msg={}", code, ex.getMessage());
             }
         }
         // 分时均价线：放最后校验，只对「靠这一项刚好能越线」的票拉分时，避免拖慢整轮刷新

@@ -328,11 +328,21 @@ public class TencentService {
     // ==================== K 线 ====================
 
     /**
-     * 获取 K 线。
+     * 获取 K 线（日/周/月默认 120 根）。
      *
      * @param period day / week / month / m5 / m15 / m30 / m60
      */
     public List<KlineItem> fetchKline(String rawCode, String period) {
+        return fetchKline(rawCode, period, 120);
+    }
+
+    /**
+     * 获取 K 线，日/周/月可指定根数（上限 640）。
+     *
+     * <p>选股要判断「近两年新高」，120 根不够，需要一次拿回约 500 根；
+     * 腾讯 fqkline 的 param 第 5 段就是根数。分钟 K 固定 320 根，忽略该参数。</p>
+     */
+    public List<KlineItem> fetchKline(String rawCode, String period, int limit) {
         String code = StockCode.normalize(rawCode);
         String p = period == null ? "day" : period.trim();
         boolean isMinute = "m5".equals(p) || "m15".equals(p) || "m30".equals(p) || "m60".equals(p);
@@ -350,8 +360,9 @@ public class TencentService {
             url = "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=" + tCode + "," + p + ",,320";
             dataKey = p;
         } else {
-            // 日/周/月：fqkline 前复权，120 根
-            url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" + tCode + "," + p + ",,,120,qfq";
+            // 日/周/月：fqkline 前复权，根数可配（上限 640）
+            url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=" + tCode + "," + p + ",,,"
+                    + Math.min(Math.max(limit, 1), 640) + ",qfq";
             dataKey = switch (p) {
                 case "week" -> "qfqweek";
                 case "month" -> "qfqmonth";

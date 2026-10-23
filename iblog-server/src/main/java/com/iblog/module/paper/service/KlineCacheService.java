@@ -34,12 +34,24 @@ public class KlineCacheService {
     private static final int MAX_BARS = 120;
     private static final long REFETCH_INTERVAL_MS = 60_000L;
 
+    /** 两年 ≈ 486 个交易日；腾讯 fqkline 上限 640 根，这里取 500 留出余量。 */
+    private static final int DEEP_BARS = 500;
+    /** 深历史在内存里缓存 6 小时，避免每轮选股都为同一批票重复拉 500 根。 */
+    private static final long DEEP_TTL_MS = 6 * 60 * 60 * 1000L;
+    private static final int DEEP_CACHE_MAX = 600;
+
     private final StockKlineMapper klineMapper;
     private final TencentService tencentService;
     private final TradeCalendar calendar;
 
     /** 单只股票的最近回源时间，避免同一次选股里反复打上游。 */
     private final Map<String, Long> lastFetchAt = new ConcurrentHashMap<>();
+
+    /** 两年深历史（只进内存，不落库）：每日选股复用，隔日或 6 小时后重新拉。 */
+    private final Map<String, DeepBars> deepCache = new ConcurrentHashMap<>();
+
+    private record DeepBars(List<KlineItem> bars, long fetchedAt) {
+    }
 
     /** 读取至少 minBars 根日 K（升序）。 */
     public List<KlineItem> load(String rawCode, int minBars) {
@@ -72,8 +84,57 @@ public class KlineCacheService {
         return cached.stream().map(this::toItem).toList();
     }
 
-    private List<StockKline> select(String code) {
-        return klineMapper.selectList(Wrappers.<StockKline>lambdaQuery()
+    /**
+     * 读取两年深历史（约 500 根日 K），用于「近 N 日创两年新高」判断。
+     *
+     * <p>不落库：stock_kline 只缓存最近 120 根给常规打分/回测用，
+     * 深历史只在选股时短期复用；拉取失败退回普通缓存，让调用方拿到多少算多少
+     * （数据不足时该因子不生效，不会误杀候选）。</p>
+     */
+    public List<KlineItem> deepLoad(String rawCode, int minBars) {
+        String code = StockCode.normalize(rawCode);
+        if (code.isEmpty()) {
+            return List.of();
+        }
+        long now = System.currentTimeMillis();
+        int need = Math.min(Math.max(minBars, MAX_BARS), DEEP_BARS);
+        DeepBars hit = deepCache.get(code);
+        if (hit != null && hit.bars().size() >= need
+                && now - hit.fetchedAt() < DEEP_TTL_MS && !isStaleItems(hit.bars())) {
+            return hit.bars();
+        }
+        try {
+            List<KlineItem> fetched = tencentService.fetchKline(code, PERIOD_DAY, DEEP_BARS);
+            if (fetched != null && !fetched.isEmpty()) {
+                List<KlineItem> sorted = new ArrayList<>(fetched);
+                sorted.sort(Comparator.comparing(KlineItem::getDate));
+                if (deepCache.size() >= DEEP_CACHE_MAX) {
+                    deepCache.clear();
+                }
+                deepCache.put(code, new DeepBars(sorted, now));
+                return sorted;
+            }
+        } catch (RuntimeException ex) {
+            log.warn("拉取两年深K失败 code={}", code, ex);
+        }
+        if (hit != null) {
+            return hit.bars();
+        }
+        return load(code, need);
+    }
+
+    /** 深历史是否过期：交易日且最后一根不是今天 → 重新拉。 */
+    private boolean isStaleItems(List<KlineItem> bars) {
+        if (bars == null || bars.isEmpty()) {
+            return true;
+        }
+        if (!calendar.isTradingDay(calendar.today())) {
+            return false;
+        }
+        return !calendar.todayText().equals(bars.get(bars.size() - 1).getDate());
+    }
+
+    private List<StockKline> select(String code) {        return klineMapper.selectList(Wrappers.<StockKline>lambdaQuery()
                 .eq(StockKline::getCode, code)
                 .eq(StockKline::getPeriod, PERIOD_DAY)
                 .orderByAsc(StockKline::getDate));

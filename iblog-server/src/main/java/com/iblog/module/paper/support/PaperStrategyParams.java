@@ -97,6 +97,15 @@ public class PaperStrategyParams {
     /** 连板高度硬过滤：0=不限；1=仅昨日首板；N=昨日涨停且连板数不超过 N */
     private int boardHeightMax = 0;
 
+    /** 近 N 个交易日内创两年新高的得分 */
+    private int newHighScore = 0;
+    /** 新高的「近 N 个交易日」窗口 */
+    private int newHighWithinDays = 5;
+    /** 缩量上涨（收涨且较前一日缩量）的得分 */
+    private int shrinkVolumeScore = 0;
+    /** 缩量上涨：当日成交量 ≤ 前一日成交量 × 该系数（0.1~1） */
+    private double shrinkVolumeMaxRatio = 0.9;
+
     /** 次日开盘强制卖出（隔夜策略用：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈） */
     private boolean sellAtOpen = false;
     /** 自动买入时间窗起点（HH:mm，含） */
@@ -151,6 +160,10 @@ public class PaperStrategyParams {
             params.limitUpWithinDays = integer(node, "limitUpWithinDays", params.limitUpWithinDays, 1, 120);
             params.firstBoardScore = integer(node, "firstBoardScore", params.firstBoardScore, 0, 100);
             params.boardHeightMax = integer(node, "boardHeightMax", params.boardHeightMax, 0, 10);
+            params.newHighScore = integer(node, "newHighScore", params.newHighScore, 0, 100);
+            params.newHighWithinDays = integer(node, "newHighWithinDays", params.newHighWithinDays, 1, 10);
+            params.shrinkVolumeScore = integer(node, "shrinkVolumeScore", params.shrinkVolumeScore, 0, 100);
+            params.shrinkVolumeMaxRatio = number(node, "shrinkVolumeMaxRatio", params.shrinkVolumeMaxRatio, 0.1, 1);
 
             params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);

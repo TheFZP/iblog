@@ -166,6 +166,99 @@ class PaperScreenRulesTest {
         assertEquals(-1, PaperScreenRules.boardHeight(List.of(), "600000", "浦发银行"));
     }
 
+    @Test
+    void newHighWithinDetectsRecentBreakout() {
+        List<KlineItem> bars = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            bars.add(bar(10.0, 10.0, 10.0)); // 两年内高点 10.00
+        }
+        bars.add(bar(10.0, 11.2, 11.1)); // 6 天前突破
+        bars.add(bar(11.1, 11.0, 10.9));
+        bars.add(bar(10.9, 10.8, 10.7));
+        bars.add(bar(10.7, 10.6, 10.5));
+        bars.add(bar(10.5, 10.4, 10.3));
+        bars.add(bar(10.3, 10.2, 10.1));
+        // 最近 5 天没有突破前高
+        assertFalse(PaperScreenRules.newHighWithin(bars, 5, 300));
+        // 窗口放宽到 6 天，突破日进入窗口
+        assertTrue(PaperScreenRules.newHighWithin(bars, 6, 300));
+        // 数据不足 / 空值不加分
+        assertFalse(PaperScreenRules.newHighWithin(List.of(bar(10.0, 10.0, 10.0)), 5, 300));
+        assertFalse(PaperScreenRules.newHighWithin(null, 5, 300));
+    }
+
+    @Test
+    void shrinkVolumeRiseDetectsRiseOnLowerVolume() {
+        // 收涨且量缩到前一日 80%
+        assertTrue(PaperScreenRules.shrinkVolumeRise(
+                List.of(barVol(10.0, 1000), barVol(10.3, 800)), 0.9));
+        // 刚好等于阈值也算缩量
+        assertTrue(PaperScreenRules.shrinkVolumeRise(
+                List.of(barVol(10.0, 1000), barVol(10.3, 900)), 0.9));
+        // 放量上涨不算
+        assertFalse(PaperScreenRules.shrinkVolumeRise(
+                List.of(barVol(10.0, 1000), barVol(10.3, 1200)), 0.9));
+        // 缩量下跌不算
+        assertFalse(PaperScreenRules.shrinkVolumeRise(
+                List.of(barVol(10.3, 1000), barVol(10.1, 800)), 0.9));
+        // 数据不足 / 零成交量不加分
+        assertFalse(PaperScreenRules.shrinkVolumeRise(List.of(barVol(10.3, 800)), 0.9));
+        assertFalse(PaperScreenRules.shrinkVolumeRise(null, 0.9));
+    }
+
+    @Test
+    void newHighAndShrinkVolumeParamsDefaultsAndClamps() {
+        PaperStrategyParams defaults = PaperStrategyParams.parse(mapper, "{}");
+        assertEquals(0, defaults.getNewHighScore());
+        assertEquals(5, defaults.getNewHighWithinDays());
+        assertEquals(0, defaults.getShrinkVolumeScore());
+        assertEquals(0.9, defaults.getShrinkVolumeMaxRatio(), 1e-9);
+
+        PaperStrategyParams clamped = PaperStrategyParams.parse(mapper,
+                "{\"newHighScore\":500,\"newHighWithinDays\":99,"
+                        + "\"shrinkVolumeScore\":-1,\"shrinkVolumeMaxRatio\":2}");
+        assertEquals(100, clamped.getNewHighScore());
+        assertEquals(10, clamped.getNewHighWithinDays());
+        assertEquals(0, clamped.getShrinkVolumeScore());
+        assertEquals(1, clamped.getShrinkVolumeMaxRatio(), 1e-9);
+
+        String json = clamped.toJson(mapper);
+        assertTrue(json.contains("\"newHighScore\""));
+        assertTrue(json.contains("\"newHighWithinDays\""));
+        assertTrue(json.contains("\"shrinkVolumeScore\""));
+        assertTrue(json.contains("\"shrinkVolumeMaxRatio\""));
+    }
+
+    @Test
+    void shrinkVolumeRiseIgnoresPartialIntradayBar() {
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        String today = LocalDate.now(zone).toString();
+        String yesterday = LocalDate.now(zone).minusDays(1).toString();
+        String dayBefore = LocalDate.now(zone).minusDays(2).toString();
+        // 昨日缩量上涨（10.0→10.3 量 800），今日盘中 bar 量只有 50：应按昨日判断为 true
+        assertTrue(PaperScreenRules.shrinkVolumeRise(List.of(
+                barVolOn(dayBefore, 10.0, 1000),
+                barVolOn(yesterday, 10.3, 800),
+                barVolOn(today, 10.4, 50)), 0.9));
+        // 昨日放量上涨，今日盘中缩量不能算缩量上涨
+        assertFalse(PaperScreenRules.shrinkVolumeRise(List.of(
+                barVolOn(dayBefore, 10.0, 1000),
+                barVolOn(yesterday, 10.3, 1200),
+                barVolOn(today, 10.4, 50)), 0.9));
+    }
+
+    private static KlineItem barVolOn(String date, double close, double volume) {
+        KlineItem bar = barVol(close, volume);
+        bar.setDate(date);
+        return bar;
+    }
+
+    private static KlineItem barVol(double close, double volume) {
+        KlineItem bar = bar(close, close, close);
+        bar.setVolume(volume);
+        return bar;
+    }
+
     private static KlineItem barOn(String date, double close) {
         KlineItem bar = bar(close, close, close);
         bar.setDate(date);

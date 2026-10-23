@@ -142,4 +142,75 @@ public final class PaperScreenRules {
     public static boolean isFirstBoard(List<KlineItem> bars, String code, String name) {
         return boardHeight(bars, code, name) == 1;
     }
+
+    /** 两年大约 486 个交易日；深历史按这个窗口判断「历史新高」。 */
+    public static final int TWO_YEAR_BARS = 486;
+
+    /**
+     * 最近 {@code withinDays} 个交易日内，是否有一天的最高价超过此前
+     * {@code lookbackBars} 根日 K 的最高价（即创出阶段新高）。
+     *
+     * <p>用最高价而不是收盘价：盘中冲过前高又回落也算触及过新高，
+     * 这类票的「突破」意义同样成立，且实盘里更容易被看到。</p>
+     */
+    public static boolean newHighWithin(List<KlineItem> bars, int withinDays, int lookbackBars) {
+        if (bars == null || bars.size() < 2) {
+            return false;
+        }
+        int last = bars.size() - 1;
+        int days = Math.min(Math.max(withinDays, 1), last);
+        int lookback = Math.min(Math.max(lookbackBars, 30), last);
+        for (int i = last - days + 1; i <= last; i++) {
+            if (i < 1) {
+                continue;
+            }
+            KlineItem bar = bars.get(i);
+            if (bar == null || bar.getHigh() <= 0) {
+                continue;
+            }
+            int from = Math.max(0, i - lookback);
+            double priorHigh = 0;
+            for (int j = from; j < i; j++) {
+                KlineItem older = bars.get(j);
+                if (older != null) {
+                    priorHigh = Math.max(priorHigh, older.getHigh());
+                }
+            }
+            if (priorHigh > 0 && bar.getHigh() > priorHigh + 0.005) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 缩量上涨：最后已收盘的那根收涨，且成交量不超过前一交易日的 {@code maxRatio} 倍。
+     *
+     * <p>盘中当日 bar 只有部分成交量，和完整的前一日不可比（否则几乎所有上涨票都算缩量），
+     * 所以先判断最后一根是不是今天：是则回退到昨日那根，即「昨日缩量上涨」作为今日买入信号。
+     * 用前一交易日量能而不是均量，是为了让信号出现在刚缩量的第一天。</p>
+     */
+    public static boolean shrinkVolumeRise(List<KlineItem> bars, double maxRatio) {
+        if (bars == null || bars.size() < 2) {
+            return false;
+        }
+        int last = bars.size() - 1;
+        if (LocalDate.now(ZONE).toString().equals(bars.get(last).getDate())) {
+            last--;
+        }
+        if (last < 1) {
+            return false;
+        }
+        KlineItem bar = bars.get(last);
+        KlineItem prev = bars.get(last - 1);
+        if (bar == null || prev == null) {
+            return false;
+        }
+        if (bar.getClose() <= 0 || prev.getClose() <= 0
+                || bar.getVolume() <= 0 || prev.getVolume() <= 0) {
+            return false;
+        }
+        double ratio = Math.max(0.1, Math.min(1.0, maxRatio));
+        return bar.getClose() > prev.getClose() && bar.getVolume() <= prev.getVolume() * ratio;
+    }
 }

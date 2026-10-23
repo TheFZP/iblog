@@ -418,6 +418,14 @@ export interface PaperStrategyParams {
   firstBoardScore?: number
   /** 涨停结构·连板高度上限（0–10）：0=不限，1=仅昨日首板，N=连板数≤N；>0 时为硬过滤 */
   boardHeightMax?: number
+  /** 新高与量能·两年新高权重（0–100 分）：近 N 个交易日内最高价超过前两年（约 486 个交易日）最高价时加分 */
+  newHighScore?: number
+  /** 新高与量能·新高回看窗口（1–10 个交易日） */
+  newHighWithinDays?: number
+  /** 新高与量能·缩量上涨权重（0–100 分）：收涨且较前一日缩量时加分 */
+  shrinkVolumeScore?: number
+  /** 新高与量能·缩量阈值（0.1–1）：当日成交量 ≤ 前一日成交量 × 该系数 */
+  shrinkVolumeMaxRatio?: number
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */
