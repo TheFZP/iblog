@@ -74,7 +74,7 @@ public class StockSettingService extends ServiceImpl<StockSettingMapper, StockSe
         List<StockSetting> found = list(new LambdaQueryWrapper<StockSetting>()
                 .eq(StockSetting::getConfigKey, key)
                 .last("LIMIT 1"));
-        return found.isEmpty() ? null : found.getFirst();
+        return found.isEmpty() ? null : found.get(0);
     }
 
     /**

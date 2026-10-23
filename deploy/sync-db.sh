@@ -165,7 +165,14 @@ do_dry_run() {
   log "只读比对（不写任何东西）"
   echo
   echo "  本地 $LOCAL_HOST:$LOCAL_PORT  vs  线上 $SERVER:$REMOTE_CONTAINER"
-  compare_counts "本地" "线上" "local_sql" "remote_sql" || true
+  # 按方向选源：pull 时必须从线上取表清单。
+  # 以前不分方向一律用 local_sql 当源，本地没有的表（paper_*、stock_*）
+  # 根本不出现在清单里，于是「比对通过」掩盖了整张表的缺失。
+  if [ "$dir" = "pull" ]; then
+    compare_counts "线上" "本地" "remote_sql" "local_sql" || true
+  else
+    compare_counts "本地" "线上" "local_sql" "remote_sql" || true
+  fi
   echo
   if [ "$dir" = "pull" ]; then
     echo "  上面这两个数字就是同步的方向和影响面。"
