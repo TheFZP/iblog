@@ -14,6 +14,7 @@ import {
   type BusinessDay
 } from 'lightweight-charts'
 import type { KlineItem } from '@/api/stock'
+import { latestRightRange } from '@/utils/chartViewport'
 import {
   MINUTE_PERIODS,
   chartTheme,
@@ -59,6 +60,12 @@ let prevCloseLine: IPriceLine | null = null
 let resizeObserver: ResizeObserver | null = null
 /** 已 fitContent 的数据身份，切换股票/周期才重置视图，定时刷新时保留缩放 */
 let fittedKey = ''
+/** 当前数据根数，滚轮缩放后要把右边缘对齐到最后一根 */
+let dataLength = 0
+/** 挂了 wheel 监听的容器，卸载时要摘掉 */
+let wheelTarget: HTMLDivElement | null = null
+/** 兜底对齐用的帧号（chart 内部若异步处理滚轮，下一帧再校正一次） */
+let lockFrame = 0
 
 const MA_PERIODS = [5, 10, 20, 60]
 const MA_COLORS: Record<number, string> = {
@@ -148,7 +155,48 @@ function createOrUpdateChart() {
       }
     })
     resizeObserver.observe(container.value)
+
+    // 滚轮缩放后把最新一根 K 线锁在右边缘（见 lockLatestToRight）
+    wheelTarget = container.value
+    wheelTarget.addEventListener('wheel', handleWheel, { passive: true })
   }
+}
+
+/**
+ * 滚轮缩放时的右边缘锁定。
+ *
+ * <p>lightweight-charts 的滚轮缩放以<b>鼠标位置</b>为锚点：鼠标偏左时放大，
+ * 最新几根会被挤出右侧视口；缩小时同样会偏离。这里在每次滚轮后把可见逻辑
+ * 范围的右端重新对齐到最后一根，让缩放围绕「最新时间」进行。</p>
+ *
+ * <p>拖动平移（非滚轮）不触发锁定，否则就没法翻看历史了。</p>
+ */
+function lockLatestToRight() {
+  if (!chart) {
+    return
+  }
+  const timeScale = chart.timeScale()
+  const target = latestRightRange(dataLength, timeScale.getVisibleLogicalRange())
+  if (target === null) {
+    return
+  }
+  if (target === 'fit') {
+    timeScale.fitContent()
+    return
+  }
+  timeScale.setVisibleLogicalRange(target)
+}
+
+/** 同步对齐一次，再在下一帧兜一次（chart 内部若异步处理滚轮时也能接住） */
+function handleWheel() {
+  lockLatestToRight()
+  if (lockFrame) {
+    cancelAnimationFrame(lockFrame)
+  }
+  lockFrame = requestAnimationFrame(() => {
+    lockFrame = 0
+    lockLatestToRight()
+  })
 }
 
 /** 均线：简单移动平均，不足周期的点不输出 */
@@ -187,6 +235,7 @@ function render() {
     volumeSeries?.setData([])
     maSeries.forEach((s) => s.setData([]))
     maValues.value = {}
+    dataLength = 0
     return
   }
 
@@ -203,6 +252,7 @@ function render() {
     value: k.volume,
     color: k.close >= k.open ? theme.upVolume : theme.downVolume
   }))
+  dataLength = candles.length
 
   // 图例颜色要跟着涨跌，避免深色模式下与柱体不协调
   candleSeries?.applyOptions({
@@ -298,6 +348,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
+  if (lockFrame) {
+    cancelAnimationFrame(lockFrame)
+    lockFrame = 0
+  }
+  wheelTarget?.removeEventListener('wheel', handleWheel)
+  wheelTarget = null
   chart?.remove()
   chart = null
   candleSeries = null
@@ -306,6 +362,7 @@ onBeforeUnmount(() => {
   costLine = null
   prevCloseLine = null
   fittedKey = ''
+  dataLength = 0
 })
 
 /** 深浅色切换时整体重绘配色（canvas 拿不到 CSS 变量） */
