@@ -99,8 +99,12 @@ public class KlineCacheService {
         long now = System.currentTimeMillis();
         int need = Math.min(Math.max(minBars, MAX_BARS), DEEP_BARS);
         DeepBars hit = deepCache.get(code);
-        if (hit != null && hit.bars().size() >= need
-                && now - hit.fetchedAt() < DEEP_TTL_MS && !isStaleItems(hit.bars())) {
+        // 交易时段内今天那根还在变（见 isStaleItems），但深历史一次 500 根很贵，
+        // 这里跟 load 的回源节流同口径：每分钟最多刷一次，避免每轮选股都为同一批票重拉。
+        boolean throttled = hit != null && calendar.isTradingTimeNow()
+                && now - hit.fetchedAt() < REFETCH_INTERVAL_MS;
+        if (hit != null && hit.bars().size() >= need && now - hit.fetchedAt() < DEEP_TTL_MS
+                && (throttled || !isStaleItems(hit.bars()))) {
             return hit.bars();
         }
         try {
@@ -123,7 +127,10 @@ public class KlineCacheService {
         return load(code, need);
     }
 
-    /** 深历史是否过期：交易日且最后一根不是今天 → 重新拉。 */
+    /**
+     * 深历史是否过期：交易日且最后一根不是今天 → 重新拉；
+     * 交易时段内今天那根还在变（见 {@link #isStale(List)}），同样视为过期。
+     */
     private boolean isStaleItems(List<KlineItem> bars) {
         if (bars == null || bars.isEmpty()) {
             return true;
@@ -131,16 +138,29 @@ public class KlineCacheService {
         if (!calendar.isTradingDay(calendar.today())) {
             return false;
         }
-        return !calendar.todayText().equals(bars.get(bars.size() - 1).getDate());
+        String lastDate = bars.get(bars.size() - 1).getDate();
+        if (!calendar.todayText().equals(lastDate)) {
+            return true;
+        }
+        return calendar.isTradingTimeNow();
     }
 
-    private List<StockKline> select(String code) {        return klineMapper.selectList(Wrappers.<StockKline>lambdaQuery()
+    private List<StockKline> select(String code) {
+        return klineMapper.selectList(Wrappers.<StockKline>lambdaQuery()
                 .eq(StockKline::getCode, code)
                 .eq(StockKline::getPeriod, PERIOD_DAY)
                 .orderByAsc(StockKline::getDate));
     }
 
-    /** 交易日且缓存最后一根不是今天 → 需要回源；非交易日缓存就是最新的。 */
+    /**
+     * 日 K 是否需要回源。
+     *
+     * <p>除了「最后一根不是今天」之外，**盘中今天那根的成交量还在变**：开盘一分钟就把当天
+     * 那一行写进库后，如果只按日期判断是否过期，这一行会整个交易日停在开盘时的累计量，
+     * 量比 / 当日涨幅 / 均线全都被这份假数据带偏（线上曾出现量比算成 0.3 的现象）。
+     * 所以交易时段内今天那根一律视为需要刷新，实际频率由 {@code lastFetchAt} 的
+     * {@link #REFETCH_INTERVAL_MS} 兜住，每只票每分钟最多回源一次；收盘后当天那根已定型，不再回源。</p>
+     */
     private boolean isStale(List<StockKline> cached) {
         if (cached.isEmpty()) {
             return true;
@@ -149,7 +169,10 @@ public class KlineCacheService {
             return false;
         }
         String lastDate = cached.get(cached.size() - 1).getDate();
-        return !calendar.todayText().equals(lastDate);
+        if (!calendar.todayText().equals(lastDate)) {
+            return true;
+        }
+        return calendar.isTradingTimeNow();
     }
 
     private void upsert(String code, List<StockKline> cached, List<KlineItem> fetched) {
@@ -165,6 +188,9 @@ public class KlineCacheService {
             } else if (item.getDate().equals(latestDate)) {
                 // 当天那根 K 在盘中会变，每次回源都覆盖
                 apply(existing, item);
+                // update_time 显式刷新：strictUpdateFill 遇到已有值会跳过，不显式设就看不出来
+                // 这一行到底有没有在盘中更新（排查「量比异常」时踩过这个坑）
+                existing.setUpdateTime(java.time.LocalDateTime.now());
                 klineMapper.updateById(existing);
             }
         }
