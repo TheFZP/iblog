@@ -261,7 +261,15 @@ public class PaperSelectionService {
         double ma20 = Indicators.sma(closes, 20);
         Indicators.Macd macd = Indicators.macd(closes);
         double rsi = Indicators.rsi(closes, 14);
-        double volumeRatio = Indicators.volumeRatio(volumes, 5);
+        // 量比按「已走过的交易分钟数」归一化：盘中最后一根日 K 只有当日累计量，
+        // 不折算的话上午算出来的量比会被压低好几倍（详见 Indicators#volumeRatio）。
+        // 最后一根不是今天（盘前、或行情没刷新）时它已经是完整的一天，按整日算。
+        String todayText = calendar.todayText();
+        KlineItem latestBar = bars.get(bars.size() - 1);
+        boolean latestIsToday = latestBar != null && todayText.equals(latestBar.getDate());
+        double volumeRatio = Indicators.volumeRatio(volumes, 5,
+                latestIsToday ? calendar.elapsedMinutes(calendar.now()) : TradeCalendar.SESSION_MINUTES,
+                TradeCalendar.SESSION_MINUTES);
 
         StockQuote quote = null;
         try {

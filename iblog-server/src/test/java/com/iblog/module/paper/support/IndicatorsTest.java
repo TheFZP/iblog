@@ -42,4 +42,36 @@ class IndicatorsTest {
         double[] volumes = {100, 100, 100, 100, 100, 200};
         assertEquals(2.0, Indicators.volumeRatio(volumes, 5), 1e-9);
     }
+
+    /**
+     * 收盘口径下与旧算法等价：已经走完 240 分钟，量比就是「当日量 ÷ 前 5 日均量」。
+     * 这条是兼容性护栏，防止改归一化时把收盘后的结果改坏。
+     */
+    @Test
+    void volumeRatioAtCloseMatchesFullDayAverage() {
+        double[] volumes = {100, 100, 100, 100, 100, 200};
+        assertEquals(2.0, Indicators.volumeRatio(volumes, 5, 240, 240), 1e-9);
+    }
+
+    /**
+     * 盘中口径：当日累计量不变、只走了 1/4 个交易日，量比应该翻 4 倍。
+     * 旧算法在这里给出 0.5（容易被误判成缩量），标准算法给出 2.0。
+     */
+    @Test
+    void volumeRatioNormalizesByElapsedMinutes() {
+        double[] volumes = {100, 100, 100, 100, 100, 50};
+        assertEquals(0.5, Indicators.volumeRatio(volumes, 5), 1e-9);
+        assertEquals(2.0, Indicators.volumeRatio(volumes, 5, 60, 240), 1e-9);
+        assertEquals(1.0, Indicators.volumeRatio(volumes, 5, 120, 240), 1e-9);
+    }
+
+    @Test
+    void volumeRatioReturnsNaNForIllegalInput() {
+        double[] volumes = {100, 100, 100, 100, 100, 200};
+        assertTrue(Double.isNaN(Indicators.volumeRatio(volumes, 150, 60, 240))); // 窗口不足
+        assertTrue(Double.isNaN(Indicators.volumeRatio(volumes, 5, 0, 240)));    // 分钟数非法
+        assertTrue(Double.isNaN(Indicators.volumeRatio(volumes, 5, 60, 0)));
+        assertTrue(Double.isNaN(Indicators.volumeRatio(new double[]{0, 0, 0, 0, 0, 100}, 5, 60, 240)));
+        assertTrue(Double.isNaN(Indicators.volumeRatio(null, 5, 60, 240)));
+    }
 }

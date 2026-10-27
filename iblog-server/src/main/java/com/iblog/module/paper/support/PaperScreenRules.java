@@ -149,7 +149,7 @@ public final class PaperScreenRules {
     /**
      * 硬过滤要用的一组技术指标，一次算好传下去，避免调用方反复从 bars 重算。
      *
-     * @param volumeRatio 量比（最后一日量 ÷ 前 5 日均量）
+     * @param volumeRatio 量比（当日每分钟均量 ÷ 前 5 日每分钟均量，盘中按已走分钟折算）
      * @param ma5         5 日均价
      * @param ma20        20 日均价
      * @param volumeTrend 5 日均量 ÷ 20 日均量

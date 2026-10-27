@@ -84,17 +84,43 @@ public final class Indicators {
         return 100 - 100 / (1 + rs);
     }
 
-    /** 量比：最后一根成交量 / 之前 period 根的平均成交量；数据不足返回 NaN。 */
+    /** 收盘口径的量比：当日量 ÷ 前 period 日均量；数据不足返回 NaN。 */
     public static double volumeRatio(double[] volumes, int period) {
+        return volumeRatio(volumes, period, 240, 240);
+    }
+
+    /**
+     * 量比：当日每分钟均量 ÷ 前 period 日每分钟均量。
+     *
+     * <p>标准量比的定义是「现成交量 ÷ 过去 5 日平均每分钟成交量 ÷ 当日累计开市时间」，
+     * 也就是当日每分钟均量和历史每分钟均量比。收盘后 elapsedMinutes 等于
+     * sessionMinutes，退化成「当日量 ÷ 前 5 日均量」；盘中按已走的时间折算。</p>
+     *
+     * <p>为什么必须折算：盘中日 K 的最后一根是「当日到此刻的累计量」，
+     * 上午 10 点只走了 30/240 个交易日（约 1/8），直接拿累计量和全天均量比，
+     * 算出来的量比会被系统性压低近一个数量级，「量比 &gt; 1」在上午几乎不可能成立。</p>
+     *
+     * @param volumes        日成交量序列，最后一根是当日
+     * @param period         对比窗口（5）
+     * @param elapsedMinutes 当日已经走过的交易分钟数，收盘后传 240
+     * @param sessionMinutes 一个完整交易日的分钟数（A 股 240）
+     */
+    public static double volumeRatio(double[] volumes, int period, double elapsedMinutes, int sessionMinutes) {
         if (volumes == null || period <= 0 || volumes.length < period + 1) {
+            return Double.NaN;
+        }
+        if (elapsedMinutes <= 0 || sessionMinutes <= 0) {
             return Double.NaN;
         }
         double sum = 0;
         for (int i = volumes.length - 1 - period; i < volumes.length - 1; i++) {
             sum += volumes[i];
         }
-        double average = sum / period;
-        return average <= 0 ? Double.NaN : volumes[volumes.length - 1] / average;
+        double baseline = sum / period / sessionMinutes;
+        if (baseline <= 0) {
+            return Double.NaN;
+        }
+        return volumes[volumes.length - 1] / elapsedMinutes / baseline;
     }
 
     public record Macd(double dif, double dea, double hist) {
