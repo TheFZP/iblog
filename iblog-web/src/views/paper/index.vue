@@ -980,12 +980,16 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="item in selections" :key="item.id">
+                <tr v-for="item in selections" :key="item.id" class="row-link" @click="goStockDetail(item.code, $event)">
                   <td>
-                    <div class="cell-name">
+                    <router-link
+                      class="cell-name cell-name--link"
+                      :to="`/stock/${item.code}`"
+                      @click.stop
+                    >
                       <span class="cell-name__title">{{ item.name }}</span>
                       <span class="cell-name__code">{{ item.code }}</span>
-                    </div>
+                    </router-link>
                   </td>
                   <td class="num">
                     <span
@@ -1000,7 +1004,7 @@
                   </td>
                   <td class="num">{{ priceText(item.price) }}</td>
                   <td class="cell-reason">{{ item.reason || '--' }}</td>
-                  <td class="num">
+                  <td class="num" @click.stop>
                     <button class="mini-btn" type="button" @click="buySelection(item)">下单</button>
                   </td>
                 </tr>
@@ -1069,12 +1073,16 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="position in positions" :key="position.code">
+                <tr v-for="position in positions" :key="position.code" class="row-link" @click="goStockDetail(position.code, $event)">
                   <td>
-                    <div class="cell-name">
+                    <router-link
+                      class="cell-name cell-name--link"
+                      :to="`/stock/${position.code}`"
+                      @click.stop
+                    >
                       <span class="cell-name__title">{{ position.name }}</span>
                       <span class="cell-name__code">{{ position.code }}</span>
-                    </div>
+                    </router-link>
                   </td>
                   <td class="num">
                     {{ integer(position.quantity) }}<span class="cell-sub"> / {{ integer(position.availableQuantity) }}</span>
@@ -1088,7 +1096,7 @@
                       <span class="cell-sub">{{ pct(position.profitPct) }}</span>
                     </div>
                   </td>
-                  <td class="num">
+                  <td class="num" @click.stop>
                     <button
                       class="mini-btn"
                       type="button"
@@ -1617,6 +1625,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import {
@@ -1660,6 +1669,8 @@ import type {
 } from '@/api/paper'
 import { fmtNum, toneClass } from '@/utils/stockFormat'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
+
+const router = useRouter()
 
 const ORDERS_PAGE_SIZE = 20
 const TRADES_PAGE_SIZE = 20
@@ -2682,6 +2693,16 @@ function buySelection(item: PaperSignal) {
   tradeOpen.value = true
 }
 
+/** 持仓 / 今日选股的股票行：点击跳个股详情页（/stock/:code） */
+function goStockDetail(code: string, event?: MouseEvent) {
+  // 刚拖选完文本（复制理由/代码）松开鼠标也算 click，这种情况不跳转
+  if (window.getSelection()?.toString()) return
+  if (event && (event.target as HTMLElement | null)?.closest('button, a, input, select, textarea')) return
+  if (code) {
+    router.push(`/stock/${code}`)
+  }
+}
+
 // —— P4：规则模板库 ——
 /** 拉取模板列表；prefer 为 id 时优先选中该模板，否则选「当前生效」的一套 */
 async function loadRules(prefer: 'active' | number = 'active') {
@@ -3553,6 +3574,28 @@ onBeforeUnmount(() => {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--c-text-faint);
+}
+
+/* 持仓 / 今日选股的股票行：整行可点击跳个股详情（router-link 呈现为无下划线文本） */
+.row-link {
+  cursor: pointer;
+}
+
+.cell-name--link {
+  text-decoration: none;
+  border-radius: var(--r-sm);
+  transition: color 0.12s var(--ease);
+}
+
+.cell-name--link:hover .cell-name__title {
+  color: var(--c-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.cell-name--link:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
 }
 
 .cell-sub {
@@ -4572,6 +4615,10 @@ onBeforeUnmount(() => {
 
   .toast-enter-active,
   .toast-leave-active {
+    transition: none;
+  }
+
+  .cell-name--link {
     transition: none;
   }
 }
