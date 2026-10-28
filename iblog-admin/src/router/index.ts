@@ -62,6 +62,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '访问日志' }
       },
       {
+        path: 'stock-config',
+        name: 'StockConfig',
+        component: () => import('@/views/stock-config/index.vue'),
+        meta: { title: 'AI 配置' }
+      },
+      {
         path: 'settings',
         name: 'Setting',
         component: () => import('@/views/setting/index.vue'),

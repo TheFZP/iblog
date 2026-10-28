@@ -28,6 +28,7 @@ import MoneyFlowSection from '@/components/stock/MoneyFlowSection.vue'
 import IndustryModal from '@/components/stock/IndustryModal.vue'
 import PriceAlertDialog from '@/components/stock/PriceAlertDialog.vue'
 import PositionDialog from '@/components/stock/PositionDialog.vue'
+import AiPanel from '@/components/stock/AiPanel.vue'
 import {
   KLINE_PERIODS,
   fmtNum,
@@ -64,6 +65,9 @@ const code = computed(() => String(route.params.code ?? ''))
 
 const quote = ref<StockQuote | null>(null)
 const quoteStale = ref(false)
+
+// AI 抽屉的开关放在详情页，对话内容由 AiPanel 自己维护：关闭再打开时还能接着聊
+const showAiPanel = ref(false)
 
 const kline = ref<KlineItem[]>([])
 const klineLoading = ref(false)
@@ -526,6 +530,7 @@ const stats = computed(() => {
         </button>
         <button class="btn btn--ghost btn--sm" @click="openIndustry">行业</button>
         <button class="btn btn--ghost btn--sm" @click="openAnalysis">技术分析</button>
+        <button class="btn btn--ghost btn--sm" @click="showAiPanel = true">AI 分析</button>
       </div>
     </header>
 
@@ -655,6 +660,9 @@ const stats = computed(() => {
       @close="showIndustryModal = false"
       @retry="loadIndustry(true)"
     />
+
+    <!-- AI 分析抽屉：内部 Teleport 到 body，放在这里只是为了贴近数据来源 -->
+    <AiPanel :open="showAiPanel" :code="code" :name="quote?.name || code" @close="showAiPanel = false" />
 
     <p class="detail__foot">行情数据来自腾讯财经，延迟数秒。本页不构成任何投资建议。</p>
   </div>

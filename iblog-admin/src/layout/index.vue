@@ -27,6 +27,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>访问日志</span>
         </el-menu-item>
+        <el-menu-item index="/stock-config">
+          <el-icon><MagicStick /></el-icon>
+          <span>AI 配置</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>站点设置</span>
@@ -74,6 +78,7 @@ import {
   DataLine,
   Document,
   Food,
+  MagicStick,
   Setting
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'

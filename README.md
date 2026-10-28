@@ -106,6 +106,13 @@ iblog/
       放量上涨 / 逼近涨停）逐条回测 1/3/5/10 个交易日的胜率、期望收益、最大回撤，非重叠交易
   - 持仓组合：行情页「持仓组合」进入，按市值权重给出总盈亏、当日盈亏、集中度（HHI + 前三大权重）、
     涨跌分布、行业分布（含标签覆盖率）、加权 PE；缺昨收的持仓单列不计入当日盈亏
+  - AI 分析：个股详情页「AI 分析」抽屉，流式对话（DeepSeek），模型可自行调用 17 个工具
+    （实时行情、批量行情、K 线+技术指标、资金流、行业、指数、分时、热榜、搜索、用户档案、汇率、
+    联网搜索/抓取、问财选股、选股卡片）后再作答；回答末尾按提示词要求给出「📋 操作建议」
+  - 问财选股：自然语言选股（「连续三天放量上涨且市值小于 100 亿」），由问财接口返回结构化表格，
+    对话里也会以选股卡片形式给出（最多 20 只，可点击跳转）
+  - AI 的 API Key 只存服务端 `stock_setting`（后台「AI 配置」菜单填写），不下发到浏览器；
+    工具全部在后端 Java 执行，前端只负责渲染事件流
   - 持仓：成本价与盈亏统计，可为每只持仓设止损 / 止盈百分比提醒
   - 价格提醒：突破 / 跌破目标价提醒，可叠加放量条件
   - 提醒由全局巡查器统一巡检（关掉行情页也照样生效），刷新间隔随市场状态自动调整
@@ -304,6 +311,24 @@ iblog:
 （其它行情接口仍是 20s），改动这两个值要成对改，否则会先被 nginx 504 截断而后端仍在跑。
 新建账户的初始资金取 `iblog.paper.initial-cash`（可用 `IBLOG_PAPER_INITIAL_CASH` 覆盖）。
 
+### 7. AI 分析（需在后台填 API Key）
+
+官网个股详情页的「AI 分析」抽屉调 DeepSeek 流式接口，Key 只需要在后台填一次：
+
+1. 启动后台 → 左侧菜单「AI 配置」→ 填 `DeepSeek API Key`（`sk-...`）→ 保存；
+2. 打开官网个股页 → 「AI 分析」→ 随便问一句验证能出字。
+
+Key 存 MySQL 的 `stock_setting` 表（`ai_api_key`，secret），接口只回传打码值，
+浏览器永远拿不到明文；改 Key / 换模型都不用重启后端。
+
+需要额外说明的两点：
+
+- **`iblog-web/public/chameleon.js` 不能删**。问财接口在非问财域名、无 Cookie `v` 时
+  一律 nginx 403，而 `v` 只能由这个脚本在真实浏览器里算出来（服务端沙箱跑不出来）。
+  流程是「浏览器算 v → 随对话请求带给后端 → 后端带反爬头转发」，脚本是前半段。
+- **AI 对话是 SSE 长连接**，`iblog-web/nginx.conf` 里 `location = /api/stock/ai/chat`
+  单独关了 `proxy_buffering` 并给 300s 超时，不要合并回 `/api/stock/`。
+
 ---
 
 ## 五、接口约定
@@ -352,6 +377,14 @@ Authorization: Bearer <token>
 | GET | `/api/stock/indices` · `/hotlist` · `/search` | 大盘指数 / 人气热榜 / 个股搜索 |
 | GET | `/api/stock/moneyflow` · `/moneyflow/history` | 资金流分档 / 近 N 日主力净流入趋势 |
 | GET | `/api/stock/industry` | 行业对比（相对沪深 300 表现、营收排名、行业均值）|
+
+AI 接口（`/api/stock/ai/**`，登录后可用；官网用 Cookie、后台用 header 令牌都能调）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/stock/ai/config` | 面板初始化（是否已配 Key、模型名、开关；不含 Key）|
+| POST | `/api/stock/ai/chat` | 流式对话（SSE），`event: reasoning/content/tool_call/tool_result/done/error` |
+| POST | `/api/stock/ai/iwencai` | 问财选股代理（需前端带 `v`；限流回 429，前端换 v 重试一次）|
 
 模拟盘接口（`/api/stock/paper/**`，登录后可用；官网用 Cookie、后台用 header 令牌都能调）：
 

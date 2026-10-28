@@ -75,6 +75,61 @@ public class StockHttpClient {
     }
 
     /**
+     * POST 表单（{@code application/x-www-form-urlencoded}），返回原始字节。
+     *
+     * <p>为什么单独开一个方法而不是把 {@link #send} 泛化：目前只有问财代理走 POST，
+     * 而且它需要带 Cookie/Origin 这类自定义头、还需要拿到 <b>非 200 的响应体</b>
+     * （问财 403/风控时的 body 里有判断依据），语义与行情 GET 差别很大，
+     * 混进同一个方法反而会把行情路径改复杂。</p>
+     *
+     * @param url     完整 URL
+     * @param form    form-urlencoded 请求体（调用方自行编码）
+     * @param headers 额外请求头，按偶数下标=名、奇数下标=值传入
+     * @param timeout 本次请求超时
+     */
+    public Response postForm(String url, String form, Duration timeout, String... headers) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(timeout)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                .header("Accept", "*/*")
+                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                .POST(HttpRequest.BodyPublishers.ofString(form, StandardCharsets.UTF_8));
+        for (int i = 0; i + 1 < headers.length; i += 2) {
+            if (headers[i] != null && headers[i + 1] != null) {
+                builder.header(headers[i], headers[i + 1]);
+            }
+        }
+        // 问财这种带反爬的域名与东财一样会 reset 复用连接，用一次性连接
+        HttpClient http = newClient();
+        try {
+            HttpResponse<byte[]> resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            return new Response(resp.statusCode(), resp.body());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StockDataException("请求被中断");
+        } catch (Exception e) {
+            log.warn("POST 请求失败 url={} err={}", url, e.toString());
+            throw new StockDataException("上游请求失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 原始响应（状态码 + 字节体）。
+     *
+     * <p>为什么不复用 {@link HttpResponse}：调用方只关心这两样，包一层能把
+     * {@code java.net.http} 的类型挡在业务代码之外。</p>
+     */
+    public record Response(int status, byte[] body) {
+
+        /** 按 UTF-8 解码响应体。 */
+        public String text() {
+            return new String(body, StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
      * @param freshConnection true 表示用一次性连接（不池化、不复用）
      */
     private byte[] send(String url, String referer, boolean freshConnection, Duration timeout) {
