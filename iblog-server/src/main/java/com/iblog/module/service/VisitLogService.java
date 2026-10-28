@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 官网访问日志服务：落库、分页查询、统计、过期清理。
@@ -55,24 +56,18 @@ public class VisitLogService extends ServiceImpl<VisitLogMapper, VisitLog> {
     /**
      * 热门路径 TopN（今日）。
      *
-     * @return 每项为 [path, count]
+     * <p>用 {@code selectMaps} 而不是 {@code listObjs}：后者底层是 selectObjs，
+     * 只返回第一列，多列聚合时 count 会永远取不到。</p>
+     *
+     * @return 每项含 path 与 count 两个 key
      */
-    public List<Object[]> todayTopPaths(int limit) {
-        List<Object> rows = listObjs(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<VisitLog>()
+    public List<Map<String, Object>> todayTopPaths(int limit) {
+        return baseMapper.selectMaps(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<VisitLog>()
                 .select("path", "COUNT(*) AS cnt")
                 .ge("create_time", LocalDateTime.now().toLocalDate().atStartOfDay())
                 .groupBy("path")
                 .orderByDesc("cnt")
                 .last("limit " + Math.max(1, limit)));
-        return rows.stream()
-                .map(row -> {
-                    // listObjs 对多列 select 每行返回 Object[]，包一层便于序列化
-                    if (row instanceof Object[] arr) {
-                        return arr;
-                    }
-                    return new Object[]{row};
-                })
-                .toList();
     }
 
     /**

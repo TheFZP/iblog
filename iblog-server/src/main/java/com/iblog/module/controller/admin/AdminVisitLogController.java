@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,10 +40,9 @@ public class AdminVisitLogController {
         Map<String, Object> data = new HashMap<>();
         data.put("todayCount", visitLogService.todayCount());
         data.put("todayIpCount", visitLogService.todayIpCount());
-        List<Object[]> top = visitLogService.todayTopPaths(10);
-        data.put("topPaths", top.stream().map(arr -> Map.of(
-                "path", String.valueOf(arr.length > 0 ? arr[0] : ""),
-                "count", arr.length > 1 && arr[1] instanceof Number n ? n.longValue() : 0L
+        data.put("topPaths", visitLogService.todayTopPaths(10).stream().map(row -> Map.of(
+                "path", String.valueOf(row.get("path")),
+                "count", row.get("cnt") instanceof Number n ? n.longValue() : 0L
         )).toList());
         return R.ok(data);
     }
