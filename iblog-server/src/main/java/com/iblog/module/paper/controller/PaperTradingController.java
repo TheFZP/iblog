@@ -48,7 +48,7 @@ import java.util.Map;
  * <p>挂在 {@code /api/stock/paper} 下，复用行情模块已有的登录拦截
  * （后台 header 令牌或官网 Cookie 都认），不需要再开一套鉴权。</p>
  *
- * <p>多账户：一个用户最多 5 个模拟盘，每个账户独立资金/持仓/策略。
+ * <p>多账户：一个用户可开任意多个模拟盘，每个账户独立资金/持仓/策略。
  * 写操作和查询都可以带 {@code ?accountId=}，不传则落到主账户（sort_no 最小）。</p>
  */
 @RestController

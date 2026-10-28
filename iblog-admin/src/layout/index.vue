@@ -23,6 +23,10 @@
           <el-icon><Food /></el-icon>
           <span>美食管理</span>
         </el-menu-item>
+        <el-menu-item index="/visit-logs">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>访问日志</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>站点设置</span>
@@ -66,6 +70,7 @@ import {
   ArrowDown,
   ChatDotRound,
   Collection,
+  DataAnalysis,
   DataLine,
   Document,
   Food,

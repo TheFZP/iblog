@@ -77,8 +77,7 @@
           <button
             class="mini-btn"
             type="button"
-            :disabled="!canCreateAccount"
-            :title="canCreateAccount ? '新建一个独立资金的模拟盘' : `最多 ${MAX_ACCOUNTS} 个模拟盘`"
+            title="新建一个独立资金的模拟盘"
             @click="openCreateAccount"
           >
             新建模拟盘
@@ -1679,8 +1678,6 @@ const NAV_DAYS = [30, 90, 180]
 const SIGNALS_LIMIT = 50
 /** 引擎/选股/信号属于「慢数据」，最短 60s 刷新一次，避免频繁拉选股与信号 */
 const SECONDARY_MIN_INTERVAL_MS = 60_000
-/** 每个用户最多可开的模拟盘数量（后端同样限制 5 个） */
-const MAX_ACCOUNTS = 5
 /** 规则模板名称长度上限（后端同样限制 32 个字符） */
 const RULE_NAME_MAX = 32
 /** 每个用户最多可存的规则模板数量（后端同样限制 20 套） */
@@ -2133,7 +2130,6 @@ const strategy = computed(() => strategies.value[0] ?? null)
 const currentAccount = computed(
   () => accounts.value.find((item) => item.accountId === currentAccountId.value) ?? null
 )
-const canCreateAccount = computed(() => accounts.value.length < MAX_ACCOUNTS)
 const canDeleteAccount = computed(() => accounts.value.length > 1)
 const weightSum = computed(() =>
   WEIGHT_KEYS.reduce((sum, key) => sum + (Number(strategyForm.value[key]) || 0), 0)
@@ -2900,15 +2896,15 @@ async function switchAccount(accountId: number) {
 
 /** 名称自增，跳过已占用的「模拟盘 N」 */
 function suggestAccountName(): string {
-  for (let index = accounts.value.length + 1; index <= MAX_ACCOUNTS + 2; index += 1) {
+  const used = new Set(accounts.value.map((item) => item.name))
+  for (let index = accounts.value.length + 1; index < accounts.value.length + 200; index += 1) {
     const name = `模拟盘 ${index}`
-    if (!accounts.value.some((item) => item.name === name)) return name
+    if (!used.has(name)) return name
   }
   return `模拟盘 ${accounts.value.length + 1}`
 }
 
 function openCreateAccount() {
-  if (!canCreateAccount.value) return
   createName.value = suggestAccountName()
   createCash.value = 30000
   createError.value = ''
@@ -4039,7 +4035,7 @@ onBeforeUnmount(() => {
 /* ---------- P3：多账户 ---------- */
 .account-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--s-4);
   margin-bottom: var(--s-6);
@@ -4047,17 +4043,13 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--c-border);
 }
 
+/* 账户数量不限，多了自动换行，不做横向滚动（隐藏滚动条会让人不知道能翻） */
 .account-bar__list {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   gap: var(--s-2);
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.account-bar__list::-webkit-scrollbar {
-  display: none;
 }
 
 .account-chip {
@@ -4127,6 +4119,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-shrink: 0;
   gap: var(--s-2);
+  margin-left: auto;
+  align-self: flex-start;
 }
 
 .account-bar__state {

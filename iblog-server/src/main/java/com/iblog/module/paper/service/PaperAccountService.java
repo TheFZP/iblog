@@ -34,7 +34,7 @@ import java.util.List;
 /**
  * 模拟盘账户：开户、多账户管理、重算、净值快照、重置。
  *
- * <p>一个后台用户最多 {@code iblog.paper.max-accounts} 个账户（默认 5），
+ * <p>账户数量不设上限（想开多少开多少，不再有 max-accounts 配置），
  * 每个账户独立资金/持仓/策略/信号，用于对比不同选股与交易规则。
  * 「主账户」= sort_no 最小的那个，老接口不传 accountId 时落到它上面。</p>
  */
@@ -94,14 +94,10 @@ public class PaperAccountService {
 
     // ---------- 账户管理 ----------
 
-    /** 新建模拟盘：名称留空自动编号，初始资金为空用服务端默认值。 */
+    /** 新建模拟盘：名称留空自动编号，初始资金为空用服务端默认值。账户数量不设上限。 */
     @Transactional
     public PaperAccount create(Long userId, String name, BigDecimal initialCash) {
         List<PaperAccount> accounts = list(userId);
-        int max = Math.max(1, properties.getPaper().getMaxAccounts());
-        if (accounts.size() >= max) {
-            throw new BizException(400, "最多只能开 " + max + " 个模拟盘，请先删除不用的账户");
-        }
         String defaultName = "模拟盘 " + (accounts.size() + 1);
         String finalName = normalizeName(name, defaultName);
         int sortNo = accounts.stream()

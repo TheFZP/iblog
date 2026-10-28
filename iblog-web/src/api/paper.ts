@@ -3,7 +3,7 @@ import service, { get, post } from './request'
 /**
  * 模拟盘接口。
  *
- * <p>后端由 /api/stock/paper/** 提供，账户与后台登录态绑定（一个后台用户最多 5 个模拟账户），
+ * <p>后端由 /api/stock/paper/** 提供，账户与后台登录态绑定（一个后台用户可开任意多个模拟账户），
  * 所以这里不需要传 userId —— Cookie 就是身份。金额单位为元，收益率单位是百分数。</p>
  *
  * <p>多账户：账户列表之外的接口都接受可选 accountId 查询参数，不传时作用于主账户；
@@ -197,7 +197,7 @@ function withAccountId(
 
 // ---------- 多账户 ----------
 
-/** 账户列表（最多 5 个，主账户带 primary 标记） */
+/** 账户列表（数量不限，主账户带 primary 标记） */
 export function fetchPaperAccounts() {
   return get<PaperAccountSummary[]>('/stock/paper/accounts')
 }

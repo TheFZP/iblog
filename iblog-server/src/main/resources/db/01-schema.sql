@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS `stock_watchlist_change`
 --  日期 VARCHAR(16) 存 yyyy-MM-dd；所有查询按 account_id，索引从它开始。
 -- -------------------------------------------------------------
 
--- 模拟账户：一个后台用户最多 5 个账户（多开对比不同规则）；auto_trade 为自动交易总开关
+-- 模拟账户：一个后台用户可开多个账户（数量不限，对比不同规则）；auto_trade 为自动交易总开关
 CREATE TABLE IF NOT EXISTS `paper_account`
 (
     `id`               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -446,3 +446,23 @@ CREATE TABLE IF NOT EXISTS `paper_rule`
     PRIMARY KEY (`id`),
     KEY `idx_user` (`user_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='模拟盘规则模板';
+
+-- 官网访问日志：记录 /api/portal/** 每次调用（官网 SPA 的页面打开必然触发
+-- portal 接口，在 API 层记录即等价于记录访问）。数据保留 30 天，由
+-- VisitLogCleaner 每天凌晨清理，防止无限增长。
+CREATE TABLE IF NOT EXISTS `blog_visit_log`
+(
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `path`        VARCHAR(128) NOT NULL COMMENT '请求路径（不含 query）',
+    `method`      VARCHAR(8)   NOT NULL DEFAULT 'GET' COMMENT 'HTTP 方法',
+    `ip`          VARCHAR(45)  NOT NULL DEFAULT '' COMMENT '客户端 IP（取 X-Forwarded-For 首段）',
+    `user_agent`  VARCHAR(255)          DEFAULT NULL COMMENT '浏览器 UA（截断 255）',
+    `referer`     VARCHAR(255)          DEFAULT NULL COMMENT '来源页（截断 255）',
+    `status`      INT          NOT NULL DEFAULT 200 COMMENT '响应业务码（R.code，200 为成功）',
+    `cost_ms`     INT          NOT NULL DEFAULT 0 COMMENT '耗时（毫秒）',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '访问时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_create_time` (`create_time`),
+    KEY `idx_path_time` (`path`, `create_time`),
+    KEY `idx_ip_time` (`ip`, `create_time`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='官网访问日志';

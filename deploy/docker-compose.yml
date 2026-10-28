@@ -94,9 +94,6 @@ services:
       IBLOG_PAPER_ENABLED: ${IBLOG_PAPER_ENABLED:-false}
       # 模拟账户初始资金（新建账户或「重置账户」时生效）
       IBLOG_PAPER_INITIAL_CASH: ${IBLOG_PAPER_INITIAL_CASH:-1000000}
-
-      # 每个用户最多可建的模拟盘数量
-      IBLOG_PAPER_MAX_ACCOUNTS: ${IBLOG_PAPER_MAX_ACCOUNTS:-5}
       # 额外休市日（逗号分隔 yyyy-MM-dd），引擎据此判断交易日
       IBLOG_PAPER_HOLIDAYS: ${IBLOG_PAPER_HOLIDAYS:-}
       TZ: Asia/Shanghai

@@ -440,16 +440,15 @@ curl -s http://<服务器IP>/api/portal/auth/state
 ```bash
 # /opt/iblog/deploy/.env 追加
 IBLOG_PAPER_ENABLED=true
-# 可选：新建账户的初始资金、每用户最多账户数（默认 1000000 / 5）
+# 可选：新建 / 重置账户的初始资金（默认 1000000）
 IBLOG_PAPER_INITIAL_CASH=30000
-IBLOG_PAPER_MAX_ACCOUNTS=5
 # 然后重建后端容器
 sudo docker compose up -d --build iblog-server
 ```
 
 > 自动交易还有第二道开关：即使服务端打开了，也需要用户在 `/paper` 页面点「自动交易」按钮，
 > 才会替该用户自动下单（默认关）。服务端总开关没开时，前端打开按钮会直接报错。
-> 多账户：每个用户最多 5 个模拟盘，每个账户独立持仓、资金和选股规则（`paper_strategy.params` 里
+> 多账户：账户数量不限，每个账户独立持仓、资金和选股规则（`paper_strategy.params` 里
 > 的 59 项参数（含换手率 / 流通市值 / 分时均价线 / 涨停记忆、首板 / 连板高度、近 N 日两年新高、缩量上涨、买入时间窗、次日开盘强制卖出，
 > 以及「严格过滤（硬条件）」的 18 项一票否决条件：年内低点比 / 集合竞价换手率 / 早盘与全天实际换手率（除以自由流通股）/ 现价高于今开 / 现价高于均价 /
 > 量比 / 5 日与 20 日均价与均量趋势 / 近 N 日无涨停 / 总市值下限 / 股东户数减少 / 二季报或预告或年报盈利 / 按资金剔除买不起的标的，
@@ -471,7 +470,6 @@ sudo docker compose up -d --build iblog-server
 | --- | --- | --- |
 | `enabled` | false | 总开关 |
 | `initial-cash` | 1000000 | 新建 / 重置账户的初始资金 |
-| `max-accounts` | 5 | 每个用户最多可建的模拟盘数量 |
 | `tick-ms` | 15000 | 引擎撮合 / 自动交易间隔（毫秒）|
 | `selection-refresh-ms` | 300000 | 自动选股最小间隔（毫秒）|
 | `commission-rate` / `commission-min` | 0.00025 / 5 | 佣金费率与最低 5 元 |
@@ -489,6 +487,14 @@ sudo docker compose up -d --build iblog-server
 > 再执行 `db/06-migration-paper-multi.sql` 把账户唯一键升级为「一用户多账户」，
 > 最后执行 `db/07-migration-paper-rule.sql` 建规则模板表（均幂等，可重复启动）。
 > 「重置账户」只清当前账户的持仓 / 委托 / 成交 / 净值，不影响其他账户。
+
+### 8. 访问日志（默认开启，无需配置）
+
+后台「访问日志」菜单记录官网 `/api/portal/**` 的每次调用——官网是 SPA，页面本身由
+nginx 直接吐静态文件，但每次页面打开必然触发 `/api/portal/site` 等接口，所以在
+API 层记录即等价于记录官网访问。数据在 `blog_visit_log` 表（`db/09-migration-visit-log.sql`
+自动建表），每天凌晨 3:30 自动清理 30 天前的记录。后台/行情接口不记录（前者是博主
+自己、后者是 15s 轮询，记了只有噪声）。
 
 ---
 
