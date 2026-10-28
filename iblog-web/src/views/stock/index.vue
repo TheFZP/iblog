@@ -33,6 +33,14 @@
             <span>{{ notifyRequesting ? '授权中' : alertHint }}</span>
           </button>
           <button
+            class="btn btn--ghost"
+            type="button"
+            title="查看持仓组合分析"
+            @click="openPortfolio"
+          >
+            持仓组合
+          </button>
+          <button
             class="btn btn--ghost refresh-btn"
             type="button"
             :disabled="refreshing"
@@ -266,6 +274,11 @@ function openDetail(code: string) {
   if (code) {
     router.push(`/stock/${code}`)
   }
+}
+
+/** 跳持仓组合分析页 */
+function openPortfolio() {
+  router.push('/stock/portfolio')
 }
 
 const {

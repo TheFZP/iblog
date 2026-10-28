@@ -48,10 +48,23 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '行情' }
           },
           {
+            // 静态段优先于 :code，所以 /stock/portfolio 不会被当成一只叫 portfolio 的股票
+            path: 'portfolio',
+            name: 'StockPortfolio',
+            component: () => import('@/views/stock/portfolio.vue'),
+            meta: { title: '持仓组合' }
+          },
+          {
             path: ':code',
             name: 'StockDetail',
             component: () => import('@/views/stock/detail.vue'),
             meta: { title: '个股详情' }
+          },
+          {
+            path: ':code/analysis',
+            name: 'StockAnalysis',
+            component: () => import('@/views/stock/analysis.vue'),
+            meta: { title: '技术分析' }
           }
         ]
       },

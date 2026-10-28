@@ -85,8 +85,10 @@ public class StockController {
     public R<List<KlineItem>> kline(
             @RequestParam String code,
             @Parameter(description = "day / week / month / m5 / m15 / m30 / m60，默认 day")
-            @RequestParam(required = false, defaultValue = "day") String period) {
-        return R.ok(tencentService.fetchKline(code, period));
+            @RequestParam(required = false, defaultValue = "day") String period,
+            @Parameter(description = "根数，默认 120；筹码分布/回测需要 480 根，上限 640（分钟 K 忽略）")
+            @RequestParam(required = false, defaultValue = "120") Integer limit) {
+        return R.ok(tencentService.fetchKline(code, period, limit == null ? 120 : limit));
     }
 
     @Operation(summary = "分时")

@@ -309,6 +309,13 @@ function openIndustry() {
   loadIndustry()
 }
 
+/** 跳技术分析页（独立路由：筹码/回测要拉 480 根 K 线，不该塞进详情页首屏） */
+function openAnalysis() {
+  const target = code.value
+  if (!target) return
+  void router.push(`/stock/${encodeURIComponent(target)}/analysis`)
+}
+
 /** 切换股票：清空旧数据再加载，避免闪一下上一只的图表 */
 function resetForNewCode() {
   quote.value = null
@@ -518,6 +525,7 @@ const stats = computed(() => {
           价格提醒<span v-if="alertCount > 0" class="btn__badge">{{ alertCount }}</span>
         </button>
         <button class="btn btn--ghost btn--sm" @click="openIndustry">行业</button>
+        <button class="btn btn--ghost btn--sm" @click="openAnalysis">技术分析</button>
       </div>
     </header>
 
@@ -747,6 +755,7 @@ const stats = computed(() => {
 
 .hero__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s-2);
   margin-left: auto;
 }

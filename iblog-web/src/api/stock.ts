@@ -166,8 +166,12 @@ export function searchStock(keyword: string) {
   return get<SearchResult[]>('/stock/search', { keyword })
 }
 
-export function fetchKline(code: string, period: KlinePeriod = 'day') {
-  return get<KlineItem[]>('/stock/kline', { code, period })
+/**
+ * K 线。limit 默认 120 根（图表够用），筹码分布/信号回测要 480 根，
+ * 后端上限 640；分钟 K 后端固定返回 320 根，忽略该参数。
+ */
+export function fetchKline(code: string, period: KlinePeriod = 'day', limit = 120) {
+  return get<KlineItem[]>('/stock/kline', { code, period, limit })
 }
 
 export function fetchIntraday(code: string) {
