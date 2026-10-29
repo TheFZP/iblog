@@ -34,8 +34,15 @@ public class AiQueryOptimizer {
     private static final String KEY_USER_PROFILE = "ai_user_profile";
     /** 输入上限：再长就不是「选股条件」而是研报了，也挡不住 token 成本。 */
     private static final int MAX_INPUT_LENGTH = 500;
-    /** 改写只要一句话，256 足够；给 8192 只是把最坏等待时间和费用一起放大。 */
-    private static final int MAX_TOKENS = 256;
+    /**
+     * 输出上限。
+     *
+     * <p>不能按「只要一句话」给 256：deepseek-v4-flash 即使 {@code thinking=false} 也会吐
+     * {@code reasoning_content}，实测一次改写要吃掉 5000+ 字符思考，256 token 全被它占了，
+     * 正文直接截断成半截 JSON（线上表现是「AI 未能生成有效查询」）。
+     * 1024 实测能完整收尾，再往上只是放大最坏等待时间。</p>
+     */
+    private static final int MAX_TOKENS = 1024;
     /** 没填画像时的占位，让提示词里的「用户画像：」后面始终有内容。 */
     private static final String EMPTY_PROFILE = "（未设置）";
 
@@ -52,6 +59,11 @@ public class AiQueryOptimizer {
             Pattern.CASE_INSENSITIVE);
     /** 换行（含两侧空白）统一变成条件分隔符。 */
     private static final Pattern LINE_BREAK = Pattern.compile("\\s*[\\r\\n]+\\s*");
+    /**
+     * 被截断的 JSON：{@code {"query":"…} 没有收尾引号和花括号。
+     * 用非贪婪取引号之间的全部内容，避免把后面的残渣也吞进来。
+     */
+    private static final Pattern TRUNCATED_JSON = Pattern.compile("\\{\\s*\"query\"\\s*:\\s*\"([\\s\\S]*)");
 
     private final AiConfigService configService;
     private final AiLlmClient llmClient;
@@ -135,7 +147,29 @@ public class AiQueryOptimizer {
             // JSON 里的 query 已经是「一句话」，但仍要过一遍换行/结尾分号，防止模型自己在值里换行
             return normalize(fromJson);
         }
+        // 模型话说太多被 max_tokens 截断时，只剩半截 {"query":"xxx——这里把值硬捞出来，
+        // 总比整个失败好：半句话也能去问财，用户看得见还能自己改。
+        String rescued = rescueTruncatedQuery(body);
+        if (rescued != null) {
+            return normalize(rescued);
+        }
         return normalize(body);
+    }
+
+    /**
+     * 从未闭合的 JSON 里抢救 query 的值。
+     *
+     * @return 抢救出的文本（可能是空串，表示确实是半截 JSON 但里面没有可用内容）；
+     *         完全不是「{"query":"…」这种半截形态时返回 null，交给后续按纯文本处理
+     */
+    private static String rescueTruncatedQuery(String text) {
+        Matcher matcher = TRUNCATED_JSON.matcher(text);
+        if (!matcher.find()) {
+            return null;
+        }
+        String value = matcher.group(1);
+        // 去掉没转义干净的收尾引号/花括号残渣
+        return value.replaceAll("[\\s\"}\\]]+$", "").trim();
     }
 
     /** 剥掉 markdown 代码围栏：开头的 ``` 加语言名、结尾的 ```。 */

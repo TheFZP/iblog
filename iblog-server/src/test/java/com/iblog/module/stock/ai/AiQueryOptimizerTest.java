@@ -164,4 +164,28 @@ class AiQueryOptimizerTest {
         assertEquals(400, e.getCode());
         assertEquals("AI 未能生成有效查询，请手动调整或重试", e.getMessage());
     }
+
+    /**
+     * 模型被 max_tokens 截断时，JSON 只剩 {"query":"连续3个交易日… 没有收尾。
+     * 这时要能把值捞出来用，而不是报「未能生成有效查询」——线上就是这么翻车的。
+     */
+    @Test
+    void truncatedJsonStillRescuesQueryValue() throws Exception {
+        when(configService.load()).thenReturn(available());
+        when(settingService.getPlain("ai_user_profile")).thenReturn(null);
+        when(llmClient.complete(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn("{\"query\":\"连续3个交易日成交量较前一交易日放大; 总市值小于100亿");
+
+        assertEquals("连续3个交易日成交量较前一交易日放大; 总市值小于100亿",
+                optimizer.optimizeIwencaiQuery("连续三天放量上涨且市值小于100亿"));
+    }
+
+    /** 截断到连引号都没闭合、末尾全是空白的情况，也不该把空白当结果。 */
+    @Test
+    void truncatedJsonWithOnlyWhitespaceValueReturnsEmpty() {
+        assertEquals("", AiQueryOptimizer.cleanOptimizedQuery("{\"query\":\"   \n  "));
+    }
 }
