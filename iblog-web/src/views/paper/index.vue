@@ -809,6 +809,70 @@
                   </p>
                 </div>
                 <div class="advanced__group">
+                  <h3 class="advanced__title">市场情绪（热度）</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.sentimentEnabled"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">启用情绪维度</span>
+                    <span class="trade-window__hint">
+                      总开关：打开后下面的情绪分与热度才参与买入选股；关闭时策略行为与以前完全一致。
+                    </span>
+                  </label>
+                  <div v-if="sentiment" class="sentiment-card">
+                    <div class="sentiment-card__main">
+                      <span class="sentiment-card__score">{{ sentiment.score }}</span>
+                      <span class="sentiment-card__level">{{ sentiment.level }}</span>
+                      <span v-if="sentiment.stale" class="sentiment-card__tag">沿用上一份快照</span>
+                      <span v-else-if="!sentiment.available" class="sentiment-card__tag">
+                        上游暂时取不到数据，此时不会拦单
+                      </span>
+                    </div>
+                    <p class="sentiment-card__line">
+                      涨 {{ sentiment.upCount }} / 跌 {{ sentiment.downCount }} / 平
+                      {{ sentiment.flatCount }}，涨停 {{ sentiment.limitUpCount }} 家、跌停
+                      {{ sentiment.limitDownCount }} 家，炸板率 {{ sentiment.brokenRate }}%，成交
+                      {{ sentiment.amountYi }} 亿
+                    </p>
+                    <p class="sentiment-card__hint">
+                      情绪分只用于「今天该不该出手、出手该多谨慎」，不判断单只股票好坏。
+                    </p>
+                  </div>
+                  <p v-else class="trade-window__hint">打开实时情绪面板需要先保存策略并保持页面在交易时段内。</p>
+                  <div class="advanced__grid">
+                    <label v-for="item in SENTIMENT_NUMERIC_FIELDS" :key="item.key" class="field">
+                      <span class="field__label">{{ item.label }}</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm[item.key]"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf(item.key).min"
+                          :max="ruleOf(item.key).max"
+                          :step="item.step"
+                          :disabled="!strategy"
+                        />
+                        <span v-if="item.unit" class="field__unit">{{ item.unit }}</span>
+                      </span>
+                      <span v-if="item.hint" class="field__hint">{{ item.hint }}</span>
+                    </label>
+                  </div>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.requireHotRankUp"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">热榜排名必须比上次上升</span>
+                    <span class="trade-window__hint">排名下滑的票说明热度正在退潮，直接剔除</span>
+                  </label>
+                  <p v-if="sentimentScoreInvalid" class="trade-window__warn">
+                    清仓线高于开仓线，保存时后端会把清仓线压到开仓线（否则刚买就会被清）。
+                  </p>
+                </div>
+                <div class="advanced__group">
                   <h3 class="advanced__title">交易时段</h3>
                   <label class="trade-window__check">
                     <input
@@ -1667,6 +1731,8 @@ import type {
   PaperTrade
 } from '@/api/paper'
 import { fmtNum, toneClass } from '@/utils/stockFormat'
+import { fetchMarketSentiment } from '@/api/stock'
+import type { MarketSentiment } from '@/api/stock'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
 import { useSettings } from '@/composables/useSettings'
 
@@ -1709,6 +1775,8 @@ type NumericParamKey = Exclude<
   | 'requireAboveVwap'
   | 'requireHolderShrink'
   | 'affordableOnly'
+  | 'sentimentEnabled'
+  | 'requireHotRankUp'
 >
 
 /** 次日开盘强制卖出默认关闭 */
@@ -1782,7 +1850,14 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   noLimitUpWithinDays: 0,
   requireHolderShrink: false,
   profitRequire: 0,
-  affordableOnly: false
+  affordableOnly: false,
+  sentimentEnabled: false,
+  sentimentBuyMinScore: 0,
+  sentimentExitScore: 0,
+  hotRankTopN: 0,
+  requireHotRankUp: false,
+  hotnessScore: 0,
+  sentimentChangeMaxPct: 0
 }
 
 interface NumberRule {
@@ -1841,7 +1916,12 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   vol5OverVol20Min: { min: 0, max: 100, integer: false },
   totalCapMinYi: { min: 0, max: 100000, integer: false },
   noLimitUpWithinDays: { min: 0, max: 120, integer: true },
-  profitRequire: { min: 0, max: 3, integer: true }
+  profitRequire: { min: 0, max: 3, integer: true },
+  sentimentBuyMinScore: { min: 0, max: 100, integer: true },
+  sentimentExitScore: { min: 0, max: 100, integer: true },
+  hotRankTopN: { min: 0, max: 100, integer: true },
+  hotnessScore: { min: 0, max: 100, integer: true },
+  sentimentChangeMaxPct: { min: 0, max: 20, integer: false }
 }
 
 const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
@@ -1960,6 +2040,45 @@ const STRICT_NUMERIC_FIELDS: AdvancedField[] = [
   }
 ]
 
+/** 情绪维度区固定 7 项：5 个数值 + 2 个开关（总开关、热度须上升） */
+const SENTIMENT_NUMERIC_FIELDS: AdvancedField[] = [
+  {
+    key: 'sentimentBuyMinScore',
+    label: '情绪开仓线',
+    step: 5,
+    unit: '分',
+    hint: '市场情绪跌破该分就不开新仓（0=不限）'
+  },
+  {
+    key: 'sentimentExitScore',
+    label: '情绪清仓线',
+    step: 5,
+    unit: '分',
+    hint: '跌破该分无条件清仓（0=不限；高于开仓线会被压平）'
+  },
+  {
+    key: 'hotRankTopN',
+    label: '只要热榜前 N',
+    step: 5,
+    unit: '名',
+    hint: '候选必须来自热榜前 N 名，0=不限'
+  },
+  {
+    key: 'hotnessScore',
+    label: '热榜名次加分',
+    step: 1,
+    unit: '分',
+    hint: '第 1 名拿满分，名次越靠后越少'
+  },
+  {
+    key: 'sentimentChangeMaxPct',
+    label: '情绪高涨时涨幅上限放宽到',
+    step: 0.5,
+    unit: '%',
+    hint: '情绪越热越接近该上限，情绪差时按 60% 收紧；0=不自适应'
+  }
+]
+
 /** 交易时段区固定 3 项：次日开盘强制卖出开关 + 自动买入时间窗起止 */
 const TRADE_WINDOW_FIELD_COUNT = 3
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
@@ -1970,6 +2089,8 @@ const BOARD_FIELD_COUNT = 2
 const NEW_HIGH_FIELD_COUNT = 4
 /** 严格过滤区固定 17 项：8 个数值项 + 6 个开关 + profitRequire 下拉 + 早盘窗口起止 2 个时间 */
 const STRICT_FILTER_FIELD_COUNT = STRICT_NUMERIC_FIELDS.length + 9
+/** 情绪维度区固定 7 项：5 个数值 + 总开关 + 「热度须上升」开关 */
+const SENTIMENT_FIELD_COUNT = SENTIMENT_NUMERIC_FIELDS.length + 2
 /** 表单顶部固定的 4 项基础参数：最低分、止损、止盈、最长持有天数 */
 const BASIC_FIELD_COUNT = 4
 /** 高级规则面板内的可编辑参数数（不含顶部 4 项基础参数），用于折叠按钮上的「共 N 项」 */
@@ -1979,8 +2100,9 @@ const ADVANCED_PANEL_FIELD_COUNT =
   QUALITY_FIELD_COUNT +
   BOARD_FIELD_COUNT +
   NEW_HIGH_FIELD_COUNT +
-  STRICT_FILTER_FIELD_COUNT
-/** 策略参数总数（含顶部 4 项基础参数），与后端 PaperStrategyParams 的 58 个字段一致 */
+  STRICT_FILTER_FIELD_COUNT +
+  SENTIMENT_FIELD_COUNT
+/** 策略参数总数（含顶部 4 项基础参数），与后端 PaperStrategyParams 的 66 个字段一致 */
 const PARAM_FIELD_COUNT = BASIC_FIELD_COUNT + ADVANCED_PANEL_FIELD_COUNT
 
 /** 参与「权重合计」提示的因子权重字段（用户借此判断分数上限，需与实际加分项保持一致） */
@@ -2000,7 +2122,8 @@ const WEIGHT_KEYS: NumericParamKey[] = [
   'limitUpScore',
   'newHighScore',
   'shrinkVolumeScore',
-  'firstBoardScore'
+  'firstBoardScore',
+  'hotnessScore'
 ]
 
 const ORDER_FILTERS: { value: PaperOrderStatus | ''; label: string }[] = [
@@ -2101,6 +2224,8 @@ const engineLoading = ref(false)
 const engineError = ref('')
 
 const strategies = ref<PaperStrategy[]>([])
+/** 市场情绪快照：只在启用情绪维度时拉取 */
+const sentiment = ref<MarketSentiment | null>(null)
 const strategyForm = ref<StrategyForm>({ ...DEFAULT_STRATEGY_PARAMS })
 const strategyBusy = ref(false)
 const strategyError = ref('')
@@ -2158,6 +2283,12 @@ const openTurnoverInvalid = computed(() => {
   const end = strategyForm.value.openTurnoverEnd
   if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) return true
   return start >= end
+})
+/** 情绪清仓线高于开仓线：后端保存时会把清仓线压平，这里提前告知，免得用户以为配置生效了 */
+const sentimentScoreInvalid = computed(() => {
+  const buy = Number(strategyForm.value.sentimentBuyMinScore) || 0
+  const exit = Number(strategyForm.value.sentimentExitScore) || 0
+  return buy > 0 && exit > buy
 })
 /** 当前下拉选中的规则模板 */
 const selectedRule = computed(
@@ -2446,6 +2577,8 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     result.requireAboveVwap = toBoolean(node.requireAboveVwap)
     result.requireHolderShrink = toBoolean(node.requireHolderShrink)
     result.affordableOnly = toBoolean(node.affordableOnly)
+    result.sentimentEnabled = toBoolean(node.sentimentEnabled)
+    result.requireHotRankUp = toBoolean(node.requireHotRankUp)
     result.openTurnoverStart = toTimeText(
       node.openTurnoverStart,
       DEFAULT_OPEN_TURNOVER_START
@@ -2492,6 +2625,8 @@ function clampStrategyForm(): StrategyForm {
   result.requireAboveVwap = strategyForm.value.requireAboveVwap === true
   result.requireHolderShrink = strategyForm.value.requireHolderShrink === true
   result.affordableOnly = strategyForm.value.affordableOnly === true
+  result.sentimentEnabled = strategyForm.value.sentimentEnabled === true
+  result.requireHotRankUp = strategyForm.value.requireHotRankUp === true
   result.openTurnoverStart = toTimeText(
     strategyForm.value.openTurnoverStart,
     DEFAULT_OPEN_TURNOVER_START
@@ -2536,6 +2671,25 @@ async function loadStrategies() {
   }
 }
 
+/**
+ * 拉取市场情绪快照。
+ *
+ * <p>只在用户开了情绪维度时才请求：没开的人不需要这条每分钟一次的外部调用，
+ * 而且上游失败时页面上多一个「取不到数据」的提示反而添乱。</p>
+ */
+async function loadSentiment() {
+  if (!strategyForm.value.sentimentEnabled) {
+    sentiment.value = null
+    return
+  }
+  try {
+    sentiment.value = await fetchMarketSentiment()
+  } catch {
+    // 情绪取不到不影响模拟盘本身，静默降级：面板显示空态，后端也不会因此拦单
+    sentiment.value = null
+  }
+}
+
 async function loadSelections() {
   const epoch = accountEpoch
   selectionsLoading.value = true
@@ -2572,6 +2726,7 @@ async function loadSecondary() {
     loadStrategies(),
     loadSelections(),
     loadSignals(),
+    loadSentiment(),
     // 定时刷新保留用户当前的下拉选择；切账户后该值为空，会自动选中「当前生效」的一套
     loadRules(selectedRuleId.value ?? 'active')
   ])
@@ -2618,7 +2773,7 @@ async function saveStrategy() {
     replaceStrategy(updated)
     applyStrategyForm()
     flash('规则已保存')
-    await Promise.all([loadEngine(), loadSignals()])
+    await Promise.all([loadEngine(), loadSignals(), loadSentiment()])
   } catch (err) {
     strategyError.value = errText(err)
     flash(strategyError.value, 'error')
@@ -4337,6 +4492,61 @@ onBeforeUnmount(() => {
   margin-top: var(--s-1);
   padding-top: var(--s-3);
   border-top: 1px dashed var(--c-border);
+}
+
+/* ---------- 情绪维度：实时温度计 ---------- */
+.sentiment-card {
+  display: grid;
+  gap: 4px;
+  margin: var(--s-1) 0 var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--c-surface-sunken);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+}
+
+.sentiment-card__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sentiment-card__score {
+  font-family: var(--f-mono);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+
+.sentiment-card__level {
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+}
+
+.sentiment-card__tag {
+  padding: 1px 6px;
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+}
+
+.sentiment-card__line {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sentiment-card__hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  color: var(--c-text-faint);
 }
 
 /* ---------- P6：质量因子 ---------- */

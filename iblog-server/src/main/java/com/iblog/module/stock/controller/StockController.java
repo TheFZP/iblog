@@ -6,6 +6,7 @@ import com.iblog.module.stock.model.IndustryData;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketIndex;
+import com.iblog.module.stock.model.MarketSentiment;
 import com.iblog.module.stock.model.MoneyFlow;
 import com.iblog.module.stock.model.MoneyFlowHistoryItem;
 import com.iblog.module.stock.model.OrderBook;
@@ -14,6 +15,7 @@ import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
 import com.iblog.module.stock.service.IndustryService;
+import com.iblog.module.stock.service.MarketSentimentService;
 import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.support.StockCode;
 import io.swagger.v3.oas.annotations.Operation;
@@ -47,6 +49,7 @@ public class StockController {
     private final HotListService hotListService;
     private final EastmoneyService eastmoneyService;
     private final IndustryService industryService;
+    private final MarketSentimentService marketSentimentService;
 
     /** 首页展示的主要指数（上证 / 深证 / 创业板 / 沪深300 / 科创50 / 中证500） */
     private static final List<String> INDEX_CODES = List.of(
@@ -151,6 +154,15 @@ public class StockController {
     @GetMapping("/industry")
     public R<IndustryData> industry(@Parameter(description = "股票代码") @RequestParam String code) {
         return R.ok(industryService.fetchIndustry(code));
+    }
+
+    @Operation(summary = "市场情绪（赚钱效应温度计）",
+            description = "综合涨跌家数、涨跌停家数、炸板率、指数涨幅与成交额得到 0~100 的情绪分。"
+                    + "available=false 表示上游暂时取不到数据，此时 score 是中性的 50 分占位，"
+                    + "调用方不应据此做任何决策；stale=true 表示沿用了上一份快照")
+    @GetMapping("/sentiment")
+    public R<MarketSentiment> sentiment() {
+        return R.ok(marketSentimentService.current());
     }
 
     @Operation(summary = "股票代码归一化（调试用）")

@@ -16,12 +16,15 @@ import com.iblog.module.paper.support.TradeCalendar;
 import com.iblog.module.stock.model.HotStockItem;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
+import com.iblog.module.stock.model.MarketSentiment;
 import com.iblog.module.stock.model.MoneyFlow;
 import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
+import com.iblog.module.stock.service.MarketSentimentService;
 import com.iblog.module.stock.service.StockFundamentalService;
 import com.iblog.module.stock.service.TencentService;
+import com.iblog.module.stock.support.MarketSentimentRule;
 import com.iblog.module.stock.support.StockCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -89,6 +92,7 @@ public class PaperSelectionService {
     private final PaperSignalMapper signalMapper;
     private final PaperStrategyService strategyService;
     private final PaperAccountService accountService;
+    private final MarketSentimentService sentimentService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
     private final ObjectMapper objectMapper;
@@ -115,9 +119,13 @@ public class PaperSelectionService {
             log.warn("选股：热榜获取失败 {}", ex.getMessage());
         }
 
+        // 情绪只在规则开了的时候取一次，整个池子共用（服务内部还有 60 秒缓存）
+        MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
+
         List<Candidate> selected = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         int scanned = 0;
+        int rank = 0;
         int[] vwapBudget = {MAX_VWAP_CHECKS};
         int[] deepBudget = {MAX_DEEP_CHECKS};
         int[] fundamentalBudget = {fundamentalService.upstreamRequests()};
@@ -129,6 +137,12 @@ public class PaperSelectionService {
             if (code.isEmpty() || StockCode.isHk(code) || !seen.add(code)) {
                 continue;
             }
+            // 热榜名次：热榜本身就是按热度排的，用遍历序当名次，不额外请求
+            rank++;
+            // 只做热榜前 N 名：热度是稀缺注意力，排在后面的说明资金没在看
+            if (params.getHotRankTopN() > 0 && rank > params.getHotRankTopN()) {
+                break;
+            }
             String name = item.getName() == null ? "" : item.getName();
             // 「非 ST」是硬条件，无论是否开严格模式都成立
             if (name.toUpperCase().contains("ST")) {
@@ -136,7 +150,7 @@ public class PaperSelectionService {
             }
             scanned++;
             try {
-                Candidate candidate = evaluate(strategy, params, code, name, item,
+                Candidate candidate = evaluate(strategy, params, code, name, item, rank, sentiment,
                         account, vwapBudget, deepBudget, fundamentalBudget);
                 if (candidate != null) {
                     selected.add(candidate);
@@ -234,7 +248,7 @@ public class PaperSelectionService {
     // ---------- 打分 ----------
 
     private Candidate evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
-                               HotStockItem hot, PaperAccount account,
+                               HotStockItem hot, int hotRank, MarketSentiment sentiment, PaperAccount account,
                                int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget) {
         List<KlineItem> bars = klineCacheService.load(code, MIN_BARS);
         if (bars.size() < 30) {
@@ -314,6 +328,11 @@ public class PaperSelectionService {
                 return null;
             }
         }
+        // 热度硬条件：只做热度还在上升的票（排名比上一次靠前）
+        if (params.isRequireHotRankUp() && (hot == null || hot.getHotRankChg() <= 0)) {
+            log.debug("选股：剔除热度未上升 code={} name={}", code, name);
+            return null;
+        }
 
         int score = 0;
         List<String> reasons = new ArrayList<>();
@@ -343,13 +362,29 @@ public class PaperSelectionService {
             score += params.getRsiScore();
             reasons.add(String.format("RSI %.0f", rsi));
         }
-        if (changePct > params.getChangeMinPct() && changePct < params.getChangeMaxPct()) {
+        // 当日涨幅：情绪越热，可容忍的上限越宽（冰点日追高就是接盘）
+        double changeMax = params.getChangeMaxPct();
+        double sentimentScore = sentiment != null && sentiment.isAvailable() ? sentiment.getScore() : Double.NaN;
+        double effectiveChangeMax = MarketSentimentRule.effectiveChangeMax(
+                changeMax, params.getSentimentChangeMaxPct(), sentimentScore);
+        if (changePct > params.getChangeMinPct() && changePct < effectiveChangeMax) {
             score += params.getChangeScore();
             reasons.add("当日温和上涨");
         }
         if (hot != null && hot.getHotRankChg() > 0) {
             score += params.getHotRankScore();
             reasons.add("热度上升");
+        }
+        // 热度分：热榜名次越靠前分越高，情绪越热这项越值钱（场内资金愿意接力）
+        if (params.getHotnessScore() > 0 && hotRank > 0) {
+            int weight = MarketSentimentRule.hotnessWeight(hotRank, params.getUniverseSize());
+            if (weight > 0) {
+                int boost = Math.round(params.getHotnessScore() * weight * 0.01f);
+                if (boost > 0) {
+                    score += boost;
+                    reasons.add("热榜第 " + hotRank + " 名");
+                }
+            }
         }
         // 换手率：活跃但不过热
         if (quote != null && PaperScreenRules.inRange(quote.getTurnoverRate(),

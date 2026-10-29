@@ -462,6 +462,20 @@ export interface PaperStrategyParams {
   profitRequire?: number
   /** 硬条件·只保留当前资金买得起的标的（科创板 200 股起） */
   affordableOnly?: boolean
+  /** 情绪维度总开关：关掉时以下字段全部不生效（默认关，老规则行为不变） */
+  sentimentEnabled?: boolean
+  /** 情绪分低于该值时不开新仓（0=不限） */
+  sentimentBuyMinScore?: number
+  /** 情绪分低于该值时无条件清仓（0=不限，引擎会压到不高于开仓线） */
+  sentimentExitScore?: number
+  /** 候选必须来自热榜前 N 名（0=不限） */
+  hotRankTopN?: number
+  /** 候选的热榜排名必须较上次上升（热度在升温） */
+  requireHotRankUp?: boolean
+  /** 热榜名次加分上限（第 1 名拿满分，往后线性递减） */
+  hotnessScore?: number
+  /** 情绪越热，当日涨幅上限可放宽到该值（0=不做自适应） */
+  sentimentChangeMaxPct?: number
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */

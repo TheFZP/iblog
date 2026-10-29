@@ -1,5 +1,6 @@
 package com.iblog.module.paper.service;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.iblog.common.exception.BizException;
 import com.iblog.config.IblogProperties;
 import com.iblog.module.paper.dto.PaperOrderRequest;
@@ -16,6 +17,8 @@ import com.iblog.module.paper.support.PaperNumbers;
 import com.iblog.module.paper.support.PaperStrategyParams;
 import com.iblog.module.paper.support.TradeCalendar;
 import com.iblog.module.stock.model.KlineItem;
+import com.iblog.module.stock.model.MarketSentiment;
+import com.iblog.module.stock.service.MarketSentimentService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +52,7 @@ public class PaperAutoTrader {
     private final PaperOrderService orderService;
     private final PaperSignalMapper signalMapper;
     private final KlineCacheService klineCacheService;
+    private final MarketSentimentService sentimentService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
     private final ObjectMapper objectMapper;
@@ -68,7 +72,10 @@ public class PaperAutoTrader {
         account = accountService.recompute(account, positions);
         boolean brake = isDailyLossBrake(account);
 
-        sell(account, positions, strategy, params);
+        // 情绪只在规则显式开启时去取；关掉的人连一次上游请求都不该多花
+        MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
+
+        sell(account, positions, strategy, params, sentiment);
 
         if (brake) {
             log.warn("模拟盘触发日亏熔断 account={} 今日收益={}%，只减仓不加仓", account.getId(), account.getTotalProfitPct());
@@ -80,7 +87,7 @@ public class PaperAutoTrader {
             return;
         }
         account = accountService.recompute(account, positionService.list(account.getId()));
-        buy(account, strategy);
+        buy(account, strategy, sentiment);
     }
 
     private boolean isAutoTradeOn(PaperAccount account) {
@@ -91,14 +98,19 @@ public class PaperAutoTrader {
 
     // ---------- 卖出 ----------
 
-    private void sell(PaperAccount account, List<PaperPosition> positions, PaperStrategy strategy, PaperStrategyParams params) {
+    private void sell(PaperAccount account, List<PaperPosition> positions, PaperStrategy strategy,
+                      PaperStrategyParams params, MarketSentiment sentiment) {
+        // 情绪冰点清仓：整市场跌停一片时，技术位止盈止损都来不及，先降风险
+        String exitReason = sentimentExitReason(params, sentiment);
         for (PaperPosition position : positions) {
             int available = position.getAvailableQuantity() == null ? 0 : position.getAvailableQuantity();
             if (available <= 0) {
                 continue;
             }
             String reason;
-            if (params.isSellAtOpen() && holdingDays(position) >= 1) {
+            if (exitReason != null) {
+                reason = exitReason;
+            } else if (params.isSellAtOpen() && holdingDays(position) >= 1) {
                 // 隔夜策略：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈/MA10
                 reason = "次日开盘卖出";
             } else {
@@ -107,19 +119,41 @@ public class PaperAutoTrader {
             if (reason == null) {
                 continue;
             }
-            PaperOrderRequest request = new PaperOrderRequest();
-            request.setCode(position.getCode());
-            request.setSide(PaperConstants.SIDE_SELL);
-            request.setType(PaperConstants.TYPE_MARKET);
-            request.setQuantity(available);
-            try {
-                var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
-                recordSignal(account, strategy, position.getCode(), position.getName(), PaperConstants.ACTION_SELL,
-                        "自动卖出（" + reason + "）", filled.getAvgPrice());
-            } catch (BizException ex) {
-                log.info("自动卖出被拒 code={} reason={}", position.getCode(), ex.getMessage());
-            }
+            doSell(account, strategy, position, available, reason);
         }
+    }
+
+    private void doSell(PaperAccount account, PaperStrategy strategy, PaperPosition position, int available, String reason) {
+        PaperOrderRequest request = new PaperOrderRequest();
+        request.setCode(position.getCode());
+        request.setSide(PaperConstants.SIDE_SELL);
+        request.setType(PaperConstants.TYPE_MARKET);
+        request.setQuantity(available);
+        try {
+            var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
+            recordSignal(account, strategy, position.getCode(), position.getName(), PaperConstants.ACTION_SELL,
+                    "自动卖出（" + reason + "）", filled.getAvgPrice());
+        } catch (BizException ex) {
+            log.info("自动卖出被拒 code={} reason={}", position.getCode(), ex.getMessage());
+        }
+    }
+
+    /**
+     * 情绪冰点是否该无条件清仓。
+     *
+     * <p>只在三个条件同时满足时成立：规则开了情绪、配了清仓线、且上游确实给了数据。
+     * <b>没有实时数据时绝不返回理由</b>——把「拿不到情绪」当成「情绪为 0」会导致
+     * 某个 API 抖动就把所有仓位清光，这是最坏的失败模式。</p>
+     */
+    private String sentimentExitReason(PaperStrategyParams params, MarketSentiment sentiment) {
+        if (sentiment == null || !sentiment.isAvailable()) {
+            return null;
+        }
+        double exitScore = params.getSentimentExitScore();
+        if (exitScore <= 0 || sentiment.getScore() > exitScore) {
+            return null;
+        }
+        return "市场情绪冰点 " + sentiment.getScore() + "分（" + sentiment.getLevel() + "）";
     }
 
     private String sellReason(PaperPosition position, PaperStrategyParams params) {
@@ -172,9 +206,21 @@ public class PaperAutoTrader {
 
     // ---------- 买入 ----------
 
-    private void buy(PaperAccount account, PaperStrategy strategy) {
+    private void buy(PaperAccount account, PaperStrategy strategy, MarketSentiment sentiment) {
         PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
         if (!params.inBuyWindow(calendar.now())) {
+            return;
+        }
+        String blockReason = sentimentBuyBlockReason(params, sentiment);
+        if (blockReason != null) {
+            log.info("模拟盘情绪不足不开新仓 account={} 情绪={}分({}) 门槛={}",
+                    account.getId(),
+                    sentiment == null ? "-" : sentiment.getScore(),
+                    sentiment == null ? "-" : sentiment.getLevel(),
+                    params.getSentimentBuyMinScore());
+            // 记一条信号，用户在前端能看见「为什么今天没买」，而不是以为引擎坏了。
+            // 引擎每 15 秒一个 tick，必须每天只记一次，否则信号表会被同一条刷屏
+            recordBlockedOnce(account, strategy, blockReason);
             return;
         }
         List<PaperSignal> candidates = selectionService.recentCandidates(account.getId());
@@ -236,6 +282,44 @@ public class PaperAutoTrader {
     private boolean holds(List<PaperPosition> positions, String code) {
         return positions.stream().anyMatch(position ->
                 code.equals(position.getCode()) && position.getQuantity() != null && position.getQuantity() > 0);
+    }
+
+    /**
+     * 情绪不足时的买入拦截原因。
+     *
+     * <p>与「冰点清仓」相反，这里只要情绪分低于开仓线就返回理由。
+     * 同样要求 {@code available}——没数据不能当「情绪为 0」用两次：
+     * 那样会一边清仓一边永不买入，等于把策略关掉。</p>
+     */
+    private String sentimentBuyBlockReason(PaperStrategyParams params, MarketSentiment sentiment) {
+        if (sentiment == null || !sentiment.isAvailable()) {
+            return null;
+        }
+        double minScore = params.getSentimentBuyMinScore();
+        if (minScore <= 0 || sentiment.getScore() >= minScore) {
+            return null;
+        }
+        return "市场情绪 " + sentiment.getScore() + "分（" + sentiment.getLevel() + "）低于开仓线 " + minScore;
+    }
+
+    /**
+     * 每天只记一次的「暂停买入」信号。
+     *
+     * <p>引擎 15 秒一个 tick，直接写会让信号表被同一条刷屏几十遍；
+     * 而完全不记，用户又会以为引擎坏了。折中：同一天同一条原因只记一次。</p>
+     */
+    private void recordBlockedOnce(PaperAccount account, PaperStrategy strategy, String reason) {
+        String text = "暂停买入（" + reason + "）";
+        String today = calendar.todayText();
+        Long exists = signalMapper.selectCount(Wrappers.<PaperSignal>lambdaQuery()
+                .eq(PaperSignal::getAccountId, account.getId())
+                .eq(PaperSignal::getAction, PaperConstants.ACTION_BUY)
+                .eq(PaperSignal::getTradeDate, today)
+                .eq(PaperSignal::getReason, text));
+        if (exists != null && exists > 0) {
+            return;
+        }
+        recordSignal(account, strategy, "", "大盘", PaperConstants.ACTION_BUY, text, null);
     }
 
     // ---------- 风控/工具 ----------

@@ -186,6 +186,39 @@ export function fetchHotList() {
   return get<HotStockItem[]>('/stock/hotlist')
 }
 
+/**
+ * 市场情绪（赚钱效应温度计）。
+ *
+ * <p>`available=false` 表示上游暂时取不到数据，此时 `score` 是中性 50 分占位，
+ * 不能当真；`stale=true` 表示沿用了上一份快照（分钟级缓存 + 失败兜底）。</p>
+ */
+export interface MarketSentiment {
+  available: boolean
+  stale: boolean
+  /** 0~100，越高越热 */
+  score: number
+  /** 亢奋 / 活跃 / 中性 / 低迷 / 冰点 */
+  level: string
+  upCount: number
+  downCount: number
+  flatCount: number
+  limitUpCount: number
+  limitDownCount: number
+  /** 炸板家数 */
+  brokenCount: number
+  /** 炸板率（%）= 炸板 ÷（涨停 + 炸板） */
+  brokenRate: number
+  /** 沪深两市成交额（亿元） */
+  amountYi: number
+  indexChangePct: number
+  tradeDate: string
+  updatedAt: string
+}
+
+export function fetchMarketSentiment() {
+  return get<MarketSentiment>('/stock/sentiment')
+}
+
 export function fetchOrderBook(code: string) {
   return get<OrderBook>('/stock/orderbook', { code })
 }

@@ -145,4 +145,74 @@ class PaperStrategyParamsTest {
         assertEquals("14:30", again.getBuyStartTime());
         assertEquals("15:00", again.getBuyEndTime());
     }
+
+    @Test
+    void sentimentFieldsDefaultToOff() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper, "{}");
+        assertFalse(params.isSentimentEnabled());
+        assertEquals(0, params.getSentimentBuyMinScore(), 0.001);
+        assertEquals(0, params.getSentimentExitScore(), 0.001);
+        assertEquals(0, params.getHotRankTopN());
+        assertFalse(params.isRequireHotRankUp());
+        assertEquals(0, params.getHotnessScore());
+        assertEquals(0, params.getSentimentChangeMaxPct(), 0.001);
+    }
+
+    @Test
+    void sentimentFieldsParseAndClamp() {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"sentimentEnabled\":true,\"sentimentBuyMinScore\":45,\"sentimentExitScore\":20,"
+                        + "\"hotRankTopN\":30,\"requireHotRankUp\":true,\"hotnessScore\":8,"
+                        + "\"sentimentChangeMaxPct\":12.5}");
+        assertTrue(params.isSentimentEnabled());
+        assertEquals(45, params.getSentimentBuyMinScore(), 0.001);
+        assertEquals(20, params.getSentimentExitScore(), 0.001);
+        assertEquals(30, params.getHotRankTopN());
+        assertTrue(params.isRequireHotRankUp());
+        assertEquals(8, params.getHotnessScore());
+        assertEquals(12.5, params.getSentimentChangeMaxPct(), 0.001);
+
+        // 越界输入一律钳到合法区间，而不是抛错
+        // 注意 sentimentExitScore 会被「不得高于开仓线」再压一次，所以这里同时给足开仓线才能验到 100 的上界
+        PaperStrategyParams clamped = PaperStrategyParams.parse(mapper,
+                "{\"sentimentBuyMinScore\":-20,\"sentimentExitScore\":500,"
+                        + "\"hotRankTopN\":999,\"hotnessScore\":-5,\"sentimentChangeMaxPct\":99}");
+        assertEquals(0, clamped.getSentimentBuyMinScore(), 0.001);
+        assertEquals(0, clamped.getSentimentExitScore(), 0.001);
+        assertEquals(100, clamped.getHotRankTopN());
+        assertEquals(0, clamped.getHotnessScore());
+        assertEquals(50, clamped.getSentimentChangeMaxPct(), 0.001);
+
+        PaperStrategyParams clampedExit = PaperStrategyParams.parse(mapper,
+                "{\"sentimentBuyMinScore\":90,\"sentimentExitScore\":500}");
+        assertEquals(90, clampedExit.getSentimentExitScore(), 0.001);
+    }
+
+    @Test
+    void exitScoreNeverAboveBuyScore() {
+        // 清仓线高于开仓线时会「刚买就清仓」，parse 直接把清仓线压平到开仓线
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"sentimentEnabled\":true,\"sentimentBuyMinScore\":40,\"sentimentExitScore\":70}");
+        assertEquals(40, params.getSentimentExitScore(), 0.001);
+        // 反向配置（清仓线更低）是合理的，保持原值
+        PaperStrategyParams normal = PaperStrategyParams.parse(mapper,
+                "{\"sentimentBuyMinScore\":60,\"sentimentExitScore\":25}");
+        assertEquals(25, normal.getSentimentExitScore(), 0.001);
+    }
+
+    @Test
+    void sentimentRoundTrip() throws Exception {
+        PaperStrategyParams params = PaperStrategyParams.parse(mapper,
+                "{\"sentimentEnabled\":true,\"sentimentBuyMinScore\":50,\"sentimentExitScore\":30,"
+                        + "\"hotRankTopN\":15,\"requireHotRankUp\":true,\"hotnessScore\":6,"
+                        + "\"sentimentChangeMaxPct\":9.5}");
+        PaperStrategyParams again = PaperStrategyParams.parse(mapper, params.toJson(mapper));
+        assertTrue(again.isSentimentEnabled());
+        assertEquals(50, again.getSentimentBuyMinScore(), 0.001);
+        assertEquals(30, again.getSentimentExitScore(), 0.001);
+        assertEquals(15, again.getHotRankTopN());
+        assertTrue(again.isRequireHotRankUp());
+        assertEquals(6, again.getHotnessScore());
+        assertEquals(9.5, again.getSentimentChangeMaxPct(), 0.001);
+    }
 }

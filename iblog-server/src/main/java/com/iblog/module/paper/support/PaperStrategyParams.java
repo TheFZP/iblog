@@ -157,6 +157,29 @@ public class PaperStrategyParams {
     /** 只保留当前可用资金买得起的标的（按各板最小申报单位估算一手成本） */
     private boolean affordableOnly = false;
 
+    // ---------- 市场情绪 / 热度 ----------
+
+    /**
+     * 情绪维度总开关。
+     *
+     * <p>关掉时下面所有情绪字段都不生效，引擎行为与加这个功能之前完全一致
+     * ——老规则的参数 JSON 里没有这些字段，解析出来是默认值，
+     * 而默认值里开关是 false，所以升级不会突然改变已有规则的行为。</p>
+     */
+    private boolean sentimentEnabled = false;
+    /** 情绪分低于该值时不开新仓（0 表示不限制） */
+    private double sentimentBuyMinScore = 0;
+    /** 情绪分低于该值时直接清仓（0 表示不限制；应小于等于买入下限） */
+    private double sentimentExitScore = 0;
+    /** 候选必须来自热榜前 N 名（0 表示不限） */
+    private int hotRankTopN = 0;
+    /** 候选的热榜排名必须较上次上升（热度在升温） */
+    private boolean requireHotRankUp = false;
+    /** 个股热度分项满分（按热榜排名换算：越靠前越高） */
+    private int hotnessScore = 0;
+    /** 情绪越好，「当日涨幅上限」在此基础上额外放宽到该值（0 表示不额外放宽） */
+    private double sentimentChangeMaxPct = 0;
+
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     public static PaperStrategyParams parse(ObjectMapper mapper, String json) {
@@ -232,6 +255,20 @@ public class PaperStrategyParams {
             params.requireHolderShrink = bool(node, "requireHolderShrink", params.requireHolderShrink);
             params.profitRequire = integer(node, "profitRequire", params.profitRequire, 0, 3);
             params.affordableOnly = bool(node, "affordableOnly", params.affordableOnly);
+
+            params.sentimentEnabled = bool(node, "sentimentEnabled", params.sentimentEnabled);
+            params.sentimentBuyMinScore = number(node, "sentimentBuyMinScore",
+                    params.sentimentBuyMinScore, 0, 100);
+            params.sentimentExitScore = number(node, "sentimentExitScore", params.sentimentExitScore, 0, 100);
+            params.hotRankTopN = integer(node, "hotRankTopN", params.hotRankTopN, 0, 100);
+            params.requireHotRankUp = bool(node, "requireHotRankUp", params.requireHotRankUp);
+            params.hotnessScore = integer(node, "hotnessScore", params.hotnessScore, 0, 100);
+            params.sentimentChangeMaxPct = number(node, "sentimentChangeMaxPct",
+                    params.sentimentChangeMaxPct, 0, 50);
+            // 清仓线不能高于开仓线，否则会出现「刚买就触发清仓」的自相矛盾配置
+            if (params.sentimentExitScore > params.sentimentBuyMinScore) {
+                params.sentimentExitScore = params.sentimentBuyMinScore;
+            }
         } catch (Exception ignored) {
             // 脏 JSON 用默认值
         }
