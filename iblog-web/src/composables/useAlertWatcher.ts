@@ -1,9 +1,10 @@
 import { watch } from 'vue'
 import { fetchQuotes } from '@/api/stock'
-import { getMarketState, refreshIntervalMs, isTradingHours } from '@/utils/marketTime'
+import { getMarketState, refreshIntervalMs, isTradingHours, getToday } from '@/utils/marketTime'
 import { useNotify } from './useNotify'
 import { usePriceAlerts } from './usePriceAlerts'
 import { usePositionAlerts } from './usePositionAlerts'
+import { useMaAlerts } from './useMaAlerts'
 import { useWatchlist } from './useWatchlist'
 import { usePositions } from './usePositions'
 import { useAuth } from './useAuth'
@@ -64,6 +65,7 @@ async function tick() {
   const { positions } = usePositions()
   const { alerts, checkPriceAlerts } = usePriceAlerts()
   const { checkPositionAlerts } = usePositionAlerts()
+  const { maAlerts, checkMaAlerts } = useMaAlerts()
 
   const codes = new Set<string>()
   for (const s of watchlist.value) {
@@ -73,6 +75,10 @@ async function tick() {
     if (p.code) codes.add(p.code)
   }
   for (const a of alerts.value) {
+    if (a.code && a.enabled) codes.add(a.code)
+  }
+  // 均线提醒的标的未必在自选/持仓里，漏了就一直不会被巡检
+  for (const a of maAlerts.value) {
     if (a.code && a.enabled) codes.add(a.code)
   }
 
@@ -99,6 +105,9 @@ async function tick() {
     // 价格提醒需要全局开关（页面上的「通知」开关）
     await checkPriceAlerts({ code: q.code, name: q.name, price: q.price }, true)
     await checkPositionAlerts(q.code, q.name, q.price)
+    // 均线穿越：用昨收当基准，比「上一轮价格」稳定（不会因为两次巡检挨得近而误判）。
+    // 它自己会按交易日期做每日一次去重，所以这里每轮都可以调。
+    await checkMaAlerts(q.code, q.prevClose ?? null, q.price, getToday())
   }
 }
 
@@ -109,11 +118,15 @@ function schedule() {
   const { watchlist } = useWatchlist()
   const { positions } = usePositions()
   const { alerts } = usePriceAlerts()
+  const { maAlerts } = useMaAlerts()
 
   const code = probeCode(
     watchlist.value.map((s) => s.code),
     positions.value.map((p) => p.code),
-    alerts.value.filter((a) => a.enabled).map((a) => a.code)
+    alerts.value
+      .filter((a) => a.enabled)
+      .map((a) => a.code)
+      .concat(maAlerts.value.filter((a) => a.enabled).map((a) => a.code))
   )
   const state = getMarketState(code)
   const ms = refreshIntervalMs(state, document.visibilityState !== 'visible')
@@ -189,6 +202,7 @@ export function useAutoStartAlertWatcher() {
   const { authenticated } = useAuth()
   const { alerts } = usePriceAlerts()
   const { configs } = usePositionAlerts()
+  const { maAlerts } = useMaAlerts()
   const { permission } = useNotify()
 
   watch(
@@ -196,9 +210,10 @@ export function useAutoStartAlertWatcher() {
       authenticated.value,
       alerts.value.some((a) => a.enabled),
       Object.keys(configs.value).length > 0,
+      maAlerts.value.some((a) => a.enabled),
       permission.value === 'granted'
     ] as const,
-    ([isAuthed, hasPriceAlert, hasPositionAlert, canNotify]) => {
+    ([isAuthed, hasPriceAlert, hasPositionAlert, hasMaAlert, canNotify]) => {
       // 未登录时行情接口一律 401，巡检只会反复打空请求；权限被收回（或从未授予）时同理，扫了也发不出去
       if (!isAuthed || !canNotify) {
         if (started) {
@@ -206,7 +221,7 @@ export function useAutoStartAlertWatcher() {
         }
         return
       }
-      if (hasPriceAlert || hasPositionAlert) {
+      if (hasPriceAlert || hasPositionAlert || hasMaAlert) {
         startAlertWatcher()
       }
     },

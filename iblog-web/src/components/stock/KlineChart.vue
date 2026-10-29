@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts'
 import type { KlineItem } from '@/api/stock'
 import { latestRightRange } from '@/utils/chartViewport'
+import { MA_COLOR_MAP } from '@/composables/useChartSettings'
 import {
   MINUTE_PERIODS,
   chartTheme,
@@ -43,8 +44,24 @@ const props = withDefaults(
     costPrice?: number | null
     /** 昨收，用于画参考线 */
     prevClose?: number | null
+    /**
+     * 要显示的均线周期。
+     *
+     * <p>由调用方传入而不是组件内部读 localStorage：技术分析页与详情页可以各自
+     * 传不同组合（比如分析页固定显示 MA20/MA60 便于判断趋势），组件保持无状态，
+     * 单测和 Storybook 式的隔离渲染才好做。</p>
+     */
+    maPeriods?: number[]
+    /** 是否画近 30 根 K 线的最高/最低价参考线 */
+    show30DayHL?: boolean
   }>(),
-  { loading: false, costPrice: null, prevClose: null }
+  {
+    loading: false,
+    costPrice: null,
+    prevClose: null,
+    maPeriods: () => [5, 10, 20, 60],
+    show30DayHL: false
+  }
 )
 
 const container = ref<HTMLDivElement | null>(null)
@@ -55,8 +72,13 @@ let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
 let volumeSeries: ISeriesApi<'Histogram'> | null = null
 const maSeries = new Map<number, ISeriesApi<'Line'>>()
+/** 已创建过 series 的周期，增删均线时按这个差量建/删 series */
+let builtPeriods: number[] = []
 let costLine: IPriceLine | null = null
 let prevCloseLine: IPriceLine | null = null
+/** 30 日最高/最低参考线 */
+let high30Line: IPriceLine | null = null
+let low30Line: IPriceLine | null = null
 let resizeObserver: ResizeObserver | null = null
 /** 已 fitContent 的数据身份，切换股票/周期才重置视图，定时刷新时保留缩放 */
 let fittedKey = ''
@@ -67,13 +89,7 @@ let wheelTarget: HTMLDivElement | null = null
 /** 兜底对齐用的帧号（chart 内部若异步处理滚轮，下一帧再校正一次） */
 let lockFrame = 0
 
-const MA_PERIODS = [5, 10, 20, 60]
-const MA_COLORS: Record<number, string> = {
-  5: '#f0b429',
-  10: '#4a90d9',
-  20: '#b56bd9',
-  60: '#5fbf8f'
-}
+const MA_COLORS = MA_COLOR_MAP
 
 function createOrUpdateChart() {
   if (!container.value) {
@@ -133,19 +149,6 @@ function createOrUpdateChart() {
     })
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
 
-    for (const p of MA_PERIODS) {
-      maSeries.set(
-        p,
-        chart.addSeries(LineSeries, {
-          color: MA_COLORS[p],
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false
-        })
-      )
-    }
-
     resizeObserver = new ResizeObserver(() => {
       if (container.value && chart) {
         chart.applyOptions({
@@ -160,6 +163,47 @@ function createOrUpdateChart() {
     wheelTarget = container.value
     wheelTarget.addEventListener('wheel', handleWheel, { passive: true })
   }
+}
+
+/**
+ * 按当前需要的周期增删均线 series。
+ *
+ * <p>为什么不一次性把 5/10/20/30/60/120/250 全建好、只控制显隐：lightweight-charts 的
+ * series 即使没数据也会占一条 legend 与一次重绘开销，250 日均线在只有 120 根数据时
+ * 完全空转。按差量建删既省这层开销，也让图例天然只出现用户勾选的周期。</p>
+ *
+ * <p>已存在的周期不重建——重建会丢掉 series 缓冲，切勾选时图会闪一下。</p>
+ */
+function syncMaSeries() {
+  if (!chart) {
+    return
+  }
+  const wanted = props.maPeriods.length > 0 ? props.maPeriods : []
+  for (const p of builtPeriods) {
+    if (!wanted.includes(p)) {
+      const series = maSeries.get(p)
+      if (series) {
+        chart.removeSeries(series)
+        maSeries.delete(p)
+      }
+    }
+  }
+  for (const p of wanted) {
+    if (maSeries.has(p)) {
+      continue
+    }
+    maSeries.set(
+      p,
+      chart.addSeries(LineSeries, {
+        color: MA_COLORS[p] ?? '#8a8f98',
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      })
+    )
+  }
+  builtPeriods = [...wanted]
 }
 
 /**
@@ -222,6 +266,8 @@ function render() {
   if (!chart) {
     return
   }
+  // 先按当前勾选补齐/移除均线 series，下面的 setData 才有对象可写
+  syncMaSeries()
   const dark = isDarkMode()
   const up = dark ? UP_COLOR.dark : UP_COLOR.light
   const down = dark ? DOWN_COLOR.dark : DOWN_COLOR.light
@@ -268,13 +314,11 @@ function render() {
   volumeSeries?.setData(volumes)
 
   const latest: Record<number, number> = {}
-  for (const p of MA_PERIODS) {
+  const closesAndTimes = sorted.map((k, i) => ({ time: candles[i].time, close: k.close }))
+  for (const p of props.maPeriods) {
     const series = maSeries.get(p)
     if (!series) continue
-    const ma = computeMA(
-      sorted.map((k, i) => ({ time: candles[i].time, close: k.close })),
-      p
-    )
+    const ma = computeMA(closesAndTimes, p)
     series.setData(ma)
     if (ma.length > 0) {
       latest[p] = ma[ma.length - 1].value
@@ -282,7 +326,7 @@ function render() {
   }
   maValues.value = latest
 
-  renderPriceLines()
+  renderPriceLines(sorted)
 
   // 只在数据身份变化（切股票/周期）时重置视图，定时刷新不打断用户的缩放
   const key = `${sorted[0].date}:${sorted.length}:${props.period}`
@@ -292,7 +336,15 @@ function render() {
   }
 }
 
-function renderPriceLines() {
+/**
+ * 画参考线（成本 / 昨收 / 近 30 日高低）。
+ *
+ * <p>30 日高低线取的是<b>当前画布上最近 30 根</b>的最高最低价：日内周期看的是近 30 根
+ * 分钟线的箱体，日线看的是近 30 个交易日的箱体，两种口径都由同一条规则自然得出。
+ * 这与「固定 30 个交易日的日线高低」不同，但用户看图时盯的本来就是这个可视窗口，
+ * 所以按数据取更符合直觉（标题里写清了是最近 30 根）。</p>
+ */
+function renderPriceLines(bars?: KlineItem[]) {
   if (!candleSeries) {
     return
   }
@@ -334,14 +386,78 @@ function renderPriceLines() {
     candleSeries.removePriceLine(prevCloseLine)
     prevCloseLine = null
   }
+
+  // 近 30 根的高低参考线：数据不足 30 根时仍按实际根数画，避免短序列完全不显示
+  const range = props.show30DayHL && bars && bars.length > 0 ? lastBars(bars, 30) : []
+  if (range.length > 0) {
+    let high = -Infinity
+    let low = Infinity
+    for (const bar of range) {
+      if (bar.high > high) high = bar.high
+      if (bar.low < low) low = bar.low
+    }
+    if (Number.isFinite(high)) {
+      if (high30Line) {
+        high30Line.applyOptions({ price: high })
+      } else {
+        high30Line = candleSeries.createPriceLine({
+          price: high,
+          color: '#d96ba0',
+          lineWidth: 1,
+          lineStyle: 3,
+          axisLabelVisible: true,
+          title: '近30高'
+        })
+      }
+    }
+    if (Number.isFinite(low)) {
+      if (low30Line) {
+        low30Line.applyOptions({ price: low })
+      } else {
+        low30Line = candleSeries.createPriceLine({
+          price: low,
+          color: '#4fb8c0',
+          lineWidth: 1,
+          lineStyle: 3,
+          axisLabelVisible: true,
+          title: '近30低'
+        })
+      }
+    }
+  } else {
+    if (high30Line) {
+      candleSeries.removePriceLine(high30Line)
+      high30Line = null
+    }
+    if (low30Line) {
+      candleSeries.removePriceLine(low30Line)
+      low30Line = null
+    }
+  }
 }
 
-watch(() => [props.data, props.period], () => render(), { deep: false })
+/** 取序列末尾 n 根（序列已按日期升序排好）。 */
+function lastBars(bars: readonly KlineItem[], n: number): KlineItem[] {
+  return bars.length <= n ? [...bars] : bars.slice(bars.length - n)
+}
 
-watch(() => [props.costPrice, props.prevClose], () => renderPriceLines())
+watch(
+  () => [props.data, props.period, props.maPeriods, props.show30DayHL],
+  () => render(),
+  { deep: false }
+)
+
+watch(() => [props.costPrice, props.prevClose, props.show30DayHL], () => {
+  // 参考线开关变了但 K 线没变时，render 不会被 props.data 触发，这里单独补一次
+  const sorted = [...(props.data ?? [])].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  )
+  renderPriceLines(sorted)
+})
 
 onMounted(() => {
   createOrUpdateChart()
+  syncMaSeries()
   render()
 })
 
@@ -359,8 +475,11 @@ onBeforeUnmount(() => {
   candleSeries = null
   volumeSeries = null
   maSeries.clear()
+  builtPeriods = []
   costLine = null
   prevCloseLine = null
+  high30Line = null
+  low30Line = null
   fittedKey = ''
   dataLength = 0
 })
@@ -384,7 +503,7 @@ defineExpose({ applyTheme })
 <template>
   <div class="kline">
     <div class="kline__legend">
-      <span v-for="p in MA_PERIODS" :key="p" class="kline__legend-item" :style="{ color: MA_COLORS[p] }">
+      <span v-for="p in maPeriods" :key="p" class="kline__legend-item" :style="{ color: MA_COLORS[p] }">
         MA{{ p }}
         <b>{{ maValues[p] != null ? maValues[p].toFixed(2) : '--' }}</b>
       </span>

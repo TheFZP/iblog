@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   createChart,
+  createSeriesMarkers,
   ColorType,
   LineSeries,
   HistogramSeries,
@@ -10,10 +11,14 @@ import {
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
   type BusinessDay
 } from 'lightweight-charts'
 import type { IntradayItem } from '@/api/stock'
+import type { T0Marker } from '@/utils/t0Signals'
 import { chartTheme, isDarkMode, UP_COLOR, DOWN_COLOR } from '@/utils/stockFormat'
 
 /**
@@ -25,6 +30,11 @@ import { chartTheme, isDarkMode, UP_COLOR, DOWN_COLOR } from '@/utils/stockForma
  * <p>时间是 {@code HH:mm} 字符串，转成当天的时间戳。刻意用 UTC 编码
  * （把东八区的 09:30 当作 UTC 09:30），这样坐标轴显示的刻度就是原始的 HH:mm，
  * 不受浏览器所在时区影响。</p>
+ *
+ * <p>第四样东西是 T+0 信号标记（{@code markers}），由 {@code utils/t0Signals}
+ * 的纯函数算出。标记只能挂在 series 上，且 lightweight-charts 5.x 用
+ * {@code createSeriesMarkers} 插件批量渲染——{@code createPriceLine} 一条线只能画一个价位，
+ * 画不了「一分钟一个点」的密集标记。</p>
  */
 
 const props = withDefaults(
@@ -32,9 +42,20 @@ const props = withDefaults(
     data: IntradayItem[]
     prevClose?: number | null
     loading?: boolean
+    /** T+0 信号标记，空数组即不画 */
+    markers?: T0Marker[]
   }>(),
-  { prevClose: null, loading: false }
+  { prevClose: null, loading: false, markers: () => [] }
 )
+
+/**
+ * 诱多标记的橙色。
+ *
+ * <p>涨用红、跌用绿是 A 股口径，`stockFormat` 里已经有 {@code UP_COLOR}/{@code DOWN_COLOR}；
+ * 「疑似诱多」既不是涨也不是跌，需要第三个色，本地定义而不改 {@code stockFormat}
+ * （那个文件被多个图表共用，本次改动不碰它）。</p>
+ */
+const TRAP_COLOR = { light: '#c76b12', dark: '#ffa94d' }
 
 const container = ref<HTMLDivElement | null>(null)
 
@@ -42,6 +63,8 @@ let chart: IChartApi | null = null
 let priceSeries: ISeriesApi<'Area'> | null = null
 let avgSeries: ISeriesApi<'Line'> | null = null
 let volumeSeries: ISeriesApi<'Histogram'> | null = null
+/** 标记插件的句柄：重建标记只能通过它的 setMarkers()，没有别的入口 */
+let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
 let resizeObserver: ResizeObserver | null = null
 
 /** HH:mm → 当天 UTC 时间戳（秒） */
@@ -157,6 +180,8 @@ function render() {
     priceSeries?.setData([])
     avgSeries?.setData([])
     volumeSeries?.setData([])
+    // 没有数据就没有可挂的位置，标记一并清掉，否则旧标记会留在空图上
+    markersPlugin?.setMarkers([])
     return
   }
 
@@ -204,6 +229,94 @@ function renderRefLine() {
   }
 }
 
+/**
+ * 标记的呈现方式（形状 / 上下位置 / 色彩基调）。
+ *
+ * <p>抽成纯函数而不是写在 {@link renderMarkers} 的 switch 里：一个是穷尽性由类型检查保证
+ * （返回 undefined 表示这类不画），另一个是配色依赖主题、形状依赖语义，混在一起改一处要看两处。</p>
+ *
+ * <p>形状语义：看多用向上箭头画在柱下方、看空用向下箭头画在上方，避免压住价格线；
+ * 「疑似诱多」用圆点——它不是方向信号，只是提醒这里可能有人在派发。</p>
+ */
+function markerShape(kind: T0Marker['kind']):
+  | {
+      position: 'aboveBar' | 'belowBar'
+      shape: 'arrowUp' | 'arrowDown' | 'circle'
+      tone: 'up' | 'down' | 'trap'
+    }
+  | undefined {
+  switch (kind) {
+    case 'spike-up':
+    case 'break-up':
+    case 'dry-rally':
+      return { position: 'belowBar', shape: 'arrowUp', tone: 'up' }
+    case 'spike-down':
+    case 'break-down':
+    case 'trap-bear':
+      return { position: 'aboveBar', shape: 'arrowDown', tone: 'down' }
+    case 'trap-bull':
+      return { position: 'aboveBar', shape: 'circle', tone: 'trap' }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * 把 T0 标记转成 lightweight-charts 的 series marker 并重画。
+ *
+ * <p>时间必须走同一个 {@link toTime}：图表的 x 轴是「HH:mm 当 UTC 编码」的时间戳，
+ * 若这里传 {@code 'HH:mm'} 字符串或本地时间戳，lightweight-charts 会抛
+ * "time must be..." 并整块渲染失败。</p>
+ *
+ * <p>标记挂在价格系列上（{@code priceSeries}），因为位置是「某分钟的价格」。
+ * 颜色随主题，因此在 {@code applyTheme()} 里也要重画。</p>
+ */
+function renderMarkers() {
+  const list = props.markers ?? []
+  if (!priceSeries) {
+    return
+  }
+  if (!markersPlugin) {
+    markersPlugin = createSeriesMarkers(priceSeries, [])
+  }
+  if (list.length === 0) {
+    markersPlugin.setMarkers([])
+    return
+  }
+
+  const dark = isDarkMode()
+  const upColor = dark ? UP_COLOR.dark : UP_COLOR.light
+  const downColor = dark ? DOWN_COLOR.dark : DOWN_COLOR.light
+  const trapColor = dark ? TRAP_COLOR.dark : TRAP_COLOR.light
+
+  // 用 flatMap + 显式返回 undefined 表示「这类不画」：
+  // 之前写成 map + switch 漏 case，TS 会推断出 undefined 混进数组（TS2322）。
+  const markers: SeriesMarker<Time>[] = list.flatMap((m) => {
+    const base = { time: toTime(m.time), text: m.icon }
+    const shape = markerShape(m.kind)
+    if (!shape) {
+      return []
+    }
+    const color =
+      shape.tone === 'up' ? upColor : shape.tone === 'down' ? downColor : trapColor
+    return [{ ...base, position: shape.position, color, shape: shape.shape }]
+  })
+
+  // 同一 time 只能挂一个 marker，lightweight-charts 遇到重复 time 会抛错；
+  // 上游 computeT0Signals 已保证每分钟至多一个标记，这里按 time 去重兜一层。
+  const seen = new Set<number>()
+  markersPlugin.setMarkers(
+    markers.filter((m) => {
+      const t = m.time as number
+      if (seen.has(t)) {
+        return false
+      }
+      seen.add(t)
+      return true
+    })
+  )
+}
+
 watch(
   () => [props.data, props.prevClose],
   () => {
@@ -213,15 +326,25 @@ watch(
   { deep: false }
 )
 
+watch(
+  () => props.markers,
+  () => renderMarkers(),
+  { deep: false }
+)
+
 onMounted(() => {
   buildChart()
   render()
   renderRefLine()
+  renderMarkers()
 })
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
+  // 先摘标记再销毁图表：chart.remove() 之后 series 已失效，再 setMarkers 会抛错
+  markersPlugin?.setMarkers([])
+  markersPlugin = null
   chart?.remove()
   chart = null
   priceSeries = null
@@ -240,6 +363,7 @@ function applyTheme() {
   })
   render()
   renderRefLine()
+  renderMarkers()
 }
 
 defineExpose({ applyTheme })

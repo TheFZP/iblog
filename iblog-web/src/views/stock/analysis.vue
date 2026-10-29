@@ -8,6 +8,7 @@ import TechTab from '@/components/stock/analysis/TechTab.vue'
 import ChipTab from '@/components/stock/analysis/ChipTab.vue'
 import LevelTab from '@/components/stock/analysis/LevelTab.vue'
 import BacktestTab from '@/components/stock/analysis/BacktestTab.vue'
+import HistoryTab from '@/components/stock/analysis/HistoryTab.vue'
 
 /**
  * 个股技术分析页：四个 Tab 共用同一只股票，但各自拉数、各自报错。
@@ -23,7 +24,8 @@ const TABS = [
   { key: 'tech', label: '技术指标' },
   { key: 'chip', label: '筹码分布' },
   { key: 'level', label: '支撑阻力' },
-  { key: 'backtest', label: '信号回测' }
+  { key: 'backtest', label: '信号回测' },
+  { key: 'history', label: '历史胜率' }
 ] as const
 type TabKey = (typeof TABS)[number]['key']
 
@@ -144,7 +146,8 @@ watch(code, () => {
         <TechTab v-if="tab === 'tech'" :key="`tech-${refreshKey}`" :code="code" />
         <ChipTab v-else-if="tab === 'chip'" :key="`chip-${refreshKey}`" :code="code" />
         <LevelTab v-else-if="tab === 'level'" :key="`level-${refreshKey}`" :code="code" />
-        <BacktestTab v-else :key="`backtest-${refreshKey}`" :code="code" />
+        <BacktestTab v-else-if="tab === 'backtest'" :key="`backtest-${refreshKey}`" :code="code" />
+        <HistoryTab v-else :key="`history-${refreshKey}`" :code="code" />
       </div>
 
       <p class="page-note">

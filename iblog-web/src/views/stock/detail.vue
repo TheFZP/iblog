@@ -21,6 +21,8 @@ import {
 import { useWatchlist } from '@/composables/useWatchlist'
 import { usePositions } from '@/composables/usePositions'
 import { usePriceAlerts } from '@/composables/usePriceAlerts'
+import { useMaAlerts } from '@/composables/useMaAlerts'
+import { MA_PERIOD_CHOICES, useChartSettings } from '@/composables/useChartSettings'
 import KlineChart from '@/components/stock/KlineChart.vue'
 import IntradayChart from '@/components/stock/IntradayChart.vue'
 import DepthPanel from '@/components/stock/DepthPanel.vue'
@@ -28,7 +30,11 @@ import MoneyFlowSection from '@/components/stock/MoneyFlowSection.vue'
 import IndustryModal from '@/components/stock/IndustryModal.vue'
 import PriceAlertDialog from '@/components/stock/PriceAlertDialog.vue'
 import PositionDialog from '@/components/stock/PositionDialog.vue'
+import MaAlertDialog from '@/components/stock/MaAlertDialog.vue'
+import ProfileDialog from '@/components/stock/ProfileDialog.vue'
 import AiPanel from '@/components/stock/AiPanel.vue'
+import { computeT0Signals, summarizeMarkers, type T0Marker } from '@/utils/t0Signals'
+import { recordSignalEvent } from '@/utils/signalHistory'
 import {
   KLINE_PERIODS,
   fmtNum,
@@ -38,7 +44,7 @@ import {
   toneClass,
   MINUTE_PERIODS
 } from '@/utils/stockFormat'
-import { getMarketState, marketStateLabel, refreshIntervalMs } from '@/utils/marketTime'
+import { getMarketState, marketStateLabel, refreshIntervalMs, getToday } from '@/utils/marketTime'
 
 /**
  * 个股详情页。
@@ -60,6 +66,10 @@ const router = useRouter()
 const { isInWatchlist, toggleWatchlist, applyQuotes } = useWatchlist()
 const { positionStats, applyPositionQuote } = usePositions()
 const { countEnabledForCode } = usePriceAlerts()
+const { countEnabledForCode: countMaAlertsForCode } = useMaAlerts()
+const { maPeriods, show30DayHL, toggleMaPeriod, setShow30DayHL } = useChartSettings()
+/** 均线设置面板默认收起：多数人只关心图，不该被一排 chip 挡着 */
+const showChartSettings = ref(false)
 
 const code = computed(() => String(route.params.code ?? ''))
 
@@ -91,7 +101,76 @@ let moneyFlowHistoryLoadedFor = ''
 
 const chartMode = ref<'intraday' | 'kline'>('intraday')
 const showAlertDialog = ref(false)
+const showMaDialog = ref(false)
+const showProfileDialog = ref(false)
 const showPositionDialog = ref(false)
+
+/**
+ * 最近一次成功拿到行情的时刻。
+ *
+ * <p>用「什么时候有数据」而不是「什么时候请求过」：刷新失败时这个时间戳不动，
+ * 用户看到的就是「数据 10:32」而不是假装刚更新过。</p>
+ */
+const quoteAt = ref<Date | null>(null)
+
+/** 分时图上的 T+0 标记。纯计算，输入没变就不会重算。 */
+const markers = computed(() =>
+  chartMode.value === 'intraday' && intraday.value.length > 0
+    ? computeT0Signals(intraday.value, quote.value?.prevClose ?? null)
+    : []
+)
+const markerSummary = computed(() => summarizeMarkers(markers.value))
+
+/**
+ * 标记 → 该标记提示的方向。
+ *
+ * <p>看多：放量急拉、无量拉升、突破；以及「疑似诱空」（洗盘后回升，提示可能偏多）。
+ * 看空：放量急跌、破位；以及「疑似诱多」（高位滞涨，提示可能偏空）。
+ * 方向只用来判胜，不给用户看结论——盘中的标记本质是「注意这里」。</p>
+ */
+const BULL_MARKERS: ReadonlySet<T0Marker['kind']> = new Set<T0Marker['kind']>([
+  'spike-up',
+  'dry-rally',
+  'break-up',
+  'trap-bear'
+])
+
+/**
+ * 把当日标记落进历史库。
+ *
+ * <p>只在「标记集合的首尾变了」时写：分时是每 15 秒刷一轮的，每轮都调 record 不会报错
+ * （底层按 code+date+label 去重），但会白读一次 localStorage；用时间串做门槛更省。</p>
+ *
+ * <p>刻意只在**用户真的打开过这只票**时记录 —— 这就是这个功能的口径来源，
+ * 也是它不能当策略胜率用的原因，界面上必须一并说明。</p>
+ */
+let recordedMarkerKey = ''
+watch(markers, (list) => {
+  const target = code.value
+  if (!target || list.length === 0) {
+    return
+  }
+  const date = getToday()
+  const key = `${target}|${date}|${list.length}|${list[list.length - 1]?.time ?? ''}`
+  if (key === recordedMarkerKey) {
+    return
+  }
+  recordedMarkerKey = key
+  const name = quote.value?.name || target
+  for (const marker of list) {
+    recordSignalEvent({
+      code: target,
+      name,
+      // 来源固定 t0：这批全是分时标记，与均线穿越分开统计
+      source: 't0',
+      label: marker.label,
+      bias: BULL_MARKERS.has(marker.kind) ? 'bull' : 'bear',
+      price: marker.price,
+      date,
+      note: marker.detail
+    })
+  }
+})
 
 // ---------- 行业分析 ----------
 const showIndustryModal = ref(false)
@@ -119,6 +198,13 @@ let themeObserver: MutationObserver | null = null
 const position = computed(() => positionStats.value.find((p) => p.code === code.value) ?? null)
 const inWatchlist = computed(() => isInWatchlist(code.value))
 const alertCount = computed(() => countEnabledForCode(code.value))
+const maAlertCount = computed(() => countMaAlertsForCode(code.value))
+/** 「数据 HH:mm」角标：只在拿到过数据之后才显示 */
+const quoteAtText = computed(() => {
+  const at = quoteAt.value
+  if (!at) return ''
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+})
 const isHk = computed(() => quote.value?.market === 'HK' || /^\d{5}$/.test(code.value))
 /** 港股不支持分钟 K 线（后端直接抛错），按钮要禁用而不是让用户点了报错 */
 const supportsMinute = computed(() => !isHk.value)
@@ -149,6 +235,7 @@ async function loadQuote() {
     }
     quote.value = q
     quoteStale.value = false
+    quoteAt.value = new Date()
     // 同步回自选列表与持仓，避免两处价格不一致
     applyQuotes([q])
     applyPositionQuote(q.code, q)
@@ -324,6 +411,7 @@ function openAnalysis() {
 function resetForNewCode() {
   quote.value = null
   quoteStale.value = false
+  quoteAt.value = null
   kline.value = []
   klineStale.value = false
   intraday.value = []
@@ -511,7 +599,12 @@ const stats = computed(() => {
           {{ fmtSigned(quote.changePct) }}%
         </span>
         <span v-if="quoteStale" class="hero__stale" title="刷新失败，当前显示的是上次成功获取的数据">
-          数据延迟
+          <span v-if="quoteAtText">数据 {{ quoteAtText }}</span>
+          <span v-else>刷新失败</span>
+          <button type="button" class="hero__retry" @click="refreshAll">重试</button>
+        </span>
+        <span v-else-if="quoteAtText" class="hero__fresh" title="最近一次成功获取行情的时间">
+          数据 {{ quoteAtText }}
         </span>
       </div>
       <div v-else class="hero__price hero__price--loading">
@@ -528,9 +621,13 @@ const stats = computed(() => {
         <button class="btn btn--ghost btn--sm" @click="showAlertDialog = true">
           价格提醒<span v-if="alertCount > 0" class="btn__badge">{{ alertCount }}</span>
         </button>
+        <button class="btn btn--ghost btn--sm" @click="showMaDialog = true">
+          均线提醒<span v-if="maAlertCount > 0" class="btn__badge">{{ maAlertCount }}</span>
+        </button>
         <button class="btn btn--ghost btn--sm" @click="openIndustry">行业</button>
         <button class="btn btn--ghost btn--sm" @click="openAnalysis">技术分析</button>
         <button class="btn btn--ghost btn--sm" @click="showAiPanel = true">AI 分析</button>
+        <button class="btn btn--ghost btn--sm" @click="showProfileDialog = true">投资画像</button>
       </div>
     </header>
 
@@ -602,6 +699,38 @@ const stats = computed(() => {
         <span v-if="!isTrading" class="chart-card__stale">{{ marketLabel }}</span>
       </div>
 
+      <button
+        v-if="showChartSettings"
+        type="button"
+        class="chart-card__settings-trigger"
+        @click="showChartSettings = false"
+      >
+        ×
+      </button>
+      <div v-if="showChartSettings" class="chart-settings">
+        <span class="chart-settings__label">均线</span>
+        <button
+          v-for="p in MA_PERIOD_CHOICES"
+          :key="p"
+          type="button"
+          class="chart-settings__chip"
+          :class="{ 'chart-settings__chip--on': maPeriods.includes(p) }"
+          :aria-pressed="maPeriods.includes(p)"
+          @click="toggleMaPeriod(p)"
+        >
+          {{ p }} 日
+        </button>
+        <label class="chart-settings__switch">
+          <input type="checkbox" :checked="show30DayHL" @change="setShow30DayHL(($event.target as HTMLInputElement).checked)" />
+          30 日最高/最低线
+        </label>
+      </div>
+      <button v-else type="button" class="chart-card__settings-trigger" @click="showChartSettings = true">
+        均线设置
+      </button>
+
+      <p v-if="chartMode === 'intraday' && markerSummary" class="chart-card__markers">{{ markerSummary }}</p>
+
       <div class="chart-card__body">
         <IntradayChart
           v-if="chartMode === 'intraday'"
@@ -609,6 +738,7 @@ const stats = computed(() => {
           :data="intraday"
           :prev-close="quote?.prevClose ?? null"
           :loading="intradayLoading && intraday.length === 0"
+          :markers="markers"
         />
         <KlineChart
           v-else
@@ -618,6 +748,8 @@ const stats = computed(() => {
           :loading="klineLoading && kline.length === 0"
           :cost-price="position?.buyPrice ?? null"
           :prev-close="quote?.prevClose ?? null"
+          :ma-periods="maPeriods"
+          :show30-day-h-l="show30DayHL"
         />
       </div>
     </section>
@@ -650,6 +782,13 @@ const stats = computed(() => {
       :preset="quote ? { code: quote.code, name: quote.name, price: quote.price } : { code, name: code }"
       @close="showPositionDialog = false"
     />
+    <MaAlertDialog
+      :open="showMaDialog"
+      :code="code"
+      :name="quote?.name || code"
+      @close="showMaDialog = false"
+    />
+    <ProfileDialog :open="showProfileDialog" @close="showProfileDialog = false" />
     <IndustryModal
       :show="showIndustryModal"
       :data="industryData"
@@ -753,12 +892,36 @@ const stats = computed(() => {
 }
 
 .hero__stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 1px 8px;
   border-radius: var(--r-full);
   background: color-mix(in srgb, #e8b339 20%, transparent);
   color: #a1710d;
   font-size: var(--t-xs);
   font-weight: 500;
+}
+
+/* 「数据 HH:mm」角标：正常态低调，别跟价格抢注意力 */
+.hero__fresh {
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  background: var(--c-surface-sunken);
+  color: var(--c-text-faint);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero__retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .hero__actions {
@@ -868,6 +1031,68 @@ const stats = computed(() => {
 
 .chart-card__stale {
   margin-left: auto;
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+}
+
+/* ---------- 均线设置 ---------- */
+.chart-card__settings-trigger {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.chart-settings {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r);
+  background: var(--c-surface-sunken);
+}
+
+.chart-settings__label {
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
+}
+
+.chart-settings__chip {
+  padding: 2px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: var(--c-surface);
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: all 0.15s var(--ease-out);
+}
+
+.chart-settings__chip--on {
+  border-color: var(--c-brand);
+  background: color-mix(in srgb, var(--c-brand) 14%, transparent);
+  color: var(--c-brand);
+  font-weight: 600;
+}
+
+.chart-settings__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: var(--t-xs);
+  color: var(--c-text-muted);
+  cursor: pointer;
+}
+
+.chart-card__markers {
+  margin-bottom: var(--s-2);
   font-size: var(--t-xs);
   color: var(--c-text-faint);
 }

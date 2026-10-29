@@ -46,6 +46,11 @@ public class StockSettingService extends ServiceImpl<StockSettingMapper, StockSe
         return setting == null ? null : setting.getConfigValue();
     }
 
+    /** 取单个配置的整行，不存在返回 {@code null}；需要 {@code updateTime} 这类元信息时用它。 */
+    public StockSetting getSetting(String key) {
+        return find(key);
+    }
+
     /**
      * 写配置。值为 {@code null} 或空串表示删除该项。
      *

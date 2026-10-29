@@ -55,6 +55,13 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '持仓组合' }
           },
           {
+            // 同理，必须排在 :code 之前，否则 /stock/iwencai 会被当成股票代码 iwencai
+            path: 'iwencai',
+            name: 'StockIwencai',
+            component: () => import('@/views/stock/iwencai.vue'),
+            meta: { title: '问财选股' }
+          },
+          {
             path: ':code',
             name: 'StockDetail',
             component: () => import('@/views/stock/detail.vue'),

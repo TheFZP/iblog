@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iblog.module.paper.support.Indicators;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.StockQuote;
+import com.iblog.module.stock.service.StockSettingService;
 import com.iblog.module.stock.service.TencentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +33,11 @@ public class AiContextBuilder {
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     /** 预加载只放最近这么多根 K 线，再多的边际信息很低。 */
     private static final int PRELOAD_BARS = 30;
+    /** 画像在 stock_setting 里的键，与 AI 工具 {@code save_user_profile} 用同一个。 */
+    private static final String KEY_USER_PROFILE = "ai_user_profile";
 
     private final TencentService tencentService;
+    private final StockSettingService settingService;
 
     /**
      * 构建 system prompt。
@@ -69,10 +73,80 @@ public class AiContextBuilder {
                 + "除非用户明确问别的标的。";
     }
 
-    /** 用户画像。 */
+    /**
+     * 用户画像。
+     *
+     * <p>画像有两个写入方：用户在前端「投资画像」弹窗里手写的 Markdown，
+     * 以及 AI 自己调 {@code save_user_profile} 写进去的 JSON。两者共用
+     * {@code stock_setting.ai_user_profile} 这一个键，所以这里要判断一下形状再决定怎么呈现——
+     * 直接把 JSON 原样塞进 prompt 也能用，但模型会把注意力放在花括号上。</p>
+     */
     private String userProfileSection() {
-        // 画像暂未开放编辑入口时也要有兜底文本，模板里写成「未填写」比空白清楚
-        return "用户尚未填写投资画像，按中性偏稳健处理，并在需要时提醒用户可以在设置里补充。";
+        String profile;
+        try {
+            profile = settingService.getPlain(KEY_USER_PROFILE);
+        } catch (Exception e) {
+            // 读库失败不该让整轮对话开不起来，降级成「未填写」让模型按中性处理
+            log.warn("AI 读取用户画像失败 err={}", e.toString());
+            profile = null;
+        }
+        if (profile == null || profile.isBlank()) {
+            return "用户尚未填写投资画像，按中性偏稳健处理，并在需要时提醒用户可以在行情页的「投资画像」里补充。";
+        }
+        String readable = prettyProfile(profile);
+        return "以下是用户填写的投资画像，回答时请贴合其风格与约束：\n" + readable;
+    }
+
+    /**
+     * 把画像内容转成人看/模型看的文本。
+     *
+     * <p>手写的是 Markdown，原样用；AI 写的是 JSON，转成 {@code 字段: 值} 的列表更好读。
+     * 解析失败就当作普通文本返回，绝不能因为格式不合预期就丢掉用户填的内容。</p>
+     */
+    private static String prettyProfile(String raw) {
+        String trimmed = raw.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            return trimmed;
+        }
+        try {
+            JsonNode node = MAPPER.readTree(trimmed);
+            StringBuilder sb = new StringBuilder();
+            flattenProfile(node, "", sb);
+            return sb.isEmpty() ? trimmed : sb.toString().trim();
+        } catch (Exception e) {
+            return trimmed;
+        }
+    }
+
+    /** 递归把 JSON 摊平成 {@code 路径: 值} 行，嵌套层级用点号表示。 */
+    private static void flattenProfile(JsonNode node, String prefix, StringBuilder sb) {
+        if (node == null || node.isNull()) {
+            return;
+        }
+        if (node.isObject()) {
+            node.fields().forEachRemaining(entry ->
+                    flattenProfile(entry.getValue(), prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey(), sb));
+            return;
+        }
+        if (node.isArray()) {
+            StringBuilder line = new StringBuilder();
+            for (JsonNode item : node) {
+                if (!line.isEmpty()) {
+                    line.append("、");
+                }
+                line.append(item.isValueNode() ? item.asText() : item.toString());
+            }
+            if (!line.isEmpty()) {
+                sb.append(prefix).append(": ").append(line).append('\n');
+            }
+            return;
+        }
+        if (node.isValueNode()) {
+            String text = node.asText();
+            if (!text.isBlank()) {
+                sb.append(prefix).append(": ").append(text).append('\n');
+            }
+        }
     }
 
     /**

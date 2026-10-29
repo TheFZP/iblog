@@ -1,12 +1,16 @@
 package com.iblog.module.stock.ai;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.iblog.common.exception.BizException;
 import com.iblog.common.result.R;
+import com.iblog.module.stock.entity.StockSetting;
+import com.iblog.module.stock.service.StockSettingService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -14,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
@@ -33,9 +38,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AiChatController {
 
+    /** 画像在 stock_setting 里的键，与 AI 工具 {@code save_user_profile} 用的是同一个。 */
+    private static final String KEY_USER_PROFILE = "ai_user_profile";
+    /** 画像长度上限，防止一次贴进整本书把库里的 TEXT 列和上下文一起撑爆。 */
+    private static final int PROFILE_MAX_LENGTH = 20000;
+
     private final AiConfigService configService;
     private final AiChatService chatService;
     private final IwencaiClient iwencaiClient;
+    private final StockSettingService settingService;
 
     /** 面板初始化：模型名、是否配好 Key、是否开联网搜索。/**/
     @GetMapping("/config")
@@ -94,6 +105,49 @@ public class AiChatController {
 
     /** 问财请求体。 */
     public record IwencaiRequest(String question, Integer page, Integer perPage, String v) {
+    }
+
+    /**
+     * 读取用户投资画像。
+     *
+     * <p>没填过时返回空串而不是 404：页面拿到就能直接渲染空白编辑器，少一个分支。
+     * 键与 AI 工具 {@code save_user_profile} 用的是同一个，所以 AI 自己写的画像
+     * 和用户在页面上存的画像是同一行数据，互相可见。</p>
+     */
+    @GetMapping("/profile")
+    public R<ProfileResponse> profile() {
+        // 一次查询拿整行：content 与 updatedAt 本就在同一行，分两次查只是多一次往返
+        StockSetting row = settingService.getSetting(KEY_USER_PROFILE);
+        if (row == null || row.getConfigValue() == null || row.getConfigValue().isBlank()) {
+            return R.ok(new ProfileResponse("", null));
+        }
+        return R.ok(new ProfileResponse(row.getConfigValue(), row.getUpdateTime()));
+    }
+
+    /**
+     * 保存用户投资画像。
+     *
+     * <p>{@code content} 传空白等于清除画像（{@code StockSettingService.put} 对空值走真删），
+     * 这与「清空编辑器再保存」的直觉一致。长度上限防的是一次贴进整本书把
+     * {@code config_value} 的 TEXT 列和后续 prompt 一起撑爆。</p>
+     */
+    @PutMapping("/profile")
+    public R<Void> saveProfile(@RequestBody ProfileRequest request) {
+        String content = request == null || request.content() == null ? "" : request.content();
+        if (content.length() > PROFILE_MAX_LENGTH) {
+            throw new BizException(400, "画像内容过长（最多 20000 字）");
+        }
+        settingService.put(KEY_USER_PROFILE, content, false, "AI 用户投资画像");
+        return R.ok();
+    }
+
+    /** 画像响应体：{@code content} 永不为 null；没存过时 {@code updatedAt} 为 null。 */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record ProfileResponse(String content, LocalDateTime updatedAt) {
+    }
+
+    /** 画像保存请求体。 */
+    public record ProfileRequest(String content) {
     }
 
     private static String toJson(Object data) {

@@ -12,16 +12,30 @@ import { fmtNum, fmtSigned, toneClass } from '@/utils/stockFormat'
  * <p>做成右侧抽屉而不是独立路由：用户看盘时是「边看边问」的，
  * 跳走再回来会丢当前 K 线/周期状态。所以用 Teleport 挂在 body 上，
  * z-index 压在既有弹窗（`.stock-modal` 为 100）之上，避免被详情页弹窗盖住。</p>
+ *
+ * <p><b>同一个组件也承担全局 AI 入口</b>（导航栏按钮 / Ctrl+N）：这时不绑定个股，
+ * {@code code} 与 {@code name} 留空，后端 {@code AiContextBuilder} 会切成「全局对话」分支，
+ * 不预加载任何个股行情。刻意复用而不是另写一个对话框——两套对话 UI 会分叉出两套
+ * 流式解析、两套工具状态渲染，维护成本翻倍。</p>
  */
 
 interface Props {
   open: boolean
+  /** 当前个股代码；全局入口传空串 */
   code: string
+  /** 当前个股名称；全局入口传空串 */
   name: string
+  /**
+   * 预置输入内容（不自动发送）。
+   *
+   * <p>问财选股页把表格结果拼成文本塞进来，用户能在输入框里先看到、再补自己的问题。
+   * 不自动发送是刻意的：预置内容来自另一个页面，直接发出去用户看不到它到底问了什么。</p>
+   */
+  preset?: string
 }
 
-const props = defineProps<Props>()
-const emit = defineEmits<{ close: [] }>()
+const props = withDefaults(defineProps<Props>(), { preset: '' })
+const emit = defineEmits<{ close: []; presetConsumed: [] }>()
 
 interface ToolTrace {
   id: number
@@ -84,6 +98,13 @@ let scrollFrame = 0
 
 const unavailable = computed(() => config.value !== null && !config.value.available)
 const canSend = computed(() => !unavailable.value && !streaming.value && input.value.trim().length > 0)
+/** 全局入口：没有绑定个股，文案与快捷问句都要跟着换，不能再出现「这只票」 */
+const isGlobal = computed(() => !props.code)
+const suggestions = computed(() =>
+  isGlobal.value
+    ? ['今天大盘怎么样', '最近哪些板块强势', '帮我按条件选股', '给我讲讲可转债']
+    : SUGGESTIONS
+)
 const lastAssistant = computed<ChatMessage | null>(() => {
   const message = messages.value[messages.value.length - 1]
   return message && message.role === 'assistant' ? message : null
@@ -97,6 +118,11 @@ watch(
     }
     if (!config.value && !configLoading.value) {
       void loadConfig()
+    }
+    // 预置内容只在打开时灌一次，用户改过之后不该被重新覆盖
+    if (props.preset) {
+      input.value = props.preset
+      emit('presetConsumed')
     }
     stickToBottom = true
     scrollSoon(true)
@@ -515,10 +541,10 @@ function errText(err: unknown): string {
   <Teleport to="body">
     <Transition name="ai-slide">
       <div v-if="open" class="ai-mask" @click.self="close">
-        <aside class="ai-panel" role="dialog" aria-modal="true" aria-label="AI 分析">
+        <aside class="ai-panel" role="dialog" aria-modal="true" :aria-label="isGlobal ? 'AI 助手' : 'AI 分析'">
           <header class="ai-panel__head">
             <div class="ai-panel__titles">
-              <h2 class="ai-panel__title">AI 分析</h2>
+              <h2 class="ai-panel__title">{{ isGlobal ? 'AI 助手' : 'AI 分析' }}</h2>
               <div class="ai-panel__chips">
                 <span v-if="config" class="ai-chip">{{ config.model }}</span>
                 <span v-if="config?.webSearchEnabled" class="ai-chip ai-chip--on">联网搜索</span>
@@ -537,11 +563,19 @@ function errText(err: unknown): string {
             </div>
 
             <div v-else-if="!messages.length" class="ai-empty">
-              <p class="ai-empty__title">和 AI 聊聊 {{ name || '这只股票' }}</p>
-              <p class="ai-empty__desc">可以问行情、资金、消息面，也可以让它按条件帮你选股。</p>
+              <p class="ai-empty__title">
+                {{ isGlobal ? '问点什么？' : `和 AI 聊聊 ${name || '这只股票'}` }}
+              </p>
+              <p class="ai-empty__desc">
+                {{
+                  isGlobal
+                    ? '可以问大盘、板块、个股、公告，也可以让它按条件帮你选股。'
+                    : '可以问行情、资金、消息面，也可以让它按条件帮你选股。'
+                }}
+              </p>
               <div class="ai-empty__ask">
                 <button
-                  v-for="item in SUGGESTIONS"
+                  v-for="item in suggestions"
                   :key="item"
                   type="button"
                   class="ai-ask"
@@ -625,7 +659,7 @@ function errText(err: unknown): string {
           <footer class="ai-panel__foot">
             <div v-if="messages.length" class="ai-quick">
               <button
-                v-for="item in SUGGESTIONS"
+                v-for="item in suggestions"
                 :key="item"
                 type="button"
                 class="ai-quick__chip"

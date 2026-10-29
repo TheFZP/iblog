@@ -47,6 +47,20 @@
           </form>
 
           <button
+            v-if="authenticated"
+            class="icon-btn"
+            type="button"
+            aria-label="AI 助手（Ctrl+N）"
+            title="AI 助手（Ctrl+N）"
+            @click="onOpenAi"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3.4 13.9 9l5.6 1.9-5.6 1.9L12 18.4l-1.9-5.6L4.5 10.9 10.1 9Z" />
+              <path d="M18.4 15.6l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z" />
+            </svg>
+          </button>
+
+          <button
             class="icon-btn"
             type="button"
             :aria-label="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
@@ -151,6 +165,9 @@
         </svg>
       </button>
     </transition>
+
+    <!-- 全局 AI 助手：挂在布局层，切页面不重建，对话不丢 -->
+    <GlobalAiEntry v-if="authenticated" />
   </div>
 </template>
 
@@ -160,12 +177,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { useSite, useTheme, initTheme } from '@/composables/useSite'
 import { stopAlertWatcher, useAutoStartAlertWatcher } from '@/composables/useAlertWatcher'
 import { useAuth } from '@/composables/useAuth'
+import { takeStoredPreset, useGlobalAi } from '@/composables/useGlobalAi'
+import GlobalAiEntry from '@/components/stock/GlobalAiEntry.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { site, loadSite } = useSite()
 const { theme, toggleTheme } = useTheme()
 const { authenticated, ensureAuth } = useAuth()
+const { open: aiOpen, preset: aiPreset } = useGlobalAi()
+
+/** 顶栏的 AI 按钮与 Ctrl+N 走同一条路：有预置内容就一起带上，否则直接开 */
+function onOpenAi() {
+  const stored = takeStoredPreset()
+  if (stored) {
+    aiPreset.value = stored
+  }
+  aiOpen.value = true
+}
 
 const keyword = ref('')
 const menuOpen = ref(false)
@@ -185,20 +214,35 @@ const ALL_NAVS: NavItem[] = [
   { path: '/archive', label: '归档' },
   { path: '/food', label: '美食' },
   { path: '/stock', label: '行情', authOnly: true },
+  { path: '/stock/iwencai', label: '问财选股', authOnly: true },
   { path: '/paper', label: '模拟盘', authOnly: true },
   { path: '/about', label: '关于' }
 ]
 
-/** 「行情」「模拟盘」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
+/** 「行情」「问财选股」「模拟盘」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
 const navs = computed(() =>
   authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => !item.authOnly)
 )
 
+/**
+ * 当前路由是否落在该导航项下。
+ *
+ * <p>不再是简单的 startsWith：`/stock/iwencai` 本身也落在 `/stock` 前缀下，
+ * 那样「行情」和「问财选股」会同时高亮。改为「命中项里取最长的那条」，
+ * 即子路径优先——这也让以后再加 `/stock/xxx` 子页时不用改这里。</p>
+ */
 function isActive(path: string) {
   if (path === '/') {
     return route.path === '/'
   }
-  return route.path.startsWith(path)
+  const candidates = navs.value.filter(
+    (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
+  )
+  if (candidates.length === 0) {
+    return false
+  }
+  const longest = candidates.reduce((a, b) => (b.path.length > a.path.length ? b : a))
+  return longest.path === path
 }
 
 function onSearch() {
