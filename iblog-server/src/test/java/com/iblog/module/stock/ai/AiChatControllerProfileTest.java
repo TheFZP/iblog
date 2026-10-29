@@ -36,7 +36,8 @@ class AiChatControllerProfileTest {
     private final StockSettingService settingService = mock(StockSettingService.class);
 
     private final AiChatController controller = new AiChatController(
-            mock(AiConfigService.class), mock(AiChatService.class), mock(IwencaiClient.class), settingService);
+            mock(AiConfigService.class), mock(AiChatService.class), mock(IwencaiClient.class), settingService,
+            mock(AiQueryOptimizer.class));
 
     @Test
     void emptyProfileReturnsBlankContent() {

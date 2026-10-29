@@ -300,6 +300,8 @@ const {
   SIGNAL_EVENTS_KEY,
   MAX_EVENTS,
   SIGNAL_HISTORY_DISCLAIMER,
+  DEFAULT_HORIZON,
+  HORIZON_CHOICES,
   recordSignalEvent,
   listSignalEvents,
   clearSignalEvents,
@@ -506,16 +508,39 @@ test('bear 信号在价格上涨时算输，收益归一成负数', () => {
   assert.equal(result.buckets[0].avgReturn, -10)
 })
 
-test('持平（ret === 0）算输，但 winRate 是 0 而不是 null', () => {
+test('持平（ret === 0）单列进 flats，既不进赢也不进输的分母', () => {
   const result = computeWinRates(
     [stored({ code: 'A', bias: 'bull', price: 10, date: '2026-10-20' })],
     { A: bars([['2026-10-21', 10], ['2026-10-22', 10], ['2026-10-23', 10]]) }
   )
   assert.equal(result.buckets[0].sample, 1)
   assert.equal(result.buckets[0].wins, 0)
-  // 0 与 null 是两件事：0 是「有样本且全输」，null 是「没有样本」
-  assert.equal(result.buckets[0].winRate, 0)
+  assert.equal(result.buckets[0].losses, 0)
+  assert.equal(result.buckets[0].flats, 1)
+  // 没有分出胜负 → null（「没结论」），不是 0（「全输」），也不是 100（「没输过」）
+  assert.equal(result.buckets[0].winRate, null)
   assert.equal(result.buckets[0].avgReturn, 0)
+})
+
+test('持平不稀释胜率：3 赢 0 输 2 持平 → 胜率 100%，不是 60%', () => {
+  // 5 条信号，各自 horizon=1 的出场依次是 +10%、+10%、+10%、0、0
+  const barList = bars([
+    ['2026-10-21', 11],
+    ['2026-10-22', 11],
+    ['2026-10-23', 11],
+    ['2026-10-24', 10],
+    ['2026-10-27', 10]
+  ])
+  const events = ['2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24'].map(
+    (date, i) => stored({ id: `e${i}`, code: 'A', bias: 'bull', price: 10, date, createdAt: i })
+  )
+  const result = computeWinRates(events, { A: barList }, { horizon: 1 })
+
+  const bucket = result.buckets[0]
+  assert.equal(bucket.sample, 5)
+  assert.equal(bucket.wins, 3)
+  assert.equal(bucket.flats, 2)
+  assert.equal(bucket.winRate, 100)
 })
 
 test('后续 K 线不足时计入 pendingCount 且不进分母', () => {
@@ -697,11 +722,124 @@ test('summarizeWinRates 在有 ignore 时把不可用条数说清楚', () => {
 
 test('空数据不抛：computeWinRates / summarize / sampleWarning 都安全', () => {
   const empty = computeWinRates([], {})
-  assert.deepEqual(empty, { buckets: [], pendingCount: 0, ignoredCount: 0, totalCount: 0 })
+  assert.deepEqual(empty.buckets, [])
+  assert.equal(empty.pendingCount, 0)
+  assert.equal(empty.ignoredCount, 0)
+  assert.equal(empty.totalCount, 0)
+  assert.equal(empty.horizon, DEFAULT_HORIZON)
   assert.equal(summarizeWinRates(empty), '')
   assert.equal(sampleWarning(empty), '')
   // 调用方可能传进来一个只有 buckets 的对象（老缓存 / 半成品），也不能炸
   assert.equal(summarizeWinRates({ buckets: [] }), '')
   assert.equal(sampleWarning({ buckets: [] }), '')
   assert.doesNotThrow(() => computeWinRates([], {}))
+})
+
+// ───────────────────────────── 盈亏比 / 多持有期 ─────────────────────────────
+
+test('avgWin / avgLoss / profitFactor：赢的均幅与输的均幅分开给', () => {
+  // 3 条：+20%（赢）、+10%（赢）、-15%（输，归一后仍是 -15%）
+  const events = [
+    stored({ id: '1', code: 'A', price: 10, date: '2026-10-20', createdAt: 1 }),
+    stored({ id: '2', code: 'A', price: 10, date: '2026-10-21', createdAt: 2 }),
+    stored({ id: '3', code: 'A', price: 10, date: '2026-10-22', createdAt: 3 })
+  ]
+  const result = computeWinRates(
+    events,
+    { A: bars([['2026-10-21', 12], ['2026-10-22', 11], ['2026-10-23', 8.5], ['2026-10-24', 8.5]]) },
+    { horizon: 1 }
+  )
+  const bucket = result.buckets[0]
+  assert.equal(bucket.wins, 2)
+  assert.equal(bucket.losses, 1)
+  assert.equal(bucket.avgWin, 15) // (20 + 10) / 2
+  assert.equal(bucket.avgLoss, 15) // |−15| / 1，存正数好和 avgWin 直接比
+  assert.equal(bucket.profitFactor, 2) // 总盈利 30 / 总亏损 15
+  assert.equal(bucket.best, 20)
+  assert.equal(bucket.worst, -15)
+})
+
+test('全赢时 profitFactor 是 null 而不是 Infinity', () => {
+  const result = computeWinRates(
+    [stored({ code: 'A', price: 10, date: '2026-10-20' })],
+    { A: bars([['2026-10-21', 11]]) },
+    { horizon: 1 }
+  )
+  const bucket = result.buckets[0]
+  assert.equal(bucket.avgLoss, null)
+  // Infinity 会让界面打印出 "Infinity"，也会让 JSON.stringify 变成 null
+  assert.equal(bucket.profitFactor, null)
+})
+
+test('全输时 profitFactor 是 null 而不是 0', () => {
+  const result = computeWinRates(
+    [stored({ code: 'A', price: 10, date: '2026-10-20' })],
+    { A: bars([['2026-10-21', 9]]) },
+    { horizon: 1 }
+  )
+  const bucket = result.buckets[0]
+  assert.equal(bucket.avgWin, null)
+  assert.equal(bucket.avgLoss, 10)
+  // 0 会被读成「不赚不亏」，实际是「一次没赢」
+  assert.equal(bucket.profitFactor, null)
+})
+
+test('最好/最差成绩按方向归一：bear 信号跌得越多 best 越大', () => {
+  const events = [
+    stored({ id: '1', code: 'A', bias: 'bear', price: 10, date: '2026-10-20', createdAt: 1 }),
+    stored({ id: '2', code: 'A', bias: 'bear', price: 10, date: '2026-10-21', createdAt: 2 })
+  ]
+  const result = computeWinRates(
+    events,
+    { A: bars([['2026-10-21', 8], ['2026-10-22', 11]]) },
+    { horizon: 1 }
+  )
+  const bucket = result.buckets[0]
+  assert.equal(bucket.best, 20) // 10 → 8，看空赚 20%
+  assert.equal(bucket.worst, -10) // 10 → 11，看空亏 10%
+})
+
+test('多持有期给出不同结果：同一批信号 1/3/5/10 日各算一遍', () => {
+  const barList = bars([
+    ['2026-10-20', 10],
+    ['2026-10-21', 10.2],
+    ['2026-10-22', 10.5],
+    ['2026-10-23', 11],
+    ['2026-10-24', 11.2],
+    ['2026-10-27', 11.5],
+    ['2026-10-28', 12],
+    ['2026-10-29', 12.5],
+    ['2026-10-30', 13],
+    ['2026-10-31', 13.5],
+    ['2026-11-03', 14]
+  ])
+  const events = [stored({ code: 'A', price: 10, date: '2026-10-20' })]
+
+  const returns = HORIZON_CHOICES.map(
+    (horizon) => computeWinRates(events, { A: barList }, { horizon }).buckets[0]?.avgReturn ?? null
+  )
+  // 1 日 = 10.2、3 日 = 11、5 日 = 11.5、10 日 = 14
+  assert.deepEqual(returns, [2, 10, 15, 40])
+  // 每次结果都带着自己的 horizon，界面据此显示口径
+  assert.deepEqual(
+    HORIZON_CHOICES.map(
+      (horizon) => computeWinRates(events, { A: barList }, { horizon }).horizon
+    ),
+    [1, 3, 5, 10]
+  )
+})
+
+test('持有期越长待观察越多：同批信号 10 日档 pendingCount 更大', () => {
+  // 信号日后只有 3 根 K 线：1 日档和 3 日档都能结算，4 日档（更别提 5/10 日档）只能待观察
+  const barList = bars([
+    ['2026-10-20', 10],
+    ['2026-10-21', 10.1],
+    ['2026-10-22', 10.2],
+    ['2026-10-23', 10.3]
+  ])
+  const events = [stored({ code: 'A', price: 10, date: '2026-10-20' })]
+  assert.equal(computeWinRates(events, { A: barList }, { horizon: 1 }).pendingCount, 0)
+  assert.equal(computeWinRates(events, { A: barList }, { horizon: 3 }).pendingCount, 0)
+  assert.equal(computeWinRates(events, { A: barList }, { horizon: 5 }).pendingCount, 1)
+  assert.equal(computeWinRates(events, { A: barList }, { horizon: 10 }).pendingCount, 1)
 })

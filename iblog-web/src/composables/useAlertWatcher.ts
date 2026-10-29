@@ -8,6 +8,8 @@ import { useMaAlerts } from './useMaAlerts'
 import { useWatchlist } from './useWatchlist'
 import { usePositions } from './usePositions'
 import { useAuth } from './useAuth'
+import { useSettings, hasAnyNotifyEnabled } from './useSettings'
+import { useWatchlistNotifications } from './useWatchlistNotifications'
 
 /**
  * 全局提醒巡查器。
@@ -66,10 +68,17 @@ async function tick() {
   const { alerts, checkPriceAlerts } = usePriceAlerts()
   const { checkPositionAlerts } = usePositionAlerts()
   const { maAlerts, checkMaAlerts } = useMaAlerts()
+  const { checkAndNotify } = useWatchlistNotifications()
+  const { notifySettings } = useSettings()
 
   const codes = new Set<string>()
+  /** 自选代码单独留一份：异动通知只对自选生效，持仓有成本线提醒，不该再叠一层 */
+  const watchlistCodes = new Set<string>()
   for (const s of watchlist.value) {
-    if (s.code) codes.add(s.code)
+    if (s.code) {
+      codes.add(s.code)
+      watchlistCodes.add(s.code)
+    }
   }
   for (const p of positions.value) {
     if (p.code) codes.add(p.code)
@@ -108,6 +117,20 @@ async function tick() {
     // 均线穿越：用昨收当基准，比「上一轮价格」稳定（不会因为两次巡检挨得近而误判）。
     // 它自己会按交易日期做每日一次去重，所以这里每轮都可以调。
     await checkMaAlerts(q.code, q.prevClose ?? null, q.price, getToday())
+    // 自选异动（涨停/±5%/±7%/快速变动）：只对自选里的标的判，持仓不进来——
+    // 持仓有自己的成本线提醒，再叠一层异动通知会变成一天十几条，用户会直接关掉通知。
+    if (watchlistCodes.has(q.code)) {
+      await checkAndNotify(
+        {
+          code: q.code,
+          name: q.name,
+          price: q.price,
+          prevClose: q.prevClose ?? 0,
+          changePct: q.changePct ?? 0
+        },
+        notifySettings.value
+      )
+    }
   }
 }
 
@@ -129,11 +152,22 @@ function schedule() {
       .concat(maAlerts.value.filter((a) => a.enabled).map((a) => a.code))
   )
   const state = getMarketState(code)
-  const ms = refreshIntervalMs(state, document.visibilityState !== 'visible')
+  const { refreshSettings } = useSettings()
+  const ms = refreshIntervalMs(
+    state,
+    document.visibilityState !== 'visible',
+    refreshSettings.value.quotesRefreshMs
+  )
   // 先清掉待执行的定时器：onVisible 补扫与常规排期可能同时存在，
   // 不清就会两个定时器并行，越滚越多
   if (timer !== undefined) {
     clearTimeout(timer)
+    timer = undefined
+  }
+  // 用户在设置里选了「不自动刷新」：巡查就此停摆。这是刻意的——
+  // 自动刷新被关掉的人显然不想要后台轮询，硬保留巡查等于绕过他的选择。
+  if (ms <= 0) {
+    return
   }
   timer = setTimeout(async () => {
     timer = undefined
@@ -204,6 +238,7 @@ export function useAutoStartAlertWatcher() {
   const { configs } = usePositionAlerts()
   const { maAlerts } = useMaAlerts()
   const { permission } = useNotify()
+  const { settings } = useSettings()
 
   watch(
     () => [
@@ -211,9 +246,11 @@ export function useAutoStartAlertWatcher() {
       alerts.value.some((a) => a.enabled),
       Object.keys(configs.value).length > 0,
       maAlerts.value.some((a) => a.enabled),
+      // 自选异动也算「有提醒要巡查」：用户可能一个价格提醒都没设，只想收涨停通知
+      hasAnyNotifyEnabled(settings.value),
       permission.value === 'granted'
     ] as const,
-    ([isAuthed, hasPriceAlert, hasPositionAlert, hasMaAlert, canNotify]) => {
+    ([isAuthed, hasPriceAlert, hasPositionAlert, hasMaAlert, hasWatchNotify, canNotify]) => {
       // 未登录时行情接口一律 401，巡检只会反复打空请求；权限被收回（或从未授予）时同理，扫了也发不出去
       if (!isAuthed || !canNotify) {
         if (started) {
@@ -221,7 +258,7 @@ export function useAutoStartAlertWatcher() {
         }
         return
       }
-      if (hasPriceAlert || hasPositionAlert || hasMaAlert) {
+      if (hasPriceAlert || hasPositionAlert || hasMaAlert || hasWatchNotify) {
         startAlertWatcher()
       }
     },

@@ -1668,8 +1668,18 @@ import type {
 } from '@/api/paper'
 import { fmtNum, toneClass } from '@/utils/stockFormat'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
+import { useSettings } from '@/composables/useSettings'
 
 const router = useRouter()
+
+/**
+ * 用户在设置里指定的刷新间隔。
+ *
+ * <p>模拟盘页面拉的是账户/持仓/委托这类「自己的数据」，不是行情报价，
+ * 但节奏仍跟行情绑在一起——盘后价格不动，资产也不会变，用同一个间隔最省事。</p>
+ */
+const { refreshSettings } = useSettings()
+const quotesRefreshMs = computed(() => refreshSettings.value.quotesRefreshMs)
 
 const ORDERS_PAGE_SIZE = 20
 const TRADES_PAGE_SIZE = 20
@@ -2075,7 +2085,9 @@ const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)
 // —— 刷新节奏 ——
 const marketState = ref(getMarketState())
 const stateBadge = computed(() => marketStateBadge(marketState.value))
-const refreshSec = computed(() => Math.round(refreshIntervalMs(marketState.value) / 1000))
+const refreshSec = computed(() =>
+  Math.round(refreshIntervalMs(marketState.value, false, quotesRefreshMs.value) / 1000)
+)
 
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -2364,9 +2376,12 @@ function scheduleRefresh() {
     refreshTimer = undefined
   }
   if (disposed || document.visibilityState !== 'visible') return
+  const delay = refreshIntervalMs(marketState.value, false, quotesRefreshMs.value)
+  // 设置里选了「不自动刷新」：不排下一次，页面上的手动刷新按钮仍然有效
+  if (delay <= 0) return
   refreshTimer = setTimeout(() => {
     void refreshAll(true)
-  }, refreshIntervalMs(marketState.value))
+  }, delay)
 }
 
 function onVisibilityChange() {
@@ -2573,7 +2588,10 @@ function scheduleSecondary() {
   // 盘前/盘后/休市日靠手动刷新与回到前台时的补刷，避免无意义请求。
   const state = marketState.value
   if (state !== 'open' && state !== 'break') return
-  const interval = Math.max(SECONDARY_MIN_INTERVAL_MS, refreshIntervalMs(state))
+  const base = refreshIntervalMs(state, false, quotesRefreshMs.value)
+  // 用户把自动刷新关了：慢数据也没必要偷偷轮询，否则「关了自动刷新」等于没关
+  if (base <= 0) return
+  const interval = Math.max(SECONDARY_MIN_INTERVAL_MS, base)
   secondaryTimer = setTimeout(() => {
     void loadSecondary()
   }, interval)

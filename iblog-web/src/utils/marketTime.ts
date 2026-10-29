@@ -5,10 +5,16 @@
  * 隔夜跳空误触发。A 股 09:30-11:30 / 13:00-15:00，港股 09:30-12:00 / 13:00-16:00。</p>
  *
  * <p>关于法定节假日：纯时钟判断无法知道「今天是十一长假」，会把 10 月 1 日显示成
- * 「交易中」。本文件不内置节假日表（每年要人工维护，一定会过期），而是提供
- * {@link isQuoteFresh}——用上游报价自带的时间戳反证「市场其实没动」。两者组合，
- * 时钟给「现在该不该开市」，时间戳给「实际上有没有在动」。</p>
+ * 「交易中」。港股用 {@link isHKHoliday} 的静态假期表补上（见 `utils/hkHolidays.ts`，
+ * 收录取到 2027 年，过期后自动降级为「只判周末」而不是判错）；A 股假期表每年由
+ * 国务院临时公布，前端硬编码一定会过期，故不内置，而是靠 {@link isQuoteFresh}
+ * 用上游报价自带的时间戳反证「市场其实没动」。两者组合，时钟给「现在该不该开市」，
+ * 时间戳给「实际上有没有在动」。</p>
  */
+
+// 带 .ts 后缀是刻意的：scripts/*.test.mjs 由 node --experimental-strip-types 直接
+// import 本文件，Node 的 ESM 解析器不做「补后缀」推断，写 './hkHolidays' 会 ERR_MODULE_NOT_FOUND。
+import { isHKHoliday } from './hkHolidays.ts'
 
 /** 各市场交易时段（分钟数，含两端）：[上午开, 上午收] / [下午开, 下午收] */
 const SESSIONS = {
@@ -28,6 +34,11 @@ export function getToday(): string {
 }
 
 export type MarketState = 'pre' | 'open' | 'break' | 'post' | 'holiday' | 'stale'
+
+/** 任意时刻 → `YYYY-MM-DD`（本地时区，补零，与 {@link getToday} 同口径） */
+function toDateStr(at: Date): string {
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
+}
 
 /**
  * 市场状态。
@@ -50,6 +61,12 @@ export function getMarketState(
 
   const day = at.getDay()
   if (day === 0 || day === 6) {
+    return 'holiday'
+  }
+  // 港股还要看公众假期表：中秋、国庆这些日子是工作日但休市，光判周末会显示「交易中」。
+  // 必须用 === true 判定——isHKHoliday 返回 null 表示「该年份未收录」，那是「不知道」，
+  // 不能当成「不是假期」，否则表一过期就又开始把国庆当交易日。
+  if (market === 'HK' && isHKHoliday(toDateStr(at)) === true) {
     return 'holiday'
   }
 
@@ -148,8 +165,33 @@ export function marketStateBadge(state: MarketState): { text: string; live: bool
  *
  * <p>原来固定 15 秒全量刷四五个接口，收盘后、深夜、周末照样刷，等于白烧用户的流量和
  * 后端的上游配额。分三档：交易中 15 秒、午休 60 秒（仍有零星成交）、其余 5 分钟。</p>
+ *
+ * @param overrideMs 用户在设置里指定的「交易时段间隔」。只覆盖「交易中」这一档，
+ *   午休和休市仍按倍数放大——收盘后按用户设的 10 秒去刷，除了费流量没有任何好处，
+ *   这一点不该交给用户自己判断。传 0 表示不自动刷新，调用方据此停止排期。
+ *   非有限数或负数视为未设置，走默认档位。
  */
-export function refreshIntervalMs(state: MarketState, hidden = false): number {
+export function refreshIntervalMs(state: MarketState, hidden = false, overrideMs?: number): number {
+  const override = typeof overrideMs === 'number' && Number.isFinite(overrideMs) && overrideMs >= 0
+    ? overrideMs
+    : null
+
+  if (override !== null) {
+    // 0 = 用户明确关掉自动刷新，任何状态下都不该再排期
+    if (override === 0) {
+      return 0
+    }
+    const scaled =
+      state === 'open'
+        ? override
+        : state === 'break'
+          ? // 午休成交稀疏，但仍有零星挂单，放慢到 1/4 频率即可
+            Math.max(override * 4, 30_000)
+          : // 盘前/盘后/休市：价格不动，再勤也是重复拿同一份数据
+            Math.max(override * 20, 120_000)
+    return hidden ? scaled * 4 : scaled
+  }
+
   let base: number
   switch (state) {
     case 'open':

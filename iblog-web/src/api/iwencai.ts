@@ -123,6 +123,33 @@ export function clearIwencaiCache(): void {
 }
 
 /**
+ * 让 AI 把用户的口语条件改写成问财更认的句式。
+ *
+ * <p>为什么需要：问财的解析器对「帮我找找最近放量上涨的票」这类口语很弱，
+ * 会返回空结果或跑到别的语义上；改成「近3日成交量大于前5日均量2倍；今日涨幅大于3%」
+ * 这种「指标+比较符+数值」的写法命中率高得多。改写由后端调 LLM 完成，
+ * 前端只负责把结果填回输入框让用户确认——不自动提交，用户仍有最终决定权。</p>
+ *
+ * <p>失败不抛给调用方：优化是锦上添花，改写不出来就用原句查，
+ * 让用户因为「AI 优化失败」而查不了股票是本末倒置。</p>
+ *
+ * @param query 原始口语条件
+ * @returns 改写后的查询语句；失败时返回空串
+ */
+export async function optimizeIwencaiQuery(query: string): Promise<string> {
+  const text = query.trim()
+  if (!text) {
+    return ''
+  }
+  try {
+    const result = await post<{ query: string }>('/stock/ai/optimize-query', { query: text })
+    return (result?.query ?? '').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
  * 从单元格值里解析股票代码。
  *
  * <p>问财的代码列可能是 `301565.SZ`（带市场后缀）也可能是 `301565`，

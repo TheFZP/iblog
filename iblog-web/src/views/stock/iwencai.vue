@@ -9,6 +9,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   findColumn,
+  optimizeIwencaiQuery,
   queryIwencai,
   rowCode,
   type IwencaiResult,
@@ -43,6 +44,10 @@ const error = ref('')
 const stale = ref(false)
 const page = ref(1)
 const pageSize = ref<(typeof PAGE_SIZES)[number]>(50)
+/** AI 改写请求中：避免用户连点把多次改写叠加成一串 */
+const optimizing = ref(false)
+/** 改写结果的一句提示（成功/失败都写这里，用空串表示无提示） */
+const optimizeHint = ref('')
 
 /** 请求序号：连续点两个快捷问句时，先发出的响应可能后到，靠它把过期响应丢掉。 */
 let seq = 0
@@ -98,6 +103,33 @@ async function run(text: string): Promise<void> {
 
 function submit(): void {
   void run(question.value)
+}
+
+/**
+ * 让 AI 把口语改写成问财认的句式。
+ *
+ * <p>只改写输入框，不自动提交：改写结果用户可能不认同（比如把「低估的票」
+ * 理解成某个具体市盈率），得让他看一眼再决定。改写失败保持原样并给一句提示，
+ * 不能因为 AI 挂了就拦住用户查股票。</p>
+ */
+async function optimize(): Promise<void> {
+  const raw = question.value.trim()
+  if (!raw || optimizing.value) {
+    return
+  }
+  optimizing.value = true
+  optimizeHint.value = ''
+  try {
+    const next = await optimizeIwencaiQuery(raw)
+    if (next) {
+      question.value = next
+      optimizeHint.value = '已改写成问财更易识别的条件，确认后再点「选股」'
+    } else {
+      optimizeHint.value = 'AI 优化暂不可用（可能没配置 Key），已保留原句'
+    }
+  } finally {
+    optimizing.value = false
+  }
 }
 
 function quickSearch(preset: string): void {
@@ -198,7 +230,18 @@ onMounted(() => {
           <button type="submit" class="btn iw-search__btn" :disabled="loading || !question.trim()">
             选股
           </button>
+          <button
+            type="button"
+            class="btn btn--ghost iw-optimize__btn"
+            :disabled="loading || optimizing || !question.trim()"
+            title="让 AI 把口语条件改写成问财更易识别的写法"
+            @click="optimize"
+          >
+            {{ optimizing ? '优化中…' : '✨ AI 优化' }}
+          </button>
         </form>
+
+        <p v-if="optimizeHint" class="iw-optimize__hint">{{ optimizeHint }}</p>
 
         <div class="iw-chips">
           <!-- 快捷问句在请求中也不禁用：用户连点两句很常见，让新问句抢先、旧响应靠 seq 丢弃，
@@ -411,6 +454,19 @@ onMounted(() => {
 .iw-search__btn {
   flex: 0 0 auto;
   min-height: 44px;
+}
+
+.iw-optimize__btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.iw-optimize__hint {
+  margin: 0;
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  line-height: 1.5;
 }
 
 .iw-chips {
@@ -711,7 +767,8 @@ onMounted(() => {
     flex-direction: column;
   }
 
-  .iw-search__btn {
+  .iw-search__btn,
+  .iw-optimize__btn {
     width: 100%;
   }
 

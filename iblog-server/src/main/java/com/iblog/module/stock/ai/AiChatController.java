@@ -47,6 +47,7 @@ public class AiChatController {
     private final AiChatService chatService;
     private final IwencaiClient iwencaiClient;
     private final StockSettingService settingService;
+    private final AiQueryOptimizer queryOptimizer;
 
     /** 面板初始化：模型名、是否配好 Key、是否开联网搜索。/**/
     @GetMapping("/config")
@@ -105,6 +106,29 @@ public class AiChatController {
 
     /** 问财请求体。 */
     public record IwencaiRequest(String question, Integer page, Integer perPage, String v) {
+    }
+
+    /**
+     * AI 优化问财查询语句。
+     *
+     * <p>给「问财选股」页的「✨ AI 优化」按钮用：用户写口语，模型改写成问财认的结构化条件。
+     * 做成普通 POST 而不是 SSE，是因为结果就一句话，前端没必要为它挂一个 EventSource。
+     * 业务逻辑在 {@link AiQueryOptimizer}，这里只做请求体检与转发。</p>
+     */
+    @PostMapping("/optimize-query")
+    public R<OptimizeQueryResponse> optimizeQuery(@RequestBody OptimizeQueryRequest request) {
+        if (request == null) {
+            throw new BizException(400, "请输入选股条件");
+        }
+        return R.ok(new OptimizeQueryResponse(queryOptimizer.optimizeIwencaiQuery(request.query())));
+    }
+
+    /** 查询改写请求体。 */
+    public record OptimizeQueryRequest(String query) {
+    }
+
+    /** 查询改写响应体：{@code query} 是清洗后的问财语句，永不为空。 */
+    public record OptimizeQueryResponse(String query) {
     }
 
     /**

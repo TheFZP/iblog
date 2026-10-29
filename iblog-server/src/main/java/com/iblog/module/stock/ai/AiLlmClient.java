@@ -74,7 +74,7 @@ public class AiLlmClient {
     }
 
     /**
-     * 发起一次流式补全。
+     * 发起一次流式补全（输出上限用类常量 {@link #MAX_TOKENS}）。
      *
      * @param apiKey   模型 Key（只从数据库读，绝不来自请求体）
      * @param model    模型名
@@ -86,11 +86,27 @@ public class AiLlmClient {
      */
     public void stream(String apiKey, String model, ArrayNode messages, ArrayNode tools,
                        boolean thinking, String effort, Listener listener) throws AiException {
+        stream(apiKey, model, messages, tools, thinking, effort, MAX_TOKENS, listener);
+    }
+
+    /**
+     * 发起一次流式补全，可指定输出上限。
+     *
+     * <p>为什么要单独开一个 8 参重载：对话场景需要 8192 的余量，而「把一句话改写一下」
+     * 这种场景只要 256，多给的上限会体现在计费与最坏情况等待时间上。
+     * 7 参版本原样保留并委托过来，现有调用方（{@link AiChatService}）不用改。</p>
+     *
+     * @param maxTokens 输出上限；非正数时回落到 {@link #MAX_TOKENS}
+     * @param listener  增量回调
+     */
+    public void stream(String apiKey, String model, ArrayNode messages, ArrayNode tools,
+                       boolean thinking, String effort, int maxTokens, Listener listener)
+            throws AiException {
         ObjectNode body = mapper.createObjectNode();
         body.put("model", model);
         body.set("messages", messages);
         body.put("stream", true);
-        body.put("max_tokens", MAX_TOKENS);
+        body.put("max_tokens", maxTokens > 0 ? maxTokens : MAX_TOKENS);
         if (thinking) {
             body.put("reasoning_effort", effort == null ? AiConfigService.DEFAULT_EFFORT : effort);
         } else {
@@ -129,6 +145,40 @@ public class AiLlmClient {
         }
 
         parseStream(response.body(), listener);
+    }
+
+    /**
+     * 非流式补全：一次拿全文本，不暴露思维链。
+     *
+     * <p>用于「只需要一句话结果」的场景（如问财查询改写），避免前端为 200 字去解析 SSE。
+     * 实现上复用 {@link #stream}（{@code tools} 传 null、{@code thinking} 传 false），
+     * 只是在回调里把正文拼起来——协议本身没有独立的非流式分支，
+     * 自己再写一份 HTTP 收发反而多一处要对齐的错误处理。</p>
+     *
+     * @param maxTokens 输出上限（改写场景传 256 就够）
+     * @return 模型输出的全文（可能为空串，由调用方判断）
+     */
+    public String complete(String apiKey, String model, ArrayNode messages, int maxTokens) throws AiException {
+        StringBuilder content = new StringBuilder();
+        stream(apiKey, model, messages, null, false, null, maxTokens, new Listener() {
+            @Override
+            public void onReasoning(String delta) {
+                // 非流式场景不要思维链：丢弃即可，不抛异常也不拼进结果
+            }
+
+            @Override
+            public void onContent(String delta) {
+                if (delta != null && !delta.isEmpty()) {
+                    content.append(delta);
+                }
+            }
+
+            @Override
+            public void onToolCalls(List<ToolCall> calls) {
+                // 不传 tools，正常不会走到这里；万一上游回了工具调用也忽略
+            }
+        });
+        return content.toString();
     }
 
     /** 解析 SSE 流并回调。 */

@@ -33,6 +33,14 @@ export const SIGNAL_EVENTS_KEY = 'iblog-signal-events'
 export const MAX_EVENTS = 2000
 /** 默认在信号日之后第几个交易日收盘结算 */
 export const DEFAULT_HORIZON = 3
+/**
+ * 可选的持有期（信号日之后第 N 个交易日收盘结算）。
+ *
+ * <p>为什么要给多档：只看 3 日会把「慢启动」的信号判成错（第 1 天就买、第 4 天才涨），
+ * 也会把「快进快出」的信号判成对。1/3/5/10 四档能看出信号是「立刻兑现」还是「要拿一段」，
+ * 只看一个数字永远分不清是信号本身烂，还是持有期选错了。</p>
+ */
+export const HORIZON_CHOICES = [1, 3, 5, 10] as const
 /** 默认样本下限：少于这个数只标注、不下结论 */
 export const DEFAULT_MIN_SAMPLE = 5
 /** 固定免责口径。文案可以拼样本量，但这几句不许弱化 */
@@ -71,10 +79,29 @@ export interface WinRateBucket {
   sample: number
   /** 信号兑现的次数（bias='bull' 时后续收盘价高于信号价，bias='bear' 时反之） */
   wins: number
+  /** 判负的次数。单独存而不是用 sample-wins 推，是因为持平既不赢也不输 */
+  losses: number
+  /** 持平次数。不进胜负分母，见模块顶部「为什么持平算输」一节 */
+  flats: number
   /** 胜率 0~100，保留一位小数；sample=0 时为 null（不要返回 0，0 会被误读成「全输」） */
   winRate: number | null
   /** 平均后续涨跌幅（百分比，保留两位，按 bias 归一：bull 取正收益、bear 取收益取负后再平均） */
   avgReturn: number | null
+  /** 赢的那部分平均盈利（按 bias 归一后的正数）；无盈利样本时为 null */
+  avgWin: number | null
+  /** 输的那部分平均亏损（按 bias 归一后的正数，便于和 avgWin 直接对比）；无亏损样本时为 null */
+  avgLoss: number | null
+  /**
+   * 盈亏比 = 总盈利 / 总亏损。
+   *
+   * <p>无亏损时不能返回 Infinity、无盈利时不能返回 0 —— 前者会让界面打印 "Infinity"，
+   * 后者会被误读成「不亏不赚」（实际是「全输」）。所以两者都用 null 表示「该比值无意义」。</p>
+   */
+  profitFactor: number | null
+  /** 单条最好成绩（按 bias 归一后的百分比），无样本时 null */
+  best: number | null
+  /** 单条最差成绩，无样本时 null */
+  worst: number | null
 }
 
 /** {@link computeWinRates} 的返回值 */
@@ -83,6 +110,8 @@ export interface WinRateResult {
   pendingCount: number
   ignoredCount: number
   totalCount: number
+  /** 本次统计用的持有期（信号日后第 N 个交易日收盘），便于 UI 显示口径 */
+  horizon: number
 }
 
 // ───────────────────────────── 存储层 ─────────────────────────────
@@ -321,7 +350,15 @@ interface BucketAcc {
   source: SignalSource
   sample: number
   wins: number
+  losses: number
+  flats: number
   sum: number
+  /** 盈利样本的收益之和（正数） */
+  winSum: number
+  /** 亏损样本的亏损绝对值之和（正数，所以能直接和 winSum 比出盈亏比） */
+  lossSum: number
+  best: number
+  worst: number
 }
 
 /**
@@ -386,23 +423,60 @@ export function computeWinRates(
       source: event.source,
       sample: 0,
       wins: 0,
-      sum: 0
+      losses: 0,
+      flats: 0,
+      sum: 0,
+      winSum: 0,
+      lossSum: 0,
+      best: 0,
+      worst: 0
     }
     bucket.sample += 1
-    if (ret > 0) bucket.wins += 1
     bucket.sum += ret
+    if (ret > 0) {
+      bucket.wins += 1
+      bucket.winSum += ret
+    } else if (ret < 0) {
+      bucket.losses += 1
+      bucket.lossSum += -ret
+    } else {
+      // 持平既不赢也不输：算赢会虚高胜率，算输会压低胜率并污染盈亏比的分母
+      bucket.flats += 1
+    }
+    // 首次进入时 sample 已是 1，best/worst 初始 0 会被这条自身的值覆盖；
+    // 用 sample===1 判断首条，避免「首条是负数却仍留下 best=0」的错
+    if (bucket.sample === 1) {
+      bucket.best = ret
+      bucket.worst = ret
+    } else {
+      if (ret > bucket.best) bucket.best = ret
+      if (ret < bucket.worst) bucket.worst = ret
+    }
     buckets.set(key, bucket)
   }
 
   const out: WinRateBucket[] = [...buckets.values()]
-    .map((bucket) => ({
-      label: bucket.label,
-      source: bucket.source,
-      sample: bucket.sample,
-      wins: bucket.wins,
-      winRate: bucket.sample > 0 ? round1((bucket.wins / bucket.sample) * 100) : null,
-      avgReturn: bucket.sample > 0 ? round2(bucket.sum / bucket.sample) : null
-    }))
+    .map((bucket) => {
+      // 胜负分母排除持平：`flats` 单列，否则「10 次里 5 次没动」会被算成 50% 胜率
+      const decided = bucket.wins + bucket.losses
+      return {
+        label: bucket.label,
+        source: bucket.source,
+        sample: bucket.sample,
+        wins: bucket.wins,
+        losses: bucket.losses,
+        flats: bucket.flats,
+        winRate: decided > 0 ? round1((bucket.wins / decided) * 100) : null,
+        avgReturn: bucket.sample > 0 ? round2(bucket.sum / bucket.sample) : null,
+        avgWin: bucket.wins > 0 ? round2(bucket.winSum / bucket.wins) : null,
+        avgLoss: bucket.losses > 0 ? round2(bucket.lossSum / bucket.losses) : null,
+        // 无亏损时不能返回 Infinity、无盈利时不能返回 0：两者都表示「该比值无意义」
+        profitFactor:
+          bucket.winSum > 0 && bucket.lossSum > 0 ? round2(bucket.winSum / bucket.lossSum) : null,
+        best: bucket.sample > 0 ? round2(bucket.best) : null,
+        worst: bucket.sample > 0 ? round2(bucket.worst) : null
+      }
+    })
     // 样本多的先看：3 条样本的 100% 和 300 条样本的 52% 摆在同一位会误导人
     .sort(
       (a, b) =>
@@ -411,7 +485,7 @@ export function computeWinRates(
         a.source.localeCompare(b.source)
     )
 
-  return { buckets: out, pendingCount, ignoredCount, totalCount: list.length }
+  return { buckets: out, pendingCount, ignoredCount, totalCount: list.length, horizon }
 }
 
 /**

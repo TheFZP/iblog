@@ -47,6 +47,19 @@
           </form>
 
           <button
+            class="icon-btn"
+            type="button"
+            aria-label="设置（Ctrl+,）"
+            title="设置（Ctrl+,）"
+            @click="settingsOpen = true"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3.2" />
+              <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+            </svg>
+          </button>
+
+          <button
             v-if="authenticated"
             class="icon-btn"
             type="button"
@@ -168,6 +181,10 @@
 
     <!-- 全局 AI 助手：挂在布局层，切页面不重建，对话不丢 -->
     <GlobalAiEntry v-if="authenticated" />
+
+    <!-- 全局搜索 / 设置：同样挂在布局层，任意页面都能唤起 -->
+    <GlobalSearch :open="searchOpen" @close="searchOpen = false" />
+    <SettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -179,6 +196,8 @@ import { stopAlertWatcher, useAutoStartAlertWatcher } from '@/composables/useAle
 import { useAuth } from '@/composables/useAuth'
 import { takeStoredPreset, useGlobalAi } from '@/composables/useGlobalAi'
 import GlobalAiEntry from '@/components/stock/GlobalAiEntry.vue'
+import GlobalSearch from '@/components/GlobalSearch.vue'
+import SettingsDialog from '@/components/SettingsDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -199,7 +218,35 @@ function onOpenAi() {
 const keyword = ref('')
 const menuOpen = ref(false)
 const scrolled = ref(false)
+const searchOpen = ref(false)
+const settingsOpen = ref(false)
 const year = new Date().getFullYear()
+
+/**
+ * 全局快捷键：Ctrl/Cmd+K 搜索、Ctrl/Cmd+, 设置。
+ *
+ * <p>Ctrl+N 由 {@code GlobalAiEntry} 自己接管，这里不重复注册——同一个键挂在
+ * 两个组件上会双触发（一个开面板、一个又关掉）。</p>
+ *
+ * <p>用 `event.key` 而不是 `keyCode`：`,` 在不同键盘布局下 keyCode 不一样，
+ * 但 `key` 永远是逗号。输入框里打字时要放过，否则用户想在搜索框里按 Ctrl+K
+ * 清空关键词会变成弹窗。</p>
+ */
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) {
+    return
+  }
+  const key = event.key.toLowerCase()
+  if (key === 'k') {
+    event.preventDefault()
+    searchOpen.value = !searchOpen.value
+    return
+  }
+  if (key === ',') {
+    event.preventDefault()
+    settingsOpen.value = !settingsOpen.value
+  }
+}
 
 interface NavItem {
   path: string
@@ -294,10 +341,12 @@ onMounted(() => {
   loadSite()
   onScroll()
   window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('keydown', onGlobalKeydown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('keydown', onGlobalKeydown)
   document.body.style.overflow = ''
   stopAlertWatcher()
 })

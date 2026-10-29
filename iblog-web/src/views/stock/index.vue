@@ -266,6 +266,16 @@ import { useNotify } from '@/composables/useNotify'
 import { usePositionAlerts } from '@/composables/usePositionAlerts'
 import { usePriceAlerts } from '@/composables/usePriceAlerts'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
+import { useSettings } from '@/composables/useSettings'
+
+/**
+ * 用户在设置里指定的刷新间隔。
+ *
+ * <p>取 `quotesRefreshMs` 而不是分成四个各管一段：这一页刷的是「指数 + 自选行情」，
+ * 一次 refreshAll 里两者一起拿，分开设两个间隔只会让人疑惑「为什么指数比自选快」。</p>
+ */
+const { refreshSettings } = useSettings()
+const quotesRefreshMs = computed(() => refreshSettings.value.quotesRefreshMs)
 
 const router = useRouter()
 
@@ -391,7 +401,7 @@ const isTradingTime = computed(() => {
 })
 
 /** 当前刷新间隔（秒），展示给用户看，避免「为什么一直不刷新」的困惑 */
-const refreshSec = computed(() => refreshIntervalMs(marketState.value) / 1000)
+const refreshSec = computed(() => refreshIntervalMs(marketState.value, false, quotesRefreshMs.value) / 1000)
 
 /** 最新一条上游时间戳，格式化成 HH:mm:ss */
 const lastQuoteTime = computed(() => {
@@ -557,7 +567,15 @@ let timer: ReturnType<typeof setTimeout> | undefined
  */
 function scheduleRefresh() {
   clearTimeout(timer)
-  const delay = refreshIntervalMs(marketState.value, document.visibilityState !== 'visible')
+  const delay = refreshIntervalMs(
+    marketState.value,
+    document.visibilityState !== 'visible',
+    quotesRefreshMs.value
+  )
+  // 用户在设置里选了「不自动刷新」：不排下一次，页面上的手动「刷新」按钮仍可用
+  if (delay <= 0) {
+    return
+  }
   timer = setTimeout(async () => {
     if (document.visibilityState === 'visible') {
       await refreshAll(false)

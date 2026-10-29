@@ -23,6 +23,7 @@ import { usePositions } from '@/composables/usePositions'
 import { usePriceAlerts } from '@/composables/usePriceAlerts'
 import { useMaAlerts } from '@/composables/useMaAlerts'
 import { MA_PERIOD_CHOICES, useChartSettings } from '@/composables/useChartSettings'
+import { useSettings } from '@/composables/useSettings'
 import KlineChart from '@/components/stock/KlineChart.vue'
 import IntradayChart from '@/components/stock/IntradayChart.vue'
 import DepthPanel from '@/components/stock/DepthPanel.vue'
@@ -70,6 +71,15 @@ const { countEnabledForCode: countMaAlertsForCode } = useMaAlerts()
 const { maPeriods, show30DayHL, toggleMaPeriod, setShow30DayHL } = useChartSettings()
 /** 均线设置面板默认收起：多数人只关心图，不该被一排 chip 挡着 */
 const showChartSettings = ref(false)
+
+/**
+ * 用户在设置里指定的刷新间隔。
+ *
+ * <p>详情页一次 `refreshAll` 同时刷行情 + 分时 + 盘口 + 资金流，取 `quotesRefreshMs`
+ * 一个值即可；拆成四个各自独立会让人困惑「为什么价格比盘口快」。</p>
+ */
+const { refreshSettings } = useSettings()
+const quotesRefreshMs = computed(() => refreshSettings.value.quotesRefreshMs)
 
 const code = computed(() => String(route.params.code ?? ''))
 
@@ -473,7 +483,15 @@ function startAutoRefresh() {
 function scheduleRefresh() {
   stopAutoRefresh()
   const state = getMarketState(code.value, quote.value?.quoteTime)
-  const delay = refreshIntervalMs(state, document.visibilityState !== 'visible')
+  const delay = refreshIntervalMs(
+    state,
+    document.visibilityState !== 'visible',
+    quotesRefreshMs.value
+  )
+  // 设置里选了「不自动刷新」：不排下一次，手动刷新的按钮仍然有效
+  if (delay <= 0) {
+    return
+  }
   refreshTimer = window.setTimeout(async () => {
     if (document.visibilityState === 'visible') {
       await refreshAll()

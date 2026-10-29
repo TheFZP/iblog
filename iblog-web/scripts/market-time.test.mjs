@@ -28,6 +28,13 @@ function at(y, mo, d, h, mi = 0) {
 // 2026-10-19 是周一，2026-10-17 是周六
 const MON = 19
 const SAT = 17
+/**
+ * 一个「港股与 A 股都正常开市」的周一。
+ *
+ * <p>10-19 虽是周一，却是香港重阳节翌日休市（见 hkHolidays 表），
+ * 用它测港股时段会得到 holiday。往前挪到 10-12（周一，无假期）。</p>
+ */
+const HK_MON = 12
 
 test('A 股时段边界：09:30 开盘、11:30 收盘、13:00 复牌、15:00 收盘（均含端点）', () => {
   assert.equal(getMarketState(undefined, null, at(2026, 10, MON, 9, 29)), 'pre', '09:29 未开盘')
@@ -42,11 +49,19 @@ test('A 股时段边界：09:30 开盘、11:30 收盘、13:00 复牌、15:00 收
 
 test('港股时段比 A 股长：上午到 12:00、下午到 16:00', () => {
   // 00700 是 5 位 → 按港股处理
-  assert.equal(getMarketState('00700', null, at(2026, 10, MON, 11, 45)), 'open', '港股上午 11:45 仍交易')
-  assert.equal(getMarketState(undefined, null, at(2026, 10, MON, 11, 45)), 'break', '同刻 A 股已午休')
-  assert.equal(getMarketState('00700', null, at(2026, 10, MON, 15, 30)), 'open', '港股 15:30 仍交易')
-  assert.equal(getMarketState(undefined, null, at(2026, 10, MON, 15, 30)), 'post', '同刻 A 股已收盘')
-  assert.equal(getMarketState('00700', null, at(2026, 10, MON, 16, 1)), 'post', '港股 16:01 收盘')
+  // 注意用 10-26 而不是 10-19：2026-10-19 是香港「重阳节翌日」休市，
+  // 拿它当普通周一会测出 holiday，看着像时段判断错了，其实是假期表生效。
+  assert.equal(getMarketState('00700', null, at(2026, 10, HK_MON, 11, 45)), 'open', '港股上午 11:45 仍交易')
+  assert.equal(getMarketState(undefined, null, at(2026, 10, HK_MON, 11, 45)), 'break', '同刻 A 股已午休')
+  assert.equal(getMarketState('00700', null, at(2026, 10, HK_MON, 15, 30)), 'open', '港股 15:30 仍交易')
+  assert.equal(getMarketState(undefined, null, at(2026, 10, HK_MON, 15, 30)), 'post', '同刻 A 股已收盘')
+  assert.equal(getMarketState('00700', null, at(2026, 10, HK_MON, 16, 1)), 'post', '港股 16:01 收盘')
+})
+
+test('港股法定假期：重阳节翌日 2026-10-19 全天休市，A 股同日照常交易', () => {
+  // 这正是「只判周末」会判错的场景：周一早上十点，港股其实是休市
+  assert.equal(getMarketState('00700', null, at(2026, 10, 19, 10, 0)), 'holiday', '港股重阳翌日休市')
+  assert.equal(getMarketState(undefined, null, at(2026, 10, 19, 10, 0)), 'open', 'A 股无此假期')
 })
 
 test('周末一律休市，与时刻无关', () => {
