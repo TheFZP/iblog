@@ -36,10 +36,17 @@ import java.time.format.DateTimeFormatter;
  *       否则策略会在节假日被判定成「冰点」而误清仓</li>
  * </ul>
  *
- * <p><b>降级策略</b>：任一上游失败时沿用上一次成功的快照（{@code stale=true}）。
- * 情绪是慢变量，5 分钟前的读数和现在差不了多少；而「因为一次网络抖动就改策略行为」
- * 才是真正危险的。从未成功过时返回中性的 50 分并标 {@code available=false}，
- * 调用方应据此<b>不拦单</b>。</p>
+ * <p><b>降级策略</b>：分两层。
+ * <ol>
+ *   <li><b>链路降级</b>：东财 {@code push2delay} 对部分机房 IP 直接拒连（实测线上服务器
+ *       全部 HTTP 000 / {@code header parser received no bytes}，同一台机器访问
+ *       {@code push2ex}、腾讯、新浪却都正常），所以主链路拿不到涨跌家数时，
+ *       改用「新浪按涨跌幅降序分页二分 + 腾讯指数」兜底。</li>
+ *   <li><b>时间降级</b>：任一路径都失败时沿用上一次成功的快照（{@code stale=true}）。
+ *       情绪是慢变量，5 分钟前的读数和现在差不了多少；而「因为一次网络抖动就改策略行为」
+ *       才是真正危险的。从未成功过时返回中性的 50 分并标 {@code available=false}，
+ *       调用方应据此<b>不拦单</b>。</li>
+ * </ol>
  */
 @Slf4j
 @Service
@@ -79,6 +86,37 @@ public class MarketSentimentService {
 
     private static final String REFERER = "https://quote.eastmoney.com/";
 
+    /**
+     * 兜底链路（东财 push2 被机房 IP 封禁时启用）：
+     * 新浪按涨跌幅排序分页 + 腾讯指数。
+     *
+     * <p>实测线上 IP 对 push2delay / push2 全部连接被拒（curl 返回 000），
+     * 但同一台机器访问 push2ex（涨跌停池）、qt.gtimg.cn、新浪行情均正常，
+     * 所以这不是网络整体故障，而是东财对该 IP 段的主动限制。</p>
+     */
+    private static final String REFERER_SINA = "https://finance.sina.com.cn/";
+
+    private static final String URL_SINA_COUNT =
+            "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php"
+                    + "/Market_Center.getHQNodeStockCount?node=hs_a";
+
+    private static final String URL_SINA_PAGE =
+            "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php"
+                    + "/Market_Center.getHQNodeData?num=" + 100
+                    + "&sort=changepercent&asc=0&node=hs_a&symbol=&_s_r_a=page&page=%d";
+
+    private static final String URL_TENCENT_INDEX =
+            "https://qt.gtimg.cn/q=sh000001,sz399001,sz399006";
+
+    /** 新浪分页每页条数（上游硬上限，传更大也只返 100） */
+    private static final int SINA_PAGE_SIZE = 100;
+
+    /** 兜底链路的总时间预算：二分要打好几次请求，不能把引擎 tick 拖住 */
+    private static final long FALLBACK_BUDGET_MS = 8_000L;
+
+    /** 兜底链路单次请求超时：比主路径短，因为要连打多次。实测新浪/腾讯都在 300ms 内返回 */
+    private static final Duration FALLBACK_TIMEOUT = Duration.ofMillis(2_000);
+
     private final StockHttpClient http;
 
     private final UpstreamBreaker breaker = new UpstreamBreaker(BREAKER_THRESHOLD, BREAKER_COOLDOWN_MS);
@@ -86,6 +124,9 @@ public class MarketSentimentService {
     /** 上一次成功的完整快照（含「昨天收盘后」的读数，盘前拿到也能用） */
     private volatile MarketSentiment lastGood;
     private volatile long cachedAt;
+
+    /** 上一次打「已切兜底链路」日志的时间，避免每 60 秒刷一条 */
+    private volatile long fallbackLoggedAt = 0L;
 
     /**
      * 取当前情绪快照（带 60 秒缓存）。
@@ -193,6 +234,31 @@ public class MarketSentimentService {
     // ---------- 上游 ----------
 
     private Raw fetchRaw() {
+        Raw raw = fetchRawEastmoney();
+        if (raw != null) {
+            return raw;
+        }
+        // 东财 push2 这条路径对部分机房 IP 直接拒连，退回新浪 + 腾讯的兜底链路。
+        //
+        // 这里<b>刻意不清空熔断计数</b>：兜底成功不代表主链路恢复了。若清了，
+        // 每个 60 秒冷却期一过就会再拿一个 tick 去等东财超时（最长 4 秒 × 多次），
+        // 而线上这个 IP 段是长期被封的 —— 等于每隔一分钟白白拖慢一次引擎。
+        // 熔断器只由主链路自己的成功/失败驱动。
+        Raw fallback = fetchRawFallback();
+        if (fallback != null) {
+            // 兜底是常态（线上 IP 被封），每 10 分钟提示一次足够排查，不必刷屏
+            long now = System.currentTimeMillis();
+            if (now - fallbackLoggedAt > 600_000L) {
+                fallbackLoggedAt = now;
+                log.info("情绪：东财主链路不可用，已改用新浪 + 腾讯兜底链路");
+            }
+        }
+        return fallback;
+    }
+
+    private Raw fetchRawEastmoney() {
+        // 熔断只针对东财主链路：它挂了不代表兜底链路也不可用，
+        // 所以这个判断放在主链路内部，而不是 fetchRaw 的入口。
         if (breaker.isOpen()) {
             return null;
         }
@@ -233,6 +299,7 @@ public class MarketSentimentService {
                 breaker.recordFailure();
                 return null;
             }
+            // 涨跌停池在 push2ex 上，即使 push2 被封也通常可用，所以这里仍然读
             int limitUp = readPoolTotal(String.format(URL_LIMIT_UP, today));
             int limitDown = readPoolTotal(String.format(URL_LIMIT_DOWN, today));
             int broken = readPoolTotal(String.format(URL_BROKEN, today));
@@ -259,13 +326,237 @@ public class MarketSentimentService {
     }
 
     /**
+     * 兜底链路：新浪按涨跌幅降序分页 + 二分找 0% 边界，得出涨/跌/平家数；
+     * 指数涨幅与成交额改从腾讯取（腾讯对机房 IP 友好，且本来就在用）。
+     *
+     * <p>为什么用二分而不是逐页扫：沪深 5000+ 只股票按 100 条一页要 56 次请求，
+     * 15 秒一次的 tick 撑不住。二分只需 6~7 次就能定位「涨跌幅由正转负」的那一页。</p>
+     *
+     * <p><b>时间预算很紧</b>：整条兜底链路必须在 {@link #FALLBACK_BUDGET_MS} 内跑完，
+     * 因为它挂在 15 秒一次的引擎 tick 上。所以每一步都用 {@link #FALLBACK_TIMEOUT}
+     * （2.5 秒）而不是默认的 4 秒，并且在循环里反复检查 deadline —— 宁可不交这个数
+     * （沿用上次快照），也不能把 tick 拖过下一轮。</p>
+     */
+    private Raw fetchRawFallback() {
+        long deadline = System.currentTimeMillis() + FALLBACK_BUDGET_MS;
+        try {
+            // 先读涨跌停池：push2ex 是独立的域名，即使 push2delay 被封它通常还活着，
+            // 而且这三次请求是「有就用、没有就缺项」，放在最前面能保证它们拿到配额。
+            String today = LocalDate.now(ZONE).format(DateTimeFormatter.BASIC_ISO_DATE);
+            int limitUp = readPoolTotalInBudget(String.format(URL_LIMIT_UP, today), deadline);
+            int limitDown = readPoolTotalInBudget(String.format(URL_LIMIT_DOWN, today), deadline);
+            int broken = readPoolTotalInBudget(String.format(URL_BROKEN, today), deadline);
+
+            int total = readSinaTotal();
+            if (total <= 0) {
+                return null;
+            }
+            int maxPage = (total + SINA_PAGE_SIZE - 1) / SINA_PAGE_SIZE;
+            int lo = 1;
+            int hi = maxPage;
+            while (lo < hi) {
+                if (System.currentTimeMillis() > deadline) {
+                    log.debug("情绪：兜底链路超出预算，放弃");
+                    return null;
+                }
+                int mid = (lo + hi) >>> 1;
+                Double tail = readSinaPageTailPct(mid);
+                if (tail == null) {
+                    return null;
+                }
+                if (tail <= 0) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            int boundaryPage = lo;
+            double[] page = readSinaPageCounts(boundaryPage);
+            if (page == null) {
+                return null;
+            }
+            int gt0 = (int) page[0];
+            int eq0 = (int) page[1];
+            int up = (boundaryPage - 1) * SINA_PAGE_SIZE + gt0;
+            int flat = eq0;
+            if (up + flat > total) {
+                // 上游分页口径变了，宁可不要这个数，也别交出一个自相矛盾的读数
+                return null;
+            }
+            int down = total - up - flat;
+
+            double[] index = readTencentIndex();
+
+            Raw raw = new Raw();
+            raw.up = up;
+            raw.down = down;
+            raw.flat = flat;
+            raw.limitUp = Math.max(0, limitUp);
+            raw.limitDown = Math.max(0, limitDown);
+            raw.broken = Math.max(0, broken);
+            raw.amountYi = index == null ? Double.NaN : Math.round(index[1] * 10) / 10.0;
+            raw.indexChangePct = index == null ? Double.NaN : index[0];
+            raw.tradeDate = LocalDate.now(ZONE).toString();
+            raw.updatedAt = LocalTime.now(ZONE).format(TIME_FORMAT);
+            return raw;
+        } catch (RuntimeException ex) {
+            log.debug("情绪：兜底链路失败 err={}", ex.getMessage());
+            return null;
+        }
+    }
+
+    private int readSinaTotal() {
+        String text = readSinaText(URL_SINA_COUNT);
+        if (text == null) {
+            return -1;
+        }
+        String trimmed = text.trim().replace("\"", "");
+        try {
+            return Integer.parseInt(trimmed);
+        } catch (NumberFormatException ex) {
+            return -1;
+        }
+    }
+
+    /** 该页最后一条的涨跌幅（降序排列，所以是这一页里最小的那个）。 */
+    private Double readSinaPageTailPct(int page) {
+        JsonNode root = readSinaJson(page);
+        if (root == null || !root.isArray() || root.isEmpty()) {
+            return null;
+        }        return root.get(root.size() - 1).path("changepercent").asDouble(Double.NaN);
+    }
+
+    /** 返回 [涨跌幅>0 条数, 涨跌幅==0 条数]；拿不到返回 null。 */
+    private double[] readSinaPageCounts(int page) {
+        JsonNode root = readSinaJson(page);
+        if (root == null || !root.isArray() || root.isEmpty()) {
+            return null;
+        }
+        int gt0 = 0;
+        int eq0 = 0;
+        for (JsonNode n : root) {
+            double pct = n.path("changepercent").asDouble(Double.NaN);
+            if (Double.isNaN(pct)) {
+                continue;
+            }
+            if (pct > 0) {
+                gt0++;
+            } else if (pct == 0) {
+                eq0++;
+            }
+        }
+        return new double[]{gt0, eq0};
+    }
+
+    private JsonNode readSinaJson(int page) {
+        String text = readSinaText(String.format(URL_SINA_PAGE, page));
+        if (text == null) {
+            return null;
+        }
+        try {
+            return JSON.readTree(text);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private String readSinaText(String url) {
+        try {
+            String text = http.getTextNoKeepAlive(url, REFERER_SINA, StandardCharsets.UTF_8, FALLBACK_TIMEOUT);
+            return text == null || text.isBlank() ? null : text;
+        } catch (Exception ex) {
+            log.debug("情绪：新浪请求失败 url={} err={}", url, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 从腾讯取 [指数平均涨幅, 沪深成交额(亿)]。
+     *
+     * <p>腾讯 {@code v_sh000001} 返回值是 {@code ~} 分隔的 88 个字段，GBK 编码：
+     * [3] 当前点位、[32] 涨跌幅(%)、[37] 成交额（万元）。这里取上证 + 深证两市的成交额，
+     * 创业板指不累加（与东财口径一致，它已包含在深市里）。</p>
+     */
+    private double[] readTencentIndex() {
+        try {
+            String text = http.getTextNoKeepAlive(URL_TENCENT_INDEX, StockHttpClient.REFERER_QT,
+                    StockHttpClient.GBK, FALLBACK_TIMEOUT);
+            if (text == null || text.isBlank()) {
+                return null;
+            }
+            return parseTencentIndex(text);
+        } catch (Exception ex) {
+            log.debug("情绪：腾讯指数失败 err={}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /** 解析腾讯 {@code v_sh000001="..."} 文本，返回 [指数平均涨幅, 沪深成交额(亿)]；解析不出返回 null。 */
+    public static double[] parseTencentIndex(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        double changeSum = 0;
+        int changeCount = 0;
+        double amountWan = 0;
+        for (String line : text.split("\n")) {
+            int eq = line.indexOf("=\"");
+            if (eq < 0) {
+                continue;
+            }
+            String code = line.substring(0, eq);
+            String body = line.substring(eq + 2).replaceAll("[\";\\s]+$", "");
+            String[] parts = body.split("~");
+            if (parts.length < 38) {
+                continue;
+            }
+            double pct = parseDouble(parts[32]);
+            if (!Double.isNaN(pct)) {
+                changeSum += pct;
+                changeCount++;
+            }
+            // 只累加沪市与深市，创业板已含在深市里
+            if (code.endsWith("sh000001") || code.endsWith("sz399001")) {
+                double wan = parseDouble(parts[37]);
+                if (!Double.isNaN(wan) && wan > 0) {
+                    amountWan += wan;
+                }
+            }
+        }
+        if (changeCount == 0) {
+            return null;
+        }
+        // 万元 → 亿元
+        return new double[]{changeSum / changeCount, amountWan / 1e4};
+    }
+
+    private static double parseDouble(String text) {
+        if (text == null || text.isBlank()) {
+            return Double.NaN;
+        }
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException ex) {
+            return Double.NaN;
+        }
+    }
+
+    /**
      * 读涨跌停池的 {@code data.tc}（当日总数）。
      *
      * <p>拿不到就返回 -1，由调用方决定「这一项缺失」——不要把失败当 0 家涨停，
      * 那会被算成冰点。</p>
      */
     private int readPoolTotal(String url) {
-        JsonNode root = readJson(url);
+        return readPoolTotalInBudget(url, Long.MAX_VALUE);
+    }
+
+    /** 同 {@link #readPoolTotal}，但超出 deadline 就放弃（返回 -1 表示缺项）。 */
+    private int readPoolTotalInBudget(String url, long deadline) {
+        if (System.currentTimeMillis() > deadline) {
+            return -1;
+        }
+        JsonNode root = readJsonInBudget(url, deadline);
         if (root == null) {
             return -1;
         }
@@ -277,8 +568,17 @@ public class MarketSentimentService {
     }
 
     private JsonNode readJson(String url) {
+        return readJsonInBudget(url, Long.MAX_VALUE);
+    }
+
+    private JsonNode readJsonInBudget(String url, long deadline) {
+        if (System.currentTimeMillis() > deadline) {
+            return null;
+        }
         try {
-            String text = http.getTextNoKeepAlive(url, REFERER, StandardCharsets.UTF_8, FETCH_TIMEOUT);
+            // 兜底链路要走短线超时；主链路仍用默认的 4 秒
+            Duration timeout = deadline == Long.MAX_VALUE ? FETCH_TIMEOUT : FALLBACK_TIMEOUT;
+            String text = http.getTextNoKeepAlive(url, REFERER, StandardCharsets.UTF_8, timeout);
             if (text == null || text.isBlank()) {
                 return null;
             }

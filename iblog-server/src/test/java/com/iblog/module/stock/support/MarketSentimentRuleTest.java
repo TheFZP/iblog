@@ -163,4 +163,51 @@ class MarketSentimentRuleTest {
         assertThat(vo.getScore()).isEqualTo(50.0);
         assertThat(vo.getLevel()).isEqualTo("中性");
     }
+
+    /**
+     * 按真实腾讯返回的字段布局造一行：88 个 {@code ~} 分隔字段，GBK 名省略成 ASCII。
+     *
+     * <p>用「先造数组再按索引塞值」而不是手写一长串转义字符串：手写时只要少一个
+     * {@code ~}，后面所有索引都会错位，而这种错位在断言里表现为「数值差几百」，
+     * 很难一眼看出是字段位置错了。</p>
+     */
+    private static String tencentLine(String varName, String pct, String amountWan) {
+        String[] parts = new String[88];
+        java.util.Arrays.fill(parts, "0");
+        parts[0] = "1";
+        parts[1] = "INDEX";
+        parts[2] = "000001";
+        parts[3] = "3599.02";
+        parts[30] = "20261030161400";
+        parts[31] = "-52.41";
+        parts[32] = pct;
+        parts[36] = "497973940";
+        parts[37] = amountWan;
+        return varName + "=\"" + String.join("~", parts) + "\";";
+    }
+
+    @Test
+    @DisplayName("腾讯兜底解析：取平均涨跌幅，成交额只累加沪市 + 深市（不含创业板，避免重复）")
+    void parseTencentIndex() {
+        String text = String.join("\n",
+                tencentLine("v_sh000001", "-1.44", "76422719"),
+                tencentLine("v_sz399001", "-2.73", "91024083"),
+                tencentLine("v_sz399006", "-4.13", "45220938"));
+        double[] result = MarketSentimentService.parseTencentIndex(text);
+        assertThat(result).isNotNull();
+        // 三项涨跌幅 -1.44 / -2.73 / -4.13 的平均
+        assertThat(result[0]).isCloseTo(-2.7666, within(0.001));
+        // 成交额只算沪 + 深：76422719 + 91024083 万元 = 16744.68 亿，创业板 45220938 万元不计
+        assertThat(result[1]).isCloseTo(16744.68, within(0.1));
+    }
+
+    @Test
+    @DisplayName("腾讯兜底解析：空文本 / 字段不足 / 全非法 一律返回 null，不抛异常")
+    void parseTencentIndexInvalid() {
+        assertThat(MarketSentimentService.parseTencentIndex(null)).isNull();
+        assertThat(MarketSentimentService.parseTencentIndex("")).isNull();
+        // 字段数不足 38 的行要能安全跳过
+        assertThat(MarketSentimentService.parseTencentIndex("v_sh000001=\"1~上证指数~000001\";")).isNull();
+        assertThat(MarketSentimentService.parseTencentIndex("完全没有等号的垃圾文本")).isNull();
+    }
 }
