@@ -60,12 +60,91 @@ fi
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 die() { printf '!! %s\n' "$*" >&2; exit 1; }
 
+# ── 远程 SSH 的重试包装 ─────────────────────────────────────────
+# 这条链路（家用宽带到阿里云）上**新建** SSH 连接约一半会失败，报
+# `kex_exchange_identification: Software caused connection abort`。
+# 服务器侧没有任何限流（maxstartups 10:30:100、无 fail2ban、无 iptables 拦截、
+# 负载 0.06），所以问题在链路上，只能靠重试兜住。
+# 配套措施见 counts_sql()：把逐表查询合并成一次查询，从源头减少连接数。
+# （试过 ControlMaster 连接复用，但 Git Bash 下控制 socket 残留会导致
+#  mux_client_request_session: read from master failed，故不采用。）
+ssh_retry() {  # $1=远程命令 $2=输出文件（空则输出到 stdout）
+  local cmd="$1" outfile="${2:-}" attempt rc
+  for attempt in 1 2 3 4 5 6; do
+    if [ -n "$outfile" ]; then
+      if ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+             "$SERVER" "$cmd" > "$outfile" 2>/dev/null; then return 0; fi
+    else
+      local out
+      if out="$(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+                   "$SERVER" "$cmd" 2>/dev/null)" && [ -n "$out" ]; then
+        printf '%s\n' "$out"; return 0
+      fi
+    fi
+    sleep $((attempt * 2))
+  done
+  return 1
+}
+
+# 远程 mysqldump 直写本地文件（stock_kline 近 3 万行，不能进变量）
+ssh_dump() { ssh_retry "$1" "$2"; }
+
+# 把本地文件通过 SSH 喂给远程 mysql（导入方向）。文件可重放，重试安全。
+ssh_import() {  # $1=远程命令 $2=本地输入文件 $3=错误输出文件
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+         "$SERVER" "$1" < "$2" > /dev/null 2>"$3"; then return 0; fi
+    sleep $((attempt * 2))
+  done
+  return 1
+}
+
+# 一次性取回全库所有表的行数。
+# 之前是「22 张表 × 2 个库 = 44 条连接」，每条都要重新握手，
+# 一半会断，断掉那次 mysql 收到空 SQL 返回空 —— 终端上看到的就是
+# 「✗ blog_article 取值失败（源=[] 目标=[13]）」。
+# 现在把所有 COUNT(*) 拼成一条 UNION ALL 用 PREPARE 执行，整库只需 1 条连接。
+counts_sql() {
+  cat <<SQL
+SET SESSION group_concat_max_len = 4194304;
+SET @q = (SELECT GROUP_CONCAT(
+            CONCAT('SELECT ''', TABLE_NAME, ''' AS t, COUNT(*) AS c FROM \`$DB\`.\`', TABLE_NAME, '\`')
+            SEPARATOR ' UNION ALL ')
+          FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA='$DB' AND TABLE_TYPE='BASE TABLE');
+PREPARE st FROM @q;
+EXECUTE st;
+DEALLOCATE PREPARE st;
+SQL
+}
+
+# 远程命令 + stdin 输入，带重试。
+# stdin 必须先落到临时文件：管道只能被读一次，第一次尝试失败重试时
+# 已经读到 EOF，第二次 mysql 会收到空 SQL 然后静默返回空结果。
+ssh_retry_stdin() {  # $1=远程命令 $2=stdin 文件
+  local cmd="$1" infile="$2" attempt out
+  for attempt in 1 2 3 4 5 6; do
+    if out="$(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+                 "$SERVER" "$cmd" < "$infile" 2>/dev/null)"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    sleep $((attempt * 2))
+  done
+  return 1
+}
+
 # 线上 mysql 一律通过 docker exec 走容器自己的环境变量取密码，
 # 宿主机和命令行里都不会出现明文密码。
 remote_sql() {  # $1 = 数据库名（可空），SQL 从 stdin 进
-  local db="${1:-}"
-  ssh -o BatchMode=yes "$SERVER" \
-    "docker exec -i $REMOTE_CONTAINER sh -c 'mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -N -B $db'" 2>/dev/null | strip_cr
+  local db="${1:-}" sqlf
+  sqlf="$(mktemp)"
+  cat > "$sqlf"
+  ssh_retry_stdin "docker exec -i $REMOTE_CONTAINER sh -c 'mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -N -B $db'" "$sqlf" | strip_cr
+  local rc=${PIPESTATUS[0]}
+  rm -f "$sqlf"
+  return "$rc"
 }
 
 # 本地 mysql 客户端输出是 CRLF（Windows 版），取回来的每一行末尾都带 \r。
@@ -82,8 +161,7 @@ local_sql() {
 
 ensure_remote_up() {
   local running
-  running="$(ssh -o BatchMode=yes "$SERVER" \
-    "docker inspect -f '{{.State.Running}}' $REMOTE_CONTAINER" 2>/dev/null || true)"
+  running="$(ssh_retry "docker inspect -f '{{.State.Running}}' $REMOTE_CONTAINER" || true)"
   [ "$running" = "true" ] || die "线上容器 $REMOTE_CONTAINER 没在运行（ssh 通吗？）"
 }
 
@@ -93,28 +171,51 @@ ensure_local_up() {
   [ "$n" = "1" ] || die "连不上本地库 $LOCAL_HOST:$LOCAL_PORT（MySQL 起了吗？密码对吗？）"
 }
 
+# 取一端的全表行数，塞进全局关联数组 COUNTS。
+# $1 = remote|local
+# 注意：必须用进程替换喂 while，不能写成 `... | while read` ——
+# 管道右侧是子 shell，里面有 COUNTS 的赋值出了子 shell 就丢了。
+fetch_counts() {
+  local side="$1" out
+  declare -gA COUNTS=()
+  if [ "$side" = "remote" ]; then
+    out="$(counts_sql | remote_sql)"
+  else
+    out="$(counts_sql | local_sql)"
+  fi
+  # mysql 的连接告警走 stderr 已被吞掉，stdout 只该剩「表名<TAB>行数」
+  while IFS=$'\t' read -r t c; do
+    [ -n "$t" ] && [ -n "$c" ] && COUNTS["$t"]="$c"
+  done < <(printf '%s\n' "$out" | awk -F'\t' 'NF==2 && $2 ~ /^[0-9]+$/')
+}
+
 # 逐表行数比对。$1=源描述 $2=目标描述；打印差异，返回 1 表示有不一致
 compare_counts() {
-  local src_label="$1" dst_label="$2" src_fn="$3" dst_fn="$4"
-  local tables t a b bad=0
-  tables="$(echo "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='$DB' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME" | $src_fn)"
-  [ -n "$tables" ] || die "读不到表清单"
+  local src_label="$1" dst_label="$2"
+  local t a b bad=0
+  declare -A SRC=() DST=()
+
+  fetch_counts remote
+  for t in "${!COUNTS[@]}"; do SRC["$t"]="${COUNTS[$t]}"; done
+  fetch_counts local
+  for t in "${!COUNTS[@]}"; do DST["$t"]="${COUNTS[$t]}"; done
+
+  [ "${#SRC[@]}" -gt 0 ] || die "读不到线上的表清单（SSH 不通？）"
   printf '     %-22s %10s %10s\n' "表" "$src_label" "$dst_label"
-  while read -r t; do
+  while IFS= read -r t; do
     [ -n "$t" ] || continue
-    a="$(echo "SELECT COUNT(*) FROM \`$DB\`.\`$t\`" | $src_fn)"
-    b="$(echo "SELECT COUNT(*) FROM \`$DB\`.\`$t\`" | $dst_fn)"
+    a="${SRC[$t]:-}"; b="${DST[$t]:-}"
     # 两个空字符串相等，会伪装成「一致」—— 必须显式拦掉。
     # （踩过：mysql 输出带 \r 导致计数全为空，比对却报了 7 个 ✓）
     if [ -z "$a" ] || [ -z "$b" ]; then
-      printf '  ✗  %-22s 取值失败（源=[%s] 目标=[%s]）\n' "$t" "$a" "$b"; bad=1; continue
+      printf '  ✗  %-22s 取值失败（源=[%s] 目标=[%s]）\n' "$t" "${a:-?}" "${b:-?}"; bad=1; continue
     fi
     if [ "$a" = "$b" ]; then
       printf '  ✓  %-22s %10s %10s\n' "$t" "$a" "$b"
     else
       printf '  ✗  %-22s %10s %10s\n' "$t" "$a" "$b"; bad=1
     fi
-  done <<< "$tables"
+  done < <(printf '%s\n' "${!SRC[@]}" | sort)
   return "$bad"
 }
 
@@ -169,9 +270,9 @@ do_dry_run() {
   # 以前不分方向一律用 local_sql 当源，本地没有的表（paper_*、stock_*）
   # 根本不出现在清单里，于是「比对通过」掩盖了整张表的缺失。
   if [ "$dir" = "pull" ]; then
-    compare_counts "线上" "本地" "remote_sql" "local_sql" || true
+    compare_counts "线上" "本地" || true
   else
-    compare_counts "本地" "线上" "local_sql" "remote_sql" || true
+    compare_counts "本地" "线上" || true
   fi
   echo
   if [ "$dir" = "pull" ]; then
@@ -193,10 +294,9 @@ do_push() {
   ensure_backup_dir
 
   log "① 备份线上库 -> $(basename "$backup")"
-  ssh -o BatchMode=yes "$SERVER" \
-    "docker exec $REMOTE_CONTAINER sh -c 'mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
+  ssh_dump "docker exec $REMOTE_CONTAINER sh -c 'mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
        --default-character-set=utf8mb4 --single-transaction --routines --triggers --databases $DB'" \
-    > "$backup" 2>/dev/null || die "线上备份失败，已中止（没有动线上任何数据）"
+    "$backup" || die "线上备份失败，已中止（没有动线上任何数据）"
   verify_dump "$backup"
   log "   备份通过校验（$(du -h "$backup" | cut -f1)）"
   rotate_backups
@@ -225,18 +325,20 @@ do_push() {
   log "③ 导入线上（走 SSH 管道，中间不落地）"
   # sed 去掉 dump 里的 DROP/CREATE DATABASE —— 容器里已经有 iblog 库，
   # 而且 drop 整个库没有意义（我们只同步数据）。
-  local err rc
-  err="$(ssh -o BatchMode=yes "$SERVER" \
-    "docker exec -i $REMOTE_CONTAINER sh -c 'mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" --default-character-set=utf8mb4 $DB'" \
-    2>&1 < "$dump")" && rc=0 || rc=$?
+  local errlog rc=0
+  errlog="$(mktemp)"
+  ssh_import "docker exec -i $REMOTE_CONTAINER sh -c 'mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" --default-character-set=utf8mb4 $DB'" \
+    "$dump" "$errlog" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    printf '%s\n' "$err" | grep -v 'Using a password on the command line' >&2 || true
+    grep -v 'Using a password on the command line' "$errlog" >&2 || true
+    rm -f "$errlog"
     die "导入线上失败（退出码 $rc）。线上可能处于中间状态，用 $backup 还原"
   fi
-  printf '%s\n' "$err" | grep -v 'Using a password on the command line' >&2 || true
+  grep -v 'Using a password on the command line' "$errlog" >&2 || true
+  rm -f "$errlog"
 
   log "④ 校验行数（本地 vs 线上）"
-  if compare_counts "本地" "线上" "local_sql" "remote_sql"; then
+  if compare_counts "本地" "线上"; then
     log "同步完成，两边完全一致"
   else
     die "行数不一致，请检查！线上可以用 $backup 还原"
@@ -262,10 +364,9 @@ do_pull() {
 
   log "② 从线上导出并导入本地（会 DROP 本地库重建）"
   local dump="$BACKUP_DIR/remote-$stamp.sql"
-  ssh -o BatchMode=yes "$SERVER" \
-    "docker exec $REMOTE_CONTAINER sh -c 'mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
+  ssh_dump "docker exec $REMOTE_CONTAINER sh -c 'mysqldump -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
        --default-character-set=utf8mb4 --single-transaction --routines --triggers --databases $DB'" \
-    > "$dump" 2>/dev/null || die "线上导出失败"
+    "$dump" || die "线上导出失败"
   verify_dump "$dump"
 
   # ⚠️ 这一步之后就不可逆了（本地库被删重建），所以在它之前确认。
@@ -295,7 +396,7 @@ do_pull() {
   fi
 
   log "③ 校验行数（线上 vs 本地）"
-  if compare_counts "线上" "本地" "remote_sql" "local_sql"; then
+  if compare_counts "线上" "本地"; then
     log "拉取完成，本地已与线上一致"
   else
     die "行数不一致，请检查！本地可以用 $backup 还原"
