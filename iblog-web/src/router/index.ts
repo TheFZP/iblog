@@ -97,8 +97,21 @@ const routes: RouteRecordRaw[] = [
         name: 'About',
         component: () => import('@/views/about/index.vue'),
         meta: { title: '关于' }
+      },
+      {
+        path: 'tools',
+        name: 'Tools',
+        component: () => import('@/views/tools/index.vue'),
+        meta: { title: '工具箱' }
       }
     ]
+  },
+  {
+    // 工具箱里的「JSON 在线解析」点开后是独立页面（新标签页），不带站点页眉页脚，给编辑器留满整屏
+    path: '/tools/json',
+    name: 'ToolJson',
+    component: () => import('@/views/tools/json.vue'),
+    meta: { title: 'JSON 在线解析' }
   },
   {
     path: '/:pathMatch(.*)*',

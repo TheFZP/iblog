@@ -263,6 +263,7 @@ const ALL_NAVS: NavItem[] = [
   { path: '/stock', label: '行情', authOnly: true },
   { path: '/stock/iwencai', label: '问财选股', authOnly: true },
   { path: '/paper', label: '模拟盘', authOnly: true },
+  { path: '/tools', label: '工具箱' },
   { path: '/about', label: '关于' }
 ]
 
