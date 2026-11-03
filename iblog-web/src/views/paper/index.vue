@@ -1018,6 +1018,7 @@
             <h2 class="panel__title">
               今日选股
               <span class="panel__count">{{ selections.length }}</span>
+              <span v-if="selectionsTime" class="panel__meta">选股于 {{ shortTime(selectionsTime) }}</span>
             </h2>
             <div class="panel__actions">
               <button
@@ -2238,6 +2239,17 @@ const selections = ref<PaperSignal[]>([])
 const selectionsLoading = ref(false)
 const selectionsRefreshing = ref(false)
 const selectionsError = ref('')
+
+/** 今日选股时间：同一次选股插入的候选时间相同，取最大的一条即可 */
+const selectionsTime = computed(() => {
+  let latest = ''
+  for (const item of selections.value) {
+    if (item.createTime && item.createTime > latest) {
+      latest = item.createTime
+    }
+  }
+  return latest
+})
 
 const signals = ref<PaperSignal[]>([])
 const signalsLoading = ref(false)
