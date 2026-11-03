@@ -51,6 +51,7 @@ public class AiChatService {
     private final AiLlmClient llmClient;
     private final AiToolExecutors toolExecutors;
     private final AiContextBuilder contextBuilder;
+    private final AiChatHistoryService historyService;
 
     /**
      * 事件出口。
@@ -90,8 +91,11 @@ public class AiChatService {
      *
      * <p>异常一律转成 {@code error} 事件而不是抛出去：SSE 已经写了一半响应头，
      * 这里抛异常只会让前端收到一个断掉的流，没有可读的错误信息。</p>
+     *
+     * <p>{@code userId} 由控制器从登录态取，不从请求体读 —— 否则客户端可以伪造，
+     * 把自己的对话写进别人的历史里。为 {@code null} 时跳过落库（单测直接调用的情况）。</p>
      */
-    public void chat(Request request, Sink sink) {
+    public void chat(Request request, Long userId, Sink sink) {
         AiConfigService.Config config = configService.load();
         if (!config.available()) {
             sink.send("error", event("error").put("message", "AI 未配置：请到管理后台 → AI 配置 填写 DeepSeek API Key"));
@@ -101,6 +105,13 @@ public class AiChatService {
         ArrayNode tools = buildTools(config);
         AiToolExecutors.Context toolContext = new AiToolExecutors.Context(blankToNull(request.iwencaiV()));
         List<AiPickOut> picks = new ArrayList<>();
+        // 落库用：模型可能分多轮输出，前端是把所有增量拼成一条消息，这里同样累积
+        StringBuilder answer = new StringBuilder();
+        StringBuilder thinking = new StringBuilder();
+        List<ToolTrace> toolTraces = new ArrayList<>();
+        Long sessionId = openSession(userId, request);
+        // 本轮回答是否已落库：成功路径写完 done 后才断开的 ClientGone 不能重复保存
+        boolean turnSaved = false;
 
         try {
             for (int round = 0; round < MAX_ROUNDS; round++) {
@@ -110,17 +121,21 @@ public class AiChatService {
                             .put("content", "[系统提示] 已达到最大工具调用轮数(" + MAX_ROUNDS
                                     + ")，请立即停止调用工具，直接基于已有信息给出最终回答。");
                 }
-                RoundResult result = runRound(config, messages, tools, sink);
+                RoundResult result = runRound(config, messages, tools, sink, answer, thinking);
                 if (result.toolCalls.isEmpty()) {
+                    finishTurn(sessionId, answer, thinking, toolTraces, picks);
+                    turnSaved = true;
                     sink.send("done", event("done").set("picks", picksJson(picks)));
                     return;
                 }
                 appendAssistantTurn(messages, result);
                 for (AiLlmClient.ToolCall call : result.toolCalls) {
                     String name = call.name() == null ? "" : call.name();
+                    JsonNode args = parseArgs(call.arguments());
+                    toolTraces.add(new ToolTrace(name, args));
                     sink.send("tool_call", event("tool_call")
                             .put("name", name)
-                            .set("args", parseArgs(call.arguments())));
+                            .set("args", args));
                     String output = toolExecutors.execute(name, call.arguments(), toolContext);
                     if (output != null && output.startsWith(PICKS_MARKER)) {
                         // 选股卡片不进模型上下文：模型只需要知道「已展示」，否则会在正文里复读一遍
@@ -137,17 +152,82 @@ public class AiChatService {
                 compactOldToolResults(messages);
             }
             // 循环跑满仍未收敛：把已产出的内容当作最终结果收尾
+            finishTurn(sessionId, answer, thinking, toolTraces, picks);
+            turnSaved = true;
             sink.send("done", event("done").set("picks", picksJson(picks)));
         } catch (ClientGone e) {
-            // 用户关掉面板或刷新页面：不是错误，也不需要再写事件
+            // 用户关掉面板或刷新页面：不是错误，也不需要再写事件；但已经吐出的部分要留下来。
+            // 成功路径写完 done 才断开时 turnSaved 已置位，不能重复插一条回答。
+            if (!turnSaved) {
+                finishTurn(sessionId, answer, thinking, toolTraces, picks);
+            }
             log.debug("AI 对话客户端已断开");
         } catch (AiLlmClient.AiException e) {
             log.warn("AI 对话失败 err={}", e.getMessage());
+            if (!turnSaved) {
+                finishTurn(sessionId, answer, thinking, toolTraces, picks);
+            }
             sink.send("error", event("error").put("message", e.getMessage()));
         } catch (Exception e) {
             log.warn("AI 对话异常 err={}", e.toString());
+            if (!turnSaved) {
+                finishTurn(sessionId, answer, thinking, toolTraces, picks);
+            }
             sink.send("error", event("error").put("message", "AI 分析失败：" + e.getMessage()));
         }
+    }
+
+    /**
+     * 建立会话并落本轮提问。
+     *
+     * <p>失败只告警：历史是锦上添花，数据库抖动不该让用户连问题都问不了。</p>
+     */
+    private Long openSession(Long userId, Request request) {
+        if (userId == null) {
+            return null;
+        }
+        try {
+            Long sessionId = historyService.touchSession(userId, request.stockCode(), request.stockName());
+            historyService.saveUser(sessionId, lastUserMessage(request.messages()));
+            return sessionId;
+        } catch (Exception e) {
+            log.warn("AI 对话历史初始化失败 err={}", e.toString());
+            return null;
+        }
+    }
+
+    /** 前端每次只把「已经定稿」的历史发上来，最后一条 user 就是本轮问题。 */
+    private static String lastUserMessage(List<Message> messages) {
+        if (messages == null) {
+            return null;
+        }
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Message message = messages.get(i);
+            if (message != null && "user".equals(message.role())
+                    && message.content() != null && !message.content().isBlank()) {
+                return message.content();
+            }
+        }
+        return null;
+    }
+
+    /** 保存本轮回答；工具轨迹与选股卡片按 JSON 存，刷新后前端据此还原界面。 */
+    private void finishTurn(Long sessionId, StringBuilder answer, StringBuilder thinking,
+                            List<ToolTrace> toolTraces, List<AiPickOut> picks) {
+        if (sessionId == null) {
+            return;
+        }
+        try {
+            String toolsJson = toolTraces.isEmpty() ? "[]" : MAPPER.writeValueAsString(toolTraces);
+            historyService.saveAssistant(sessionId, answer.toString(), thinking.toString(),
+                    toolsJson, picksJson(picks).toString());
+        } catch (Exception e) {
+            log.warn("AI 对话历史保存失败 err={}", e.toString());
+        }
+    }
+
+    /** 工具轨迹（落库用）：只留名字与参数，中文名由前端映射。 */
+    private record ToolTrace(String name, JsonNode args) {
     }
 
     /** 一轮流式输出的结果。 */
@@ -157,8 +237,14 @@ public class AiChatService {
         private final List<AiLlmClient.ToolCall> toolCalls = new ArrayList<>();
     }
 
-    /** 跑一轮，把增量实时推给前端。 */
-    private RoundResult runRound(AiConfigService.Config config, ArrayNode messages, ArrayNode tools, Sink sink) {
+    /**
+     * 跑一轮，把增量实时推给前端。
+     *
+     * <p>同时往 {@code answer} / {@code thinking} 里累积：客户端中途断开时
+     * {@code runRound} 会抛异常、拿不到返回值，只有这里先累积，已经推出去的半截回答才落得下来。</p>
+     */
+    private RoundResult runRound(AiConfigService.Config config, ArrayNode messages, ArrayNode tools, Sink sink,
+                                 StringBuilder answer, StringBuilder thinking) {
         RoundResult result = new RoundResult();
         llmClient.stream(config.apiKey(), config.model(), messages, tools,
                 config.thinkingEnabled(), config.reasoningEffort(),
@@ -169,6 +255,7 @@ public class AiChatService {
                             return;
                         }
                         result.reasoning.append(delta);
+                        thinking.append(delta);
                         sink.send("reasoning", event("reasoning").put("text", delta));
                     }
 
@@ -178,6 +265,7 @@ public class AiChatService {
                             return;
                         }
                         result.content.append(delta);
+                        answer.append(delta);
                         sink.send("content", event("content").put("text", delta));
                     }
 

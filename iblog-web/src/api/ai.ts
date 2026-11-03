@@ -1,4 +1,4 @@
-import { UNAUTHORIZED_EVENT, get } from './request'
+import { UNAUTHORIZED_EVENT, del, get } from './request'
 
 /**
  * AI 分析面板接口。
@@ -6,9 +6,6 @@ import { UNAUTHORIZED_EVENT, get } from './request'
  * <p>对话接口用 `fetch` + `ReadableStream` 手写 SSE 解析，而不是 axios：
  * XHR 不支持增量读取响应体，axios 只能等整个响应结束再一次性拿到，
  * 那样「思考过程」和正文会同时出现，流式打字机效果就没了。</p>
- *
- * <p>历史记录（GET `/stock/ai/history`、DELETE 清空）后端还没定稿，
- * 先不做；有接口后在这里补两个函数即可，面板侧只需在打开时拉一次。</p>
  */
 
 export interface AiConfig {
@@ -76,6 +73,36 @@ function chatEndpoint(): string {
 
 export function fetchAiConfig(): Promise<AiConfig> {
   return get<AiConfig>('/stock/ai/config')
+}
+
+/** 历史消息里的工具轨迹：后端只存名字与参数，中文标签由面板按 TOOL_LABELS 还原 */
+export interface AiHistoryTool {
+  name: string
+  args?: unknown
+}
+
+export interface AiHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  tools?: AiHistoryTool[]
+  picks?: AiPick[]
+}
+
+export interface AiHistory {
+  stockCode: string
+  stockName: string
+  messages: AiHistoryMessage[]
+}
+
+/** 读取当前股票（空串=全局助手）的对话历史 */
+export function fetchAiHistory(stockCode: string): Promise<AiHistory> {
+  return get<AiHistory>('/stock/ai/history', { stockCode })
+}
+
+/** 清空当前股票（空串=全局助手）的对话历史 */
+export function clearAiHistory(stockCode: string): Promise<void> {
+  return del<void>('/stock/ai/history', { stockCode })
 }
 
 /**

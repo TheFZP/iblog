@@ -466,3 +466,33 @@ CREATE TABLE IF NOT EXISTS `blog_visit_log`
     KEY `idx_path_time` (`path`, `create_time`),
     KEY `idx_ip_time` (`ip`, `create_time`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='官网访问日志';
+
+-- AI 对话会话：每用户每股票一条，全局对话用空 stock_code。
+-- 之前对话只存浏览器内存，刷新即丢；落库后刷新、换设备都能接着看。
+CREATE TABLE IF NOT EXISTS `stock_ai_chat_session`
+(
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT      NOT NULL COMMENT '所属用户',
+    `stock_code`  VARCHAR(16) NOT NULL DEFAULT '' COMMENT '归一化代码，空串=全局对话',
+    `stock_name`  VARCHAR(50) NOT NULL DEFAULT '' COMMENT '股票名称快照',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_stock` (`user_id`, `stock_code`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='AI 对话会话';
+
+-- AI 对话消息：tools / picks 存 JSON 文本，仅用于还原界面，不参与检索。
+-- 每会话保留最近 200 条，由 AiChatHistoryService 写入后裁剪。
+CREATE TABLE IF NOT EXISTS `stock_ai_chat_message`
+(
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `session_id`  BIGINT      NOT NULL COMMENT '会话 id',
+    `role`        VARCHAR(16) NOT NULL COMMENT 'user / assistant',
+    `content`     MEDIUMTEXT  NOT NULL COMMENT '正文',
+    `reasoning`   MEDIUMTEXT COMMENT '思考过程（assistant 才有）',
+    `tools`       MEDIUMTEXT COMMENT '工具轨迹 JSON：[{"name":"...","args":{...}}]',
+    `picks`       MEDIUMTEXT COMMENT '选股卡片 JSON',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_session` (`session_id`, `id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='AI 对话消息';

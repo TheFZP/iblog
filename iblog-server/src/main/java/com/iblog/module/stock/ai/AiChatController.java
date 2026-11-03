@@ -5,14 +5,17 @@ import com.iblog.common.exception.BizException;
 import com.iblog.common.result.R;
 import com.iblog.module.stock.entity.StockSetting;
 import com.iblog.module.stock.service.StockSettingService;
+import com.iblog.security.UserContext;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
@@ -48,6 +51,7 @@ public class AiChatController {
     private final IwencaiClient iwencaiClient;
     private final StockSettingService settingService;
     private final AiQueryOptimizer queryOptimizer;
+    private final AiChatHistoryService historyService;
 
     /** 面板初始化：模型名、是否配好 Key、是否开联网搜索。/**/
     @GetMapping("/config")
@@ -75,7 +79,8 @@ public class AiChatController {
             log.warn("AI 对话无法获取响应输出流 err={}", e.toString());
             return;
         }
-        chatService.chat(request, (event, data) -> {
+        // userId 只从登录态取：请求体里带 userId 的话，客户端可以把自己的对话写进别人历史
+        chatService.chat(request, UserContext.get(), (event, data) -> {
             try {
                 writer.write("event: " + event + "\n");
                 writer.write("data: " + toJson(data) + "\n\n");
@@ -85,6 +90,25 @@ public class AiChatController {
                 throw new AiChatService.ClientGone(e);
             }
         });
+    }
+
+    /**
+     * 读取 AI 对话历史。
+     *
+     * <p>按「用户 + 股票」归档：{@code stockCode} 为空表示全局助手。
+     * 没聊过时返回空数组而不是 404 —— 前端拿到就能直接渲染空面板，少一个分支。</p>
+     */
+    @GetMapping("/history")
+    public R<AiChatHistoryService.History> history(
+            @RequestParam(value = "stockCode", required = false) String stockCode) {
+        return R.ok(historyService.load(UserContext.get(), stockCode));
+    }
+
+    /** 清空某只股票（或全局助手）的对话；没聊过时也返回成功。 */
+    @DeleteMapping("/history")
+    public R<Void> clearHistory(@RequestParam(value = "stockCode", required = false) String stockCode) {
+        historyService.clear(UserContext.get(), stockCode);
+        return R.ok();
     }
 
     /** 问财选股代理：浏览器负责生成 v，服务端负责带齐反爬头转发。 */

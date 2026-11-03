@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { chatAi, fetchAiConfig } from '@/api/ai'
-import type { AiChatEvent, AiChatMessage, AiConfig, AiPick } from '@/api/ai'
+import { chatAi, clearAiHistory, fetchAiConfig, fetchAiHistory } from '@/api/ai'
+import type { AiChatEvent, AiChatMessage, AiConfig, AiHistoryMessage, AiPick } from '@/api/ai'
 import { tryIwencaiV } from '@/utils/iwencaiV'
 import { fmtNum, fmtSigned, toneClass } from '@/utils/stockFormat'
 
@@ -86,12 +86,16 @@ const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const errorMsg = ref('')
 const streaming = ref(false)
+const historyLoading = ref(false)
+const clearing = ref(false)
 const bodyRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
 let controller: { abort: () => void } | null = null
 let messageSeq = 0
 let configSeq = 0
+/** 历史请求序号：切股票时作废旧请求，避免慢响应把新股票的历史盖回来 */
+let historySeq = 0
 /** 用户是否还贴着底部；上滑超过 80px 就不再自动滚，免得抢滚动 */
 let stickToBottom = true
 let scrollFrame = 0
@@ -124,6 +128,10 @@ watch(
       input.value = props.preset
       emit('presetConsumed')
     }
+    // 关闭再打开时本地对话还在，不必回库；只有首次打开或刷新后才拉历史
+    if (!messages.value.length) {
+      void loadHistory()
+    }
     stickToBottom = true
     scrollSoon(true)
   },
@@ -137,10 +145,16 @@ watch(
     controller?.abort()
     controller = null
     streaming.value = false
+    // 旧股票的历史请求晚到也不能再写进 messages
+    historySeq++
+    historyLoading.value = false
     messages.value = []
     input.value = ''
     errorMsg.value = ''
     stickToBottom = true
+    if (props.open) {
+      void loadHistory()
+    }
   }
 )
 
@@ -188,6 +202,69 @@ async function loadConfig() {
     if (seq === configSeq) {
       configLoading.value = false
     }
+  }
+}
+
+/**
+ * 拉取当前股票（空代码=全局助手）的历史对话。
+ *
+ * <p>只在本地还没有消息时填充：用户刚聊到一半切走再回来时，本地状态比库里更完整
+ * （本轮回答可能还没落库），不能被旧历史盖掉。</p>
+ */
+async function loadHistory() {
+  if (messages.value.length) {
+    return
+  }
+  const codeAtLoad = props.code
+  const seq = ++historySeq
+  historyLoading.value = true
+  try {
+    const data = await fetchAiHistory(codeAtLoad)
+    if (seq !== historySeq || codeAtLoad !== props.code || messages.value.length) {
+      return
+    }
+    messages.value = (data.messages ?? []).map(toChatMessage)
+    scrollSoon(true)
+  } catch {
+    // 历史读不到不影响新对话：用户仍可继续提问，只是看不到旧记录
+  } finally {
+    if (seq === historySeq) {
+      historyLoading.value = false
+    }
+  }
+}
+
+function toChatMessage(message: AiHistoryMessage): ChatMessage {
+  return {
+    id: ++messageSeq,
+    role: message.role,
+    content: message.content || '',
+    reasoning: message.reasoning || '',
+    tools: (message.tools ?? []).map((tool, index) => ({
+      id: index + 1,
+      name: tool.name,
+      label: toolLabel(tool.name, tool.args),
+      status: 'done' as const
+    })),
+    picks: message.picks ?? [],
+    streaming: false
+  }
+}
+
+async function clearHistory() {
+  if (streaming.value || clearing.value || !messages.value.length) {
+    return
+  }
+  clearing.value = true
+  try {
+    await clearAiHistory(props.code)
+    messages.value = []
+    errorMsg.value = ''
+    stickToBottom = true
+  } catch (err) {
+    errorMsg.value = err instanceof Error && err.message ? err.message : '清空历史失败'
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -551,7 +628,18 @@ function errText(err: unknown): string {
                 <span v-if="config?.thinkingEnabled" class="ai-chip ai-chip--think">深度思考</span>
               </div>
             </div>
-            <button type="button" class="ai-panel__close" aria-label="关闭 AI 面板" @click="close">×</button>
+            <div class="ai-panel__actions">
+              <button
+                v-if="messages.length"
+                type="button"
+                class="ai-clear"
+                :disabled="streaming || clearing"
+                @click="clearHistory"
+              >
+                清空
+              </button>
+              <button type="button" class="ai-panel__close" aria-label="关闭 AI 面板" @click="close">×</button>
+            </div>
           </header>
 
           <div ref="bodyRef" class="ai-panel__body" @scroll.passive="onBodyScroll">
@@ -561,6 +649,8 @@ function errText(err: unknown): string {
               <p class="ai-empty__title">AI 未配置</p>
               <p class="ai-empty__desc">请到管理后台 → 行情配置 填写 DeepSeek API Key，保存后刷新本页。</p>
             </div>
+
+            <div v-else-if="historyLoading && !messages.length" class="ai-state">正在读取历史对话…</div>
 
             <div v-else-if="!messages.length" class="ai-empty">
               <p class="ai-empty__title">
@@ -781,6 +871,33 @@ function errText(err: unknown): string {
 .ai-chip--think {
   background: color-mix(in srgb, var(--c-brand) 12%, transparent);
   color: var(--c-brand);
+}
+
+.ai-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex-shrink: 0;
+}
+
+.ai-clear {
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  padding: 4px 8px;
+  color: var(--c-text-muted);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.ai-clear:hover:not(:disabled) {
+  background: var(--c-surface-sunken);
+  color: var(--c-text);
+}
+
+.ai-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .ai-panel__close {

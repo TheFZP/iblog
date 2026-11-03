@@ -108,7 +108,9 @@ iblog/
     涨跌分布、行业分布（含标签覆盖率）、加权 PE；缺昨收的持仓单列不计入当日盈亏
   - AI 分析：个股详情页「AI 分析」抽屉，流式对话（DeepSeek），模型可自行调用 17 个工具
     （实时行情、批量行情、K 线+技术指标、资金流、行业、指数、分时、热榜、搜索、用户档案、汇率、
-    联网搜索/抓取、问财选股、选股卡片）后再作答；回答末尾按提示词要求给出「📋 操作建议」
+    联网搜索/抓取、问财选股、选股卡片）后再作答；回答末尾按提示词要求给出「📋 操作建议」。
+    对话按「用户 + 股票」存 MySQL（`stock_ai_chat_*`），刷新页面、换设备都能接着看，
+    面板右上角可清空；每个会话保留最近 200 条
   - 问财选股：自然语言选股（「连续三天放量上涨且市值小于 100 亿」），由问财接口返回结构化表格，
     对话里也会以选股卡片形式给出（最多 20 只，可点击跳转）
   - AI 的 API Key 只存服务端 `stock_setting`（后台「AI 配置」菜单填写），不下发到浏览器；
@@ -455,6 +457,7 @@ AI 接口（`/api/stock/ai/**`，登录后可用；官网用 Cookie、后台用 
 | POST | `/api/stock/ai/chat` | 流式对话（SSE），`event: reasoning/content/tool_call/tool_result/done/error` |
 | POST | `/api/stock/ai/iwencai` | 问财选股代理（需前端带 `v`；限流回 429，前端换 v 重试一次）|
 | POST | `/api/stock/ai/optimize-query` | 把口语化选股条件用 AI 改写为问财认的语句（请求 `{query}`，响应 `{query}`；上限 500 字，非流式）|
+| GET / DELETE | `/api/stock/ai/history?stockCode=` | 读 / 清空对话历史（按用户 + 股票归档；`stockCode` 为空表示全局助手；GET 返回最近 60 条）|
 | GET / PUT | `/api/stock/ai/profile` | 读 / 写用户投资画像（Markdown 文本，上限 20000 字；GET 返回 `content` + `updatedAt`）|
 
 模拟盘接口（`/api/stock/paper/**`，登录后可用；官网用 Cookie、后台用 header 令牌都能调）：

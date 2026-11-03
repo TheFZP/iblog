@@ -50,4 +50,8 @@ export function post<T = any>(url: string, data?: any): Promise<T> {
   return service.post(url, data) as unknown as Promise<T>
 }
 
+export function del<T = any>(url: string, params?: Record<string, any>): Promise<T> {
+  return service.delete(url, { params }) as unknown as Promise<T>
+}
+
 export default service

@@ -512,6 +512,10 @@ Key 存在 MySQL 的 `stock_setting` 表（`ai_api_key`，标记为 secret），
 > 为什么 AI Key 不放在 `deploy/.env` 环境变量里：环境变量会出现在 `docker inspect`
 > 和进程环境里，任何能读容器的人都看得到；而且改一次要重启容器。放数据库可以在后台随时换。
 
+对话历史存在 `stock_ai_chat_session` / `stock_ai_chat_message` 两张表（
+`db/10-migration-ai-chat.sql`，后端启动时自动建表，幂等）。按「用户 + 股票」归档，
+每个会话保留最近 200 条；面板右上角「清空」会真删该股票的会话与消息。
+
 两个容易踩的点：
 
 - **AI 对话是 SSE 长连接**，`iblog-web/nginx.conf` 里 `location = /api/stock/ai/chat`

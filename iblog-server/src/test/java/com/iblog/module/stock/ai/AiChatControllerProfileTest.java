@@ -37,7 +37,7 @@ class AiChatControllerProfileTest {
 
     private final AiChatController controller = new AiChatController(
             mock(AiConfigService.class), mock(AiChatService.class), mock(IwencaiClient.class), settingService,
-            mock(AiQueryOptimizer.class));
+            mock(AiQueryOptimizer.class), mock(AiChatHistoryService.class));
 
     @Test
     void emptyProfileReturnsBlankContent() {
