@@ -32,6 +32,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -102,6 +103,67 @@ public class PaperSelectionService {
 
     /** 重新选股并覆盖当日候选（手动刷新/定时刷新都走这里）。 */
     public List<PaperSignal> refresh(Long accountId) {
+        return refresh(accountId, false, false);
+    }
+
+    /**
+     * 盘前预选：开关打开且当天还没有候选时，用日 K 粗筛一批。
+     *
+     * <p>只在 9:25 后由引擎调用；当天已有候选（比如用户手动选过）就不覆盖，
+     * 以免把完整评分的结果换成粗筛结果。</p>
+     */
+    public void preselectIfEnabled(Long accountId) {
+        PaperStrategy strategy = strategyService.ensureDefault(accountId);
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        if (!params.isPreMarketPreselect()) {
+            return;
+        }
+        if (!recentCandidates(accountId).isEmpty()) {
+            return;
+        }
+        List<PaperSignal> result = refresh(accountId, true, false);
+        log.info("模拟盘盘前预选完成 account={} 候选={}", accountId, result.size());
+    }
+
+    /**
+     * 开盘复核：预选后的完整选股，用盘中真实数据覆盖粗筛结果。
+     *
+     * <p>{@code keepWhenEmpty=true}：如果复核这一轮没选出任何票（例如分时数据还没落定），
+     * 保留预选结果，而不是把候选清空 —— 有粗筛结果总比开盘后一无所有强。</p>
+     *
+     * @param onlyIfStillPreselected true=只在候选仍是开盘前选出的时候才复核（9:32 兜底用）：
+     *                               9:30 那轮如果已经成功覆盖，候选 createTime 会晚于 9:30，
+     *                               这里直接跳过，不重复扫一遍上游
+     */
+    public void refreshAfterOpenIfEnabled(Long accountId, boolean onlyIfStillPreselected) {
+        PaperStrategy strategy = strategyService.ensureDefault(accountId);
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        if (!params.isPreMarketPreselect()) {
+            return;
+        }
+        if (onlyIfStillPreselected && !stillPreselected(accountId)) {
+            return;
+        }
+        List<PaperSignal> result = refresh(accountId, false, true);
+        log.info("模拟盘开盘复核完成 account={} 候选={}", accountId, result.size());
+    }
+
+    /** 当天候选是否还是开盘前（9:30 之前）选出的；没有候选时也返回 true，让复核兜底选一次。 */
+    private boolean stillPreselected(Long accountId) {
+        List<PaperSignal> candidates = recentCandidates(accountId);
+        if (candidates.isEmpty()) {
+            return true;
+        }
+        LocalDateTime cutoff = calendar.today().atTime(9, 30);
+        return candidates.stream().allMatch(signal -> signal.getCreateTime() != null
+                && signal.getCreateTime().isBefore(cutoff));
+    }
+
+    /**
+     * @param preMarket     true=盘前预选：跳过所有依赖分时/当日成交的条件与加分项
+     * @param keepWhenEmpty true=本轮没选出票时保留当天已有候选（用于开盘复核兜底）
+     */
+    private List<PaperSignal> refresh(Long accountId, boolean preMarket, boolean keepWhenEmpty) {
         PaperStrategy strategy = strategyService.ensureDefault(accountId);
         PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
         String today = calendar.todayText();
@@ -119,8 +181,10 @@ public class PaperSelectionService {
             log.warn("选股：热榜获取失败 {}", ex.getMessage());
         }
 
-        // 情绪只在规则开了的时候取一次，整个池子共用（服务内部还有 60 秒缓存）
-        MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
+        // 情绪只在规则开了的时候取一次，整个池子共用（服务内部还有 60 秒缓存）。
+        // 盘前涨跌家数还没形成，情绪分没有参考价值，预选阶段直接不取
+        MarketSentiment sentiment = !preMarket && params.isSentimentEnabled()
+                ? sentimentService.current() : null;
 
         List<Candidate> selected = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -151,7 +215,7 @@ public class PaperSelectionService {
             scanned++;
             try {
                 Candidate candidate = evaluate(strategy, params, code, name, item, rank, sentiment,
-                        account, vwapBudget, deepBudget, fundamentalBudget);
+                        account, vwapBudget, deepBudget, fundamentalBudget, preMarket);
                 if (candidate != null) {
                     selected.add(candidate);
                 }
@@ -186,6 +250,10 @@ public class PaperSelectionService {
         if (selected.size() > limit) {
             selected = new ArrayList<>(selected.subList(0, limit));
         }
+        if (selected.isEmpty() && keepWhenEmpty) {
+            log.warn("模拟盘开盘复核未选出候选，保留盘前预选结果 account={}", accountId);
+            return recentCandidates(accountId);
+        }
 
         signalMapper.delete(Wrappers.<PaperSignal>lambdaQuery()
                 .eq(PaperSignal::getAccountId, accountId)
@@ -202,7 +270,7 @@ public class PaperSelectionService {
         }
         strategyService.touch(strategy);
         lastRefreshAt.put(accountId, System.currentTimeMillis());
-        log.info("模拟盘选股完成 account={} 扫描={} 命中={}", accountId, scanned, result.size());
+        log.info("模拟盘选股完成 account={} 扫描={} 命中={} 盘前={}", accountId, scanned, result.size(), preMarket);
         return result;
     }
 
@@ -249,10 +317,21 @@ public class PaperSelectionService {
 
     private Candidate evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
                                HotStockItem hot, int hotRank, MarketSentiment sentiment, PaperAccount account,
-                               int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget) {
+                               int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget, boolean preMarket) {
         List<KlineItem> bars = klineCacheService.load(code, MIN_BARS);
         if (bars.size() < 30) {
             return null;
+        }
+        String todayText = calendar.todayText();
+        // 盘前日K接口常会带上「今天」这根未完成的 bar：收盘价就是集合竞价开盘价、
+        // 成交量只有竞价那一点。拿它算均线/量比/连板都会失真，预选阶段直接剔除，
+        // 只看截至昨天的完整日K；复核时重新拉取，自然带上当天的数据。
+        KlineItem lastBar = bars.get(bars.size() - 1);
+        if (preMarket && lastBar != null && todayText.equals(lastBar.getDate())) {
+            bars = bars.subList(0, bars.size() - 1);
+            if (bars.size() < 30) {
+                return null;
+            }
         }
         double[] closes = new double[bars.size()];
         double[] volumes = new double[bars.size()];
@@ -278,7 +357,6 @@ public class PaperSelectionService {
         // 量比按「已走过的交易分钟数」归一化：盘中最后一根日 K 只有当日累计量，
         // 不折算的话上午算出来的量比会被压低好几倍（详见 Indicators#volumeRatio）。
         // 最后一根不是今天（盘前、或行情没刷新）时它已经是完整的一天，按整日算。
-        String todayText = calendar.todayText();
         KlineItem latestBar = bars.get(bars.size() - 1);
         boolean latestIsToday = latestBar != null && todayText.equals(latestBar.getDate());
         double volumeRatio = Indicators.volumeRatio(volumes, 5,
@@ -305,10 +383,11 @@ public class PaperSelectionService {
         }
 
         // ---------- 用户自定义硬条件（严格过滤）：不满足直接剔除，不参与打分 ----------
-        // 早盘放量/竞价量/站上均价三项都要分时，先拉一次共用，避免重复请求
+        // 早盘放量/竞价量/站上均价三项都要分时，先拉一次共用，避免重复请求。
+        // 盘前预选阶段分时还没生成，拉也是空，直接跳过
         IntradayData intraday = null;
-        if (params.getOpenTurnoverMinPct() > 0 || params.getAuctionTurnoverMinPct() > 0
-                || params.isRequireAboveVwap()) {
+        if (!preMarket && (params.getOpenTurnoverMinPct() > 0 || params.getAuctionTurnoverMinPct() > 0
+                || params.isRequireAboveVwap())) {
             try {
                 intraday = tencentService.fetchIntraday(code);
             } catch (RuntimeException ex) {
@@ -322,7 +401,7 @@ public class PaperSelectionService {
                         PaperScreenRules.volumeTrendRatio(bars, 5, 20));
         if (params.isStrictFilters()) {
             String reject = strictReject(params, code, name, bars, quote, intraday, account,
-                    lowRatio, technicals, fundamentalBudget);
+                    lowRatio, technicals, fundamentalBudget, preMarket);
             if (reject != null) {
                 log.debug("选股：硬条件剔除 code={} name={} 原因={}", code, name, reject);
                 return null;
@@ -367,7 +446,8 @@ public class PaperSelectionService {
         double sentimentScore = sentiment != null && sentiment.isAvailable() ? sentiment.getScore() : Double.NaN;
         double effectiveChangeMax = MarketSentimentRule.effectiveChangeMax(
                 changeMax, params.getSentimentChangeMaxPct(), sentimentScore);
-        if (changePct > params.getChangeMinPct() && changePct < effectiveChangeMax) {
+        // 盘前只有集合竞价一个价格，涨跌幅还没意义
+        if (!preMarket && changePct > params.getChangeMinPct() && changePct < effectiveChangeMax) {
             score += params.getChangeScore();
             reasons.add("当日温和上涨");
         }
@@ -386,8 +466,8 @@ public class PaperSelectionService {
                 }
             }
         }
-        // 换手率：活跃但不过热
-        if (quote != null && PaperScreenRules.inRange(quote.getTurnoverRate(),
+        // 换手率：活跃但不过热（盘前换手率只有竞价那一点，不可比）
+        if (!preMarket && quote != null && PaperScreenRules.inRange(quote.getTurnoverRate(),
                 params.getTurnoverMinPct(), params.getTurnoverMaxPct())) {
             score += params.getTurnoverScore();
             reasons.add(String.format("换手率 %.1f%%", quote.getTurnoverRate()));
@@ -439,7 +519,7 @@ public class PaperSelectionService {
             }
         }
         // 分时均价线：放最后校验，只对「靠这一项刚好能越线」的票拉分时，避免拖慢整轮刷新
-        if (params.getVwapScore() > 0
+        if (!preMarket && params.getVwapScore() > 0
                 && score + params.getVwapScore() >= params.getMinScore()
                 && (intraday != null || (vwapBudget != null && vwapBudget[0] > 0))) {
             if (intraday == null && vwapBudget != null) {
@@ -463,13 +543,17 @@ public class PaperSelectionService {
         if (!Double.isNaN(lowRatio)) {
             reasons.add(String.format("距年内低点 %.0f%%", (lowRatio - 1) * 100));
         }
+        // 盘前没有当日 K 线，候选价用集合竞价开盘价更贴近用户看到的「现价」；
+        // 复核时会被当天的最新收盘价覆盖
+        double signalPrice = preMarket && quote != null && quote.getOpen() > 0
+                ? quote.getOpen() : close;
         PaperSignal signal = new PaperSignal();
         signal.setCode(code);
         signal.setName(name.isEmpty() ? code : name);
         signal.setAction(PaperConstants.ACTION_CANDIDATE);
         signal.setReason(String.join("、", reasons));
         signal.setScore(score);
-        signal.setPrice(PaperNumbers.price(BigDecimal.valueOf(close)));
+        signal.setPrice(PaperNumbers.price(BigDecimal.valueOf(signalPrice)));
         return new Candidate(signal, lowRatio);
     }
 
@@ -507,7 +591,8 @@ public class PaperSelectionService {
     private String strictReject(PaperStrategyParams params, String code, String name,
                                 List<KlineItem> bars, StockQuote quote, IntradayData intraday,
                                 PaperAccount account, double lowRatio,
-                                PaperScreenRules.Technicals technicals, int[] fundamentalBudget) {
+                                PaperScreenRules.Technicals technicals, int[] fundamentalBudget,
+                                boolean preMarket) {
         double price = quote != null && quote.getPrice() > 0 ? quote.getPrice()
                 : bars.get(bars.size() - 1).getClose();
         if (price <= 0) {
@@ -523,8 +608,8 @@ public class PaperSelectionService {
                         (params.getLowRatioMax() - 1) * 100);
             }
         }
-        // 2) 现价 > 今开
-        if (params.isRequireAboveOpen()) {
+        // 2) 现价 > 今开（盘前「现价」就是开盘价，这项必然不成立，跳过）
+        if (!preMarket && params.isRequireAboveOpen()) {
             double open = quote != null ? quote.getOpen() : 0;
             if (open <= 0) {
                 return "无今开价";
@@ -533,8 +618,8 @@ public class PaperSelectionService {
                 return "现价未高于今开";
             }
         }
-        // 3) 现价 > 分时均价
-        if (params.isRequireAboveVwap()) {
+        // 3) 现价 > 分时均价（盘前没有分时数据，跳过）
+        if (!preMarket && params.isRequireAboveVwap()) {
             if (intraday == null || intraday.getItems() == null || intraday.getItems().isEmpty()) {
                 return "无分时数据";
             }
@@ -551,8 +636,8 @@ public class PaperSelectionService {
                 return "现价未高于分时均价";
             }
         }
-        // 4) 量比硬下限
-        if (params.getHardVolumeRatioMin() > 0
+        // 4) 量比硬下限（盘前算出来的是昨日量比，与今天无关，跳过）
+        if (!preMarket && params.getHardVolumeRatioMin() > 0
                 && (Double.isNaN(technicals.volumeRatio()) || technicals.volumeRatio() < params.getHardVolumeRatioMin())) {
             return String.format("量比 %.2f 低于 %.2f", technicals.volumeRatio(), params.getHardVolumeRatioMin());
         }
@@ -588,9 +673,10 @@ public class PaperSelectionService {
             }
         }
         // 9) 早盘放量 + 实际换手率 + 股东户数 + 盈利：都要基本面，按真实上游请求数扣预算
-        boolean needFundamental = params.getOpenTurnoverMinPct() > 0
+        // 盘前成交量还没形成，前三项（放量/竞价/实际换手）没有意义，只留后两项基本面
+        boolean needFundamental = (!preMarket && (params.getOpenTurnoverMinPct() > 0
                 || params.getAuctionTurnoverMinPct() > 0
-                || params.getRealTurnoverMinPct() > 0
+                || params.getRealTurnoverMinPct() > 0))
                 || params.isRequireHolderShrink()
                 || params.getProfitRequire() > 0;
         if (needFundamental) {
@@ -601,7 +687,7 @@ public class PaperSelectionService {
             if (used >= MAX_FUNDAMENTAL_CHECKS) {
                 return "本轮基本面请求已达上限 " + MAX_FUNDAMENTAL_CHECKS + " 次";
             }
-            if (params.getAuctionTurnoverMinPct() > 0) {
+            if (!preMarket && params.getAuctionTurnoverMinPct() > 0) {
                 if (intraday == null || intraday.getItems() == null || intraday.getItems().isEmpty()) {
                     return "无分时数据（集合竞价量）";
                 }
@@ -618,7 +704,7 @@ public class PaperSelectionService {
                             pct, params.getAuctionTurnoverMinPct());
                 }
             }
-            if (params.getOpenTurnoverMinPct() > 0) {
+            if (!preMarket && params.getOpenTurnoverMinPct() > 0) {
                 if (intraday == null || intraday.getItems() == null || intraday.getItems().isEmpty()) {
                     return "无分时数据（早盘换手率）";
                 }
@@ -632,7 +718,7 @@ public class PaperSelectionService {
                     return String.format("早盘换手率 %.2f%% 低于 %.2f%%", pct, params.getOpenTurnoverMinPct());
                 }
             }
-            if (params.getRealTurnoverMinPct() > 0) {
+            if (!preMarket && params.getRealTurnoverMinPct() > 0) {
                 double lots = quote != null && quote.getVolume() > 0 ? quote.getVolume()
                         : bars.get(bars.size() - 1).getVolume();
                 Double pct = fundamentalService.realTurnoverPct(code, lots);

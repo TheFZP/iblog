@@ -35,6 +35,14 @@ public class PaperStrategyParams {
     private int maxCandidates = 5;
     /** 选股刷新间隔（秒） */
     private int selectionRefreshSec = 300;
+    /**
+     * 盘前预选：9:25 集合竞价结束后先用日 K 粗筛一批候选，9:30 开盘后再用完整数据复核。
+     *
+     * <p>预选阶段没有盘中分时/成交数据，所以会自动跳过所有依赖分时的硬条件与加分项，
+     * 只保留日 K、均线、资金流、热榜等盘前可用的因子。默认开启；旧规则 JSON 里
+     * 没有这个字段，解析后同样跟随默认值，不需要逐账户手工打开。</p>
+     */
+    private boolean preMarketPreselect = true;
 
     /** 均线多头排列得分 */
     private int maTrendScore = 25;
@@ -197,6 +205,7 @@ public class PaperStrategyParams {
             params.universeSize = integer(node, "universeSize", params.universeSize, 1, 100);
             params.maxCandidates = integer(node, "maxCandidates", params.maxCandidates, 1, 20);
             params.selectionRefreshSec = integer(node, "selectionRefreshSec", params.selectionRefreshSec, 30, 3600);
+            params.preMarketPreselect = bool(node, "preMarketPreselect", params.preMarketPreselect);
 
             params.maTrendScore = integer(node, "maTrendScore", params.maTrendScore, 0, 100);
             params.ma20Score = integer(node, "ma20Score", params.ma20Score, 0, 100);

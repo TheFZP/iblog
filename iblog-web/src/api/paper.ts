@@ -358,6 +358,8 @@ export interface PaperStrategyParams {
   maxCandidates: number
   /** 选股刷新间隔（秒） */
   selectionRefreshSec: number
+  /** 盘前预选：9:25 集合竞价后用日 K 粗筛，9:31 开盘复核 */
+  preMarketPreselect?: boolean
   /** 均线趋势权重 */
   maTrendScore: number
   /** MA20 权重 */

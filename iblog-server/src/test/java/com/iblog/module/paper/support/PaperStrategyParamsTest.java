@@ -201,6 +201,22 @@ class PaperStrategyParamsTest {
     }
 
     @Test
+    void preMarketPreselectDefaultsOnAndParses() {
+        // 默认开启：旧规则 JSON 里没有这个字段时也要生效
+        assertTrue(PaperStrategyParams.parse(mapper, "{}").isPreMarketPreselect());
+
+        // 显式关闭仍然有效
+        assertFalse(PaperStrategyParams.parse(mapper,
+                "{\"preMarketPreselect\":false}").isPreMarketPreselect());
+        assertFalse(PaperStrategyParams.parse(mapper,
+                "{\"preMarketPreselect\":\"0\"}").isPreMarketPreselect());
+
+        // 兼容字符串/数字写法，与其它布尔字段的解析口径一致
+        assertTrue(PaperStrategyParams.parse(mapper, "{\"preMarketPreselect\":\"1\"}").isPreMarketPreselect());
+        assertTrue(PaperStrategyParams.parse(mapper, "{\"preMarketPreselect\":1}").isPreMarketPreselect());
+    }
+
+    @Test
     void sentimentRoundTrip() throws Exception {
         PaperStrategyParams params = PaperStrategyParams.parse(mapper,
                 "{\"sentimentEnabled\":true,\"sentimentBuyMinScore\":50,\"sentimentExitScore\":30,"

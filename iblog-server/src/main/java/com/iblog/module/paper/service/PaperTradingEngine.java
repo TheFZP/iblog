@@ -28,6 +28,7 @@ public class PaperTradingEngine {
     private final PaperPositionService positionService;
     private final PaperSettlementService settlementService;
     private final PaperAutoTrader autoTrader;
+    private final PaperSelectionService selectionService;
     private final TradeCalendar calendar;
 
     @Scheduled(fixedDelayString = "${iblog.paper.tick-ms:15000}")
@@ -58,6 +59,67 @@ public class PaperTradingEngine {
                 autoTrader.run(account);
             } catch (RuntimeException ex) {
                 log.warn("模拟盘自动交易失败 accountId={}", account.getId(), ex);
+            }
+        }
+    }
+
+    /**
+     * 盘前预选（9:25:10）。
+     *
+     * <p>为什么不是 9:25:00：集合竞价 9:25 撮合完成，行情接口要几秒才刷出开盘价，
+     * 留 10 秒余量避免拿到 0 或昨收。预选只写候选，不下单 —— 真正买入仍等 9:30。</p>
+     */
+    @Scheduled(cron = "10 25 9 * * ?", zone = "Asia/Shanghai")
+    public void preselectBeforeOpen() {
+        if (!calendar.isTradingDay(calendar.today())) {
+            return;
+        }
+        for (PaperAccount account : accountMapper.selectList(Wrappers.<PaperAccount>lambdaQuery())) {
+            try {
+                selectionService.preselectIfEnabled(account.getId());
+            } catch (RuntimeException ex) {
+                log.warn("模拟盘盘前预选失败 accountId={}", account.getId(), ex);
+            }
+        }
+    }
+
+    /**
+     * 开盘复核（9:30:05）。
+     *
+     * <p>开盘价与实时行情在 9:30 就有了，先复核一轮：没开分时相关硬条件的策略
+     * 在这一刻就能拿到完整结果。如果开了分时条件、此时分时还没落定，复核会保留预选结果
+     * （{@code keepWhenEmpty}），由下面 9:32 的兜底任务再补一次。</p>
+     */
+    @Scheduled(cron = "5 30 9 * * ?", zone = "Asia/Shanghai")
+    public void refreshAfterOpen() {
+        if (!calendar.isTradingDay(calendar.today())) {
+            return;
+        }
+        for (PaperAccount account : accountMapper.selectList(Wrappers.<PaperAccount>lambdaQuery())) {
+            try {
+                selectionService.refreshAfterOpenIfEnabled(account.getId(), false);
+            } catch (RuntimeException ex) {
+                log.warn("模拟盘开盘复核失败 accountId={}", account.getId(), ex);
+            }
+        }
+    }
+
+    /**
+     * 复核兜底（9:32:00）。
+     *
+     * <p>只在候选仍是开盘前选出的时候才跑：9:30 复核成功时 createTime 已经更新，这里直接跳过；
+     * 9:30 那轮因为分时未就绪而保留了预选结果的账户，会在这一轮拿到完整数据重新选。</p>
+     */
+    @Scheduled(cron = "0 32 9 * * ?", zone = "Asia/Shanghai")
+    public void refreshAfterOpenFallback() {
+        if (!calendar.isTradingDay(calendar.today())) {
+            return;
+        }
+        for (PaperAccount account : accountMapper.selectList(Wrappers.<PaperAccount>lambdaQuery())) {
+            try {
+                selectionService.refreshAfterOpenIfEnabled(account.getId(), true);
+            } catch (RuntimeException ex) {
+                log.warn("模拟盘开盘复核兜底失败 accountId={}", account.getId(), ex);
             }
         }
     }

@@ -876,6 +876,19 @@
                   <h3 class="advanced__title">交易时段</h3>
                   <label class="trade-window__check">
                     <input
+                      v-model="strategyForm.preMarketPreselect"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">盘前预选</span>
+                    <span class="trade-window__hint">
+                      9:25 集合竞价结束后先用日 K 粗筛一批候选（跳过依赖分时的条件），
+                      9:30 开盘后再用完整数据复核覆盖（分时未就绪时 9:32 自动补一次）；
+                      当天已有候选时不重复预选。
+                    </span>
+                  </label>
+                  <label class="trade-window__check">
+                    <input
                       v-model="strategyForm.sellAtOpen"
                       type="checkbox"
                       :disabled="!strategy"
@@ -1778,6 +1791,7 @@ type NumericParamKey = Exclude<
   | 'affordableOnly'
   | 'sentimentEnabled'
   | 'requireHotRankUp'
+  | 'preMarketPreselect'
 >
 
 /** 次日开盘强制卖出默认关闭 */
@@ -1800,6 +1814,7 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   universeSize: 20,
   maxCandidates: 5,
   selectionRefreshSec: 300,
+  preMarketPreselect: true,
   maTrendScore: 25,
   ma20Score: 10,
   macdScore: 20,
@@ -2556,11 +2571,11 @@ function errText(err: unknown): string {
 }
 
 /** params 里的开关字段：兼容 true/false、1/0、"true"/"1" 等写法 */
-function toBoolean(value: unknown): boolean {
+function toBoolean(value: unknown, fallback = DEFAULT_SELL_AT_OPEN): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
   if (typeof value === 'string') return value.trim() === 'true' || value.trim() === '1'
-  return DEFAULT_SELL_AT_OPEN
+  return fallback
 }
 
 /** params 里的时间字段：不是合法 HH:mm 时回退默认值 */
@@ -2591,6 +2606,8 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     result.affordableOnly = toBoolean(node.affordableOnly)
     result.sentimentEnabled = toBoolean(node.sentimentEnabled)
     result.requireHotRankUp = toBoolean(node.requireHotRankUp)
+    // 与后端默认值一致：旧规则里没有这个字段时视为开启
+    result.preMarketPreselect = toBoolean(node.preMarketPreselect, true)
     result.openTurnoverStart = toTimeText(
       node.openTurnoverStart,
       DEFAULT_OPEN_TURNOVER_START
@@ -2639,6 +2656,7 @@ function clampStrategyForm(): StrategyForm {
   result.affordableOnly = strategyForm.value.affordableOnly === true
   result.sentimentEnabled = strategyForm.value.sentimentEnabled === true
   result.requireHotRankUp = strategyForm.value.requireHotRankUp === true
+  result.preMarketPreselect = strategyForm.value.preMarketPreselect === true
   result.openTurnoverStart = toTimeText(
     strategyForm.value.openTurnoverStart,
     DEFAULT_OPEN_TURNOVER_START
