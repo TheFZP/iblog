@@ -65,7 +65,9 @@ public class NewsKeywordScorer {
         if (badFound) {
             score = Math.min(score, -60);
         }
-        return clamp(score, -100, 100);
+        // 兜底打分只做粗方向：上限收到 ±60，避免几个泛词叠加就打到 ±100、
+        // 在没有 AI 精判时给出和官方重大利好同等级的加分。
+        return clamp(score, -60, 60);
     }
 
     private int scoreOne(SearchHit hit) {

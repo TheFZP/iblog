@@ -61,8 +61,10 @@ public class AiNewsScoreService {
     private static final int NEWS_WINDOW_HOURS = 48;
     /** 落库保留天数。 */
     private static final int KEEP_DAYS = 7;
-    /** LLM 输出上限：留足空间，deepseek 系列即使 thinking=false 也会吐 reasoning_content。 */
-    private static final int MAX_TOKENS = 4096;
+    /** LLM 输出上限：deepseek 系列即使 thinking=false 也会吐 reasoning_content，必须留足。 */
+    private static final int MAX_TOKENS = 8192;
+    /** 单次 LLM 精判的股票数：拆小批，避免一只票的异常输出把整批结果截断。 */
+    private static final int LLM_CHUNK_SIZE = 12;
 
     private final AiWebSearchService webSearchService;
     private final AiConfigService configService;
@@ -229,6 +231,14 @@ public class AiNewsScoreService {
         if (!config.available()) {
             return;
         }
+        // 拆小批：29 只票一次输出容易在 reasoning 之后被截断，且一批失败会拖累所有票。
+        for (int from = 0; from < results.size(); from += LLM_CHUNK_SIZE) {
+            int to = Math.min(results.size(), from + LLM_CHUNK_SIZE);
+            refineChunk(new ArrayList<>(results.subList(from, to)), config);
+        }
+    }
+
+    private void refineChunk(List<StockNewsScore> results, AiConfigService.Config config) {
         try {
             ObjectNode body = AiJson.MAPPER.createObjectNode();
             for (StockNewsScore s : results) {
@@ -259,8 +269,10 @@ public class AiNewsScoreService {
                     .put("content", body.toString());
             String raw = llmClient.complete(config.apiKey(), config.model(), messages, MAX_TOKENS);
             JsonNode root = AiJson.MAPPER.readTree(cleanJson(raw));
-            if (root.has("items") && root.path("items").isArray()) {
-                for (JsonNode item : root.path("items")) {
+            // 兼容 {"items":[...]} 与模型偶尔直接返回 [...] 两种形状
+            JsonNode items = root.isArray() ? root : root.path("items");
+            if (items.isArray()) {
+                for (JsonNode item : items) {
                     applyItem(item, results);
                 }
             }
@@ -319,16 +331,18 @@ public class AiNewsScoreService {
     }
 
     private double keywordConfidence(List<AiWebSearchService.SearchHit> hits) {
-        double conf = 0.6;
+        // 关键词只是粗方向，不给高置信度：即使命中官媒来源，置信度上限也压到 0.6，
+        // 这样兜底分对总分的实际影响最多约为加分上限的 60%，不会盖过 AI 精判。
+        double conf = 0.4;
         for (AiWebSearchService.SearchHit h : hits) {
             String src = h == null || h.source() == null ? "" : h.source();
             if (src.contains("财联社") || src.contains("证券时报") || src.contains("中国证券报")
                     || src.contains("上海证券报") || src.contains("交易所") || src.contains("巨潮资讯")
                     || src.contains("人民财讯")) {
-                conf = Math.max(conf, 0.85);
+                conf = Math.max(conf, 0.6);
             }
         }
-        return Math.max(0.4, Math.min(0.95, conf));
+        return Math.max(0.3, Math.min(0.6, conf));
     }
 
     private static String labelOf(int score) {
@@ -423,12 +437,15 @@ public class AiNewsScoreService {
             return "[]";
         }
         String s = raw.trim();
-        int start = s.indexOf('{');
-        int end = s.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            return s.substring(start, end + 1);
+        int obj = s.indexOf('{');
+        int arr = s.indexOf('[');
+        int start = obj < 0 ? arr : (arr < 0 ? obj : Math.min(obj, arr));
+        if (start < 0) {
+            return "[]";
         }
-        return "[]";
+        char close = s.charAt(start) == '{' ? '}' : ']';
+        int end = s.lastIndexOf(close);
+        return end > start ? s.substring(start, end + 1) : "[]";
     }
 
     private static final String PROMPT_SYSTEM =
