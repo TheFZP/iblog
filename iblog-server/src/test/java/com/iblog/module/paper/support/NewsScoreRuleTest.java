@@ -46,6 +46,19 @@ class NewsScoreRuleTest {
     }
 
     @Test
+    void pricedInDiscountHalvesPositiveOnly() {
+        // 涨幅到 7% 或昨日连板 >= 2，利好打五折
+        assertEquals(5, NewsScoreRule.pricedInDiscount(10, 7.2, 0));
+        assertEquals(5, NewsScoreRule.pricedInDiscount(10, 1.0, 2));
+        // 低位/首板不打折
+        assertEquals(10, NewsScoreRule.pricedInDiscount(10, 3.0, 1));
+        // 利空不因高位打折（高位利空反而更危险）
+        assertEquals(-8, NewsScoreRule.pricedInDiscount(-8, 9.5, 3));
+        // 0 分保持 0
+        assertEquals(0, NewsScoreRule.pricedInDiscount(0, 9.5, 3));
+    }
+
+    @Test
     void hardFilterOnlyWhenConfidenceEnough() {
         // 置信足够且分低于阈值 → 剔除
         assertTrue(NewsScoreRule.filtered(-60, 0.8, 0.6, -50));

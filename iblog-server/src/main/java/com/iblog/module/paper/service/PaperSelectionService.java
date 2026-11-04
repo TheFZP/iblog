@@ -478,13 +478,17 @@ public class PaperSelectionService {
                 int bonus = NewsScoreRule.bonus(params.getNewsScoreMax(), params.getNewsPenaltyMax(),
                         news.getScore() == null ? 0 : news.getScore(),
                         news.getConfidence() == null ? 0 : news.getConfidence().doubleValue());
+                // 利好兑现：涨幅 >7% 或昨日已连板时，利好对次日买盘的边际作用下降，打五折
+                int adjusted = NewsScoreRule.pricedInDiscount(bonus, changePct, boardHeight);
+                boolean discounted = adjusted != bonus;
+                bonus = adjusted;
                 if (bonus != 0) {
                     score += bonus;
                     String verb = bonus > 0 ? "新闻+" + bonus : "新闻" + bonus;
                     String summary = news.getSummary();
-                    reasons.add(summary == null || summary.isBlank()
+                    reasons.add((summary == null || summary.isBlank()
                             ? verb + "（" + news.getLabel() + "）"
-                            : verb + "（" + summary + "）");
+                            : verb + "（" + summary + "）") + (discounted ? "，高位打折" : ""));
                 }
                 // 硬过滤：置信度足够且分低于阈值才剔除（默认关）
                 if (params.isNewsHardFilter()

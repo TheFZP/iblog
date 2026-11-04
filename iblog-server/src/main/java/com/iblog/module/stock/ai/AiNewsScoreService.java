@@ -21,8 +21,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -51,6 +55,12 @@ public class AiNewsScoreService {
     private static final int NEWS_PER_STOCK = 6;
     /** 每轮最多分析的热榜前 N 只（全局扫描上限，与单账户 universeSize 解耦）。 */
     private static final int MAX_STOCKS = 30;
+    /** 热榜之外额外扫描的持仓股票数上限（保证持仓也能收到利空预警）。 */
+    private static final int MAX_EXTRA_STOCKS = 20;
+    /** 每轮最多取多少个概念板块搜板块新闻。 */
+    private static final int MAX_SECTOR_TAGS = 6;
+    /** 每只股票附带多少条板块新闻给 LLM 做背景。 */
+    private static final int SECTOR_PER_STOCK = 3;
     /** 部分搜索失败时仍接受精判的最少股票数。 */
     private static final int MIN_LLM_STOCKS = 3;
     /** 并行搜索的并发数。 */
@@ -105,9 +115,74 @@ public class AiNewsScoreService {
     }
 
     /**
+     * 批量读取今日新闻分（供持仓/候选/新闻面板展示）。
+     *
+     * <p>与选股用的 {@link #latest} 不同：展示场景不要求 30 分钟内新鲜，只要还是今天的分析
+     * 就展示出来；缓存没有再回库补，避免应用重启后前端空白。</p>
+     */
+    public List<StockNewsScore> current(List<String> rawCodes) {
+        if (rawCodes == null || rawCodes.isEmpty()) {
+            return List.of();
+        }
+        List<String> codes = new ArrayList<>();
+        for (String raw : rawCodes) {
+            String code = StockCode.normalize(raw);
+            if (!code.isEmpty() && !codes.contains(code)) {
+                codes.add(code);
+            }
+        }
+        Map<String, StockNewsScore> found = new LinkedHashMap<>();
+        List<String> missing = new ArrayList<>();
+        for (String code : codes) {
+            StockNewsScore cached = cache.get(code);
+            if (cached != null && calendar.today().equals(cached.getTradeDate())) {
+                found.put(code, cached);
+            } else {
+                missing.add(code);
+            }
+        }
+        if (!missing.isEmpty()) {
+            try {
+                List<StockNewsScore> rows = scoreMapper.selectList(new LambdaQueryWrapper<StockNewsScore>()
+                        .eq(StockNewsScore::getTradeDate, calendar.today())
+                        .in(StockNewsScore::getCode, missing));
+                for (StockNewsScore row : rows) {
+                    found.put(row.getCode(), row);
+                }
+            } catch (RuntimeException ex) {
+                log.debug("读取新闻分失败 err={}", ex.getMessage());
+            }
+        }
+        List<StockNewsScore> result = new ArrayList<>();
+        for (String code : codes) {
+            StockNewsScore score = found.get(code);
+            if (score != null) {
+                result.add(score);
+            }
+        }
+        return result;
+    }
+
+    /** 单只股票今日新闻分；没有返回 null。 */
+    public StockNewsScore detail(String rawCode) {
+        List<StockNewsScore> rows = current(List.of(rawCode));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
      * 触发一次扫描（调度任务与启动补扫共用）。吞掉异常，绝不向上抛。
      */
     public void scan() {
+        scan(Map.of());
+    }
+
+    /**
+     * 触发一次扫描。
+     *
+     * @param extraStocks 热榜之外必须覆盖的股票（持仓）：code → name。
+     *                    持仓不在热榜里，不额外指定就永远拿不到新闻预警。
+     */
+    public void scan(Map<String, String> extraStocks) {
         long now = System.currentTimeMillis();
         long last = lastScanAt.get();
         if (now - last < 30_000L) {
@@ -118,7 +193,7 @@ public class AiNewsScoreService {
         }
         long start = System.currentTimeMillis();
         try {
-            doScan();
+            doScan(extraStocks == null ? Map.of() : extraStocks);
         } catch (RuntimeException ex) {
             log.warn("新闻扫描失败 err={}", ex.toString());
         } finally {
@@ -126,7 +201,7 @@ public class AiNewsScoreService {
         }
     }
 
-    private void doScan() {
+    private void doScan(Map<String, String> extraStocks) {
         if (!calendar.isTradingDay(calendar.today())) {
             return;
         }
@@ -147,24 +222,50 @@ public class AiNewsScoreService {
             hot = hot.subList(0, MAX_STOCKS);
         }
 
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, Math.min(CONCURRENCY, hot.size())));
-        CountDownLatch latch = new CountDownLatch(hot.size());
-        List<StockNewsScore> results = new CopyOnWriteArrayList<>();
+        // 概念板块级催化剂：热榜标签去重后各搜一次，作为背景新闻附给相关股票
+        Map<String, List<AiWebSearchService.SearchHit>> sectorNews = fetchSectorNews(hot);
+
+        // 热榜 + 持仓：用 LinkedHashMap 去重并保持热榜名次顺序
+        Map<String, ScanTarget> universe = new LinkedHashMap<>();
         for (HotStockItem item : hot) {
             String code = StockCode.normalize(item.getCode());
             if (code.isEmpty() || StockCode.isHk(code)) {
-                latch.countDown();
                 continue;
             }
             String name = item.getName() == null ? "" : item.getName();
+            universe.putIfAbsent(code, new ScanTarget(code, name,
+                    item.getTags() == null ? List.of() : item.getTags()));
+        }
+        int added = 0;
+        for (Map.Entry<String, String> entry : extraStocks.entrySet()) {
+            if (added >= MAX_EXTRA_STOCKS) {
+                break;
+            }
+            String code = StockCode.normalize(entry.getKey());
+            if (code.isEmpty() || StockCode.isHk(code) || universe.containsKey(code)) {
+                continue;
+            }
+            universe.put(code, new ScanTarget(code, entry.getValue() == null ? "" : entry.getValue(),
+                    List.of()));
+            added++;
+        }
+        if (universe.isEmpty()) {
+            return;
+        }
+
+        ExecutorService pool = Executors.newFixedThreadPool(
+                Math.max(1, Math.min(CONCURRENCY, universe.size())));
+        CountDownLatch latch = new CountDownLatch(universe.size());
+        List<StockNewsScore> results = new CopyOnWriteArrayList<>();
+        for (ScanTarget target : universe.values()) {
             pool.submit(() -> {
                 try {
-                    StockNewsScore s = scanOne(code, name);
+                    StockNewsScore s = scanOne(target, sectorNews);
                     if (s != null) {
                         results.add(s);
                     }
                 } catch (Exception ex) {
-                    log.debug("新闻扫描单个失败 code={} err={}", code, ex.toString());
+                    log.debug("新闻扫描单个失败 code={} err={}", target.code(), ex.toString());
                 } finally {
                     latch.countDown();
                 }
@@ -173,7 +274,7 @@ public class AiNewsScoreService {
         pool.shutdown();
         try {
             if (!latch.await(SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                log.warn("新闻扫描超时，只处理 {} / {} 只", results.size(), hot.size());
+                log.warn("新闻扫描超时，只处理 {} / {} 只", results.size(), universe.size());
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
@@ -188,8 +289,14 @@ public class AiNewsScoreService {
         log.info("新闻扫描完成 分析={} 只", results.size());
     }
 
+    /** 扫描目标：热榜股票带概念标签，持仓股票没有标签。 */
+    private record ScanTarget(String code, String name, List<String> tags) {
+    }
+
     /** 单只股票：搜索 + 去重 + 时效过滤 → 关键词兜底原始分。 */
-    private StockNewsScore scanOne(String code, String name) {
+    private StockNewsScore scanOne(ScanTarget target, Map<String, List<AiWebSearchService.SearchHit>> sectorNews) {
+        String code = target.code();
+        String name = target.name();
         List<AiWebSearchService.SearchHit> hits;
         try {
             hits = webSearchService.search(name + " " + code, NEWS_PER_STOCK + 2);
@@ -204,8 +311,10 @@ public class AiNewsScoreService {
         if (hits.isEmpty()) {
             return null;
         }
+        // 关键词兜底只吃个股新闻：板块新闻套到每只票头上会把整个板块一起抬高
         int sharp = keywordScorer.scoreAll(hits);
         double conf = keywordConfidence(hits);
+        List<AiWebSearchService.SearchHit> sectorHits = collectSectorHits(target.tags(), sectorNews);
         StockNewsScore s = new StockNewsScore();
         s.setCode(code);
         s.setName(name);
@@ -215,9 +324,69 @@ public class AiNewsScoreService {
         s.setLabel(labelOf(sharp));
         s.setSourceCount(Math.min(hits.size(), NEWS_PER_STOCK));
         s.setModel("keyword");
-        s.setHeadlines(headlinesJson(hits));
+        s.setHeadlines(headlinesJson(hits, sectorHits));
         s.setUpdateTime(LocalDateTime.now());
         return s;
+    }
+
+    /** 取该股票相关概念的板块新闻，按标题去重，最多 {@link #SECTOR_PER_STOCK} 条。 */
+    private List<AiWebSearchService.SearchHit> collectSectorHits(
+            List<String> tags, Map<String, List<AiWebSearchService.SearchHit>> sectorNews) {
+        if (tags == null || tags.isEmpty() || sectorNews.isEmpty()) {
+            return List.of();
+        }
+        List<AiWebSearchService.SearchHit> out = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (String tag : tags) {
+            List<AiWebSearchService.SearchHit> list = sectorNews.get(tag);
+            if (list == null) {
+                continue;
+            }
+            for (AiWebSearchService.SearchHit hit : list) {
+                if (hit == null || hit.title() == null || !seen.add(hit.title())) {
+                    continue;
+                }
+                out.add(hit);
+                if (out.size() >= SECTOR_PER_STOCK) {
+                    return out;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 按热榜概念标签搜板块新闻（每个概念一次，最多 {@link #MAX_SECTOR_TAGS} 个）。 */
+    private Map<String, List<AiWebSearchService.SearchHit>> fetchSectorNews(List<HotStockItem> hot) {
+        Set<String> tags = new LinkedHashSet<>();
+        for (HotStockItem item : hot) {
+            if (item.getTags() == null) {
+                continue;
+            }
+            for (String tag : item.getTags()) {
+                if (tag != null && !tag.isBlank()) {
+                    tags.add(tag.trim());
+                }
+                if (tags.size() >= MAX_SECTOR_TAGS) {
+                    break;
+                }
+            }
+            if (tags.size() >= MAX_SECTOR_TAGS) {
+                break;
+            }
+        }
+        Map<String, List<AiWebSearchService.SearchHit>> sectorNews = new HashMap<>();
+        for (String tag : tags) {
+            try {
+                List<AiWebSearchService.SearchHit> hits =
+                        recentOnly(webSearchService.search(tag + " 板块", 4));
+                if (!hits.isEmpty()) {
+                    sectorNews.put(tag, hits);
+                }
+            } catch (RuntimeException ex) {
+                log.debug("板块新闻搜索失败 tag={} err={}", tag, ex.getMessage());
+            }
+        }
+        return sectorNews;
     }
 
     /**
@@ -244,17 +413,18 @@ public class AiNewsScoreService {
             for (StockNewsScore s : results) {
                 ObjectNode item = body.putObject(s.getCode());
                 item.put("name", s.getName() == null ? "" : s.getName());
-                int max = Math.min(NEWS_PER_STOCK, s.getSourceCount());
                 ArrayNode arr = item.putArray("news");
                 try {
                     JsonNode hs = AiJson.MAPPER.readTree(s.getHeadlines());
                     if (hs.isArray()) {
-                        int n = Math.min(hs.size(), max);
+                        int n = Math.min(hs.size(), NEWS_PER_STOCK + SECTOR_PER_STOCK);
                         for (int i = 0; i < n; i++) {
                             JsonNode h = hs.get(i);
                             String src = h.path("source").asText("");
                             String title = h.path("title").asText("");
-                            arr.add(src.isBlank() ? title : "[" + src + "] " + title);
+                            // 板块新闻加前缀，让模型知道这是行业催化而非公司自身事实
+                            String prefix = "sector".equals(h.path("scope").asText("")) ? "[板块] " : "";
+                            arr.add(prefix + (src.isBlank() ? title : "[" + src + "] " + title));
                         }
                     }
                 } catch (Exception ignored) {
@@ -415,21 +585,30 @@ public class AiNewsScoreService {
         return null;
     }
 
-    private String headlinesJson(List<AiWebSearchService.SearchHit> hits) {
+    private String headlinesJson(List<AiWebSearchService.SearchHit> stockHits,
+                                 List<AiWebSearchService.SearchHit> sectorHits) {
         try {
             ArrayNode arr = AiJson.MAPPER.createArrayNode();
-            int n = Math.min(hits.size(), NEWS_PER_STOCK);
-            for (int i = 0; i < n; i++) {
-                AiWebSearchService.SearchHit h = hits.get(i);
-                ObjectNode node = arr.addObject();
-                node.put("title", h.title());
-                node.put("source", h.source());
-                node.put("date", h.date());
+            int stockN = Math.min(stockHits.size(), NEWS_PER_STOCK);
+            for (int i = 0; i < stockN; i++) {
+                addHeadline(arr, stockHits.get(i), "stock");
+            }
+            int sectorN = Math.min(sectorHits.size(), SECTOR_PER_STOCK);
+            for (int i = 0; i < sectorN; i++) {
+                addHeadline(arr, sectorHits.get(i), "sector");
             }
             return AiJson.MAPPER.writeValueAsString(arr);
         } catch (Exception e) {
             return "";
         }
+    }
+
+    private static void addHeadline(ArrayNode arr, AiWebSearchService.SearchHit hit, String scope) {
+        ObjectNode node = arr.addObject();
+        node.put("title", hit.title());
+        node.put("source", hit.source());
+        node.put("date", hit.date());
+        node.put("scope", scope);
     }
 
     private static String cleanJson(String raw) {
@@ -450,7 +629,9 @@ public class AiNewsScoreService {
 
     private static final String PROMPT_SYSTEM =
             "你是一名 A 股短线情绪分析师。下面是一个 JSON 对象，key 是股票代码，value 是"
-                    + " {name, news:[“[来源] 标题”...]}。只根据这些标题判断未来 1-3 个交易日对股价的影响，"
+                    + " {name, news:[“[来源] 标题”或“[板块] [来源] 标题”...]}。"
+                    + " 带 [板块] 前缀的是该股票所属概念/行业的板块级新闻，只能作为情绪背景，"
+                    + "不能当成公司自身的具体事实。只根据这些标题判断未来 1-3 个交易日对股价的影响，"
                     + "输出严格 JSON：{\"items\":[{\"code\":\"代码\",\"score\":-100~100整数,"
                     + "\"confidence\":0~1,\"summary\":\"一句话结论\"}]}。"
                     + " 评分口径：明确重大利好 60~100，一般利好 20~59，中性 -19~19，"

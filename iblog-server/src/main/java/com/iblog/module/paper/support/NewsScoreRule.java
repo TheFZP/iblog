@@ -13,6 +13,12 @@ package com.iblog.module.paper.support;
  */
 public final class NewsScoreRule {
 
+    /** 当日涨幅达到该值视为「利好已兑现」，利好加分打五折。 */
+    private static final double PRICED_IN_CHANGE_PCT = 7.0;
+    /** 连板高度达到该值视为「高位」，利好加分打五折。 */
+    private static final int PRICED_IN_BOARD_HEIGHT = 2;
+    private static final double PRICED_IN_FACTOR = 0.5;
+
     private NewsScoreRule() {
     }
 
@@ -32,6 +38,25 @@ public final class NewsScoreRule {
             return (int) Math.round(Math.max(max, 0) * effective);
         }
         return -(int) Math.round(Math.max(penalty, 0) * -effective);
+    }
+
+    /**
+     * 利好兑现折扣：涨幅过大或已经连板时，利好对次日新增买盘的边际作用下降。
+     *
+     * <p>只打折正分，利空不 discount —— 高位出利空反而更危险，不能一起减弱。</p>
+     *
+     * @param bonus     原始加分（负数原样返回）
+     * @param changePct 当日涨幅（%）
+     * @param boardHeight 昨日连板高度（0 表示未涨停）
+     */
+    public static int pricedInDiscount(int bonus, double changePct, int boardHeight) {
+        if (bonus <= 0) {
+            return bonus;
+        }
+        if (changePct >= PRICED_IN_CHANGE_PCT || boardHeight >= PRICED_IN_BOARD_HEIGHT) {
+            return (int) Math.round(bonus * PRICED_IN_FACTOR);
+        }
+        return bonus;
     }
 
     /** 置信度不足时不扣分也不加分（用于硬过滤判定：传闻不该把票误杀）。 */

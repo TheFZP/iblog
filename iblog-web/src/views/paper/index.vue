@@ -1100,6 +1100,7 @@
                   <th scope="col" class="num">分数</th>
                   <th scope="col" class="num">现价</th>
                   <th scope="col">入选理由</th>
+                  <th scope="col" class="num">新闻</th>
                   <th scope="col" class="num">操作</th>
                 </tr>
               </thead>
@@ -1128,6 +1129,19 @@
                   </td>
                   <td class="num">{{ priceText(item.price) }}</td>
                   <td class="cell-reason">{{ item.reason || '--' }}</td>
+                  <td class="num" @click.stop>
+                    <button
+                      v-if="newsOf(item.code)"
+                      type="button"
+                      class="news-badge"
+                      :class="`news-badge--${newsTone(newsScoreOf(item.code))}`"
+                      :title="newsSummaryOf(item.code)"
+                      @click="openNews(item.code)"
+                    >
+                      {{ newsTextOf(item.code) }}
+                    </button>
+                    <span v-else class="cell-sub">--</span>
+                  </td>
                   <td class="num" @click.stop>
                     <button class="mini-btn" type="button" @click="buySelection(item)">下单</button>
                   </td>
@@ -1193,6 +1207,7 @@
                   <th scope="col" class="num">现价</th>
                   <th scope="col" class="num">市值</th>
                   <th scope="col" class="num">浮动盈亏</th>
+                  <th scope="col" class="num">新闻</th>
                   <th scope="col" class="num">操作</th>
                 </tr>
               </thead>
@@ -1219,6 +1234,19 @@
                       <span>{{ signedMoney(position.profit, position.currency) }}</span>
                       <span class="cell-sub">{{ pct(position.profitPct) }}</span>
                     </div>
+                  </td>
+                  <td class="num" @click.stop>
+                    <button
+                      v-if="newsOf(position.code)"
+                      type="button"
+                      class="news-badge"
+                      :class="`news-badge--${newsTone(newsScoreOf(position.code))}`"
+                      :title="newsSummaryOf(position.code)"
+                      @click="openNews(position.code)"
+                    >
+                      {{ newsTextOf(position.code) }}
+                    </button>
+                    <span v-else class="cell-sub">--</span>
                   </td>
                   <td class="num" @click.stop>
                     <button
@@ -1727,6 +1755,61 @@
       </div>
     </div>
 
+    <!-- 新闻情绪面板 -->
+    <div v-if="newsOpen" class="stock-modal" @click.self="closeNews">
+      <div
+        class="stock-modal__box news-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="news-panel-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="news-panel-title" class="stock-modal__title">
+            新闻情绪{{ newsDetail ? ` · ${newsDetail.name || newsDetail.code}` : '' }}
+          </h2>
+          <button class="stock-modal__close" type="button" aria-label="关闭" @click="closeNews">
+            ×
+          </button>
+        </div>
+        <div class="news-panel">
+          <div v-if="newsLoading" class="table-state">加载中…</div>
+          <div v-else-if="newsError" class="table-state table-state--error">{{ newsError }}</div>
+          <template v-else-if="newsDetail">
+            <div class="news-panel__summary">
+              <span class="news-badge" :class="`news-badge--${newsDetailTone}`">
+                {{ newsDetailText }}
+              </span>
+              <span class="cell-sub">
+                置信度 {{ newsDetailConfidence }}% · {{ newsDetail.updatedAt || '--' }}
+                <template v-if="newsDetail.model === 'keyword'"> · 关键词兜底</template>
+              </span>
+            </div>
+            <p v-if="newsDetail.summary" class="news-panel__text">{{ newsDetail.summary }}</p>
+            <p v-if="newsAdvice" class="news-panel__advice">{{ newsAdvice }}</p>
+            <ul v-if="(newsDetail.headlines ?? []).length" class="news-list">
+              <li v-for="(h, i) in newsDetail.headlines" :key="i" class="news-list__item">
+                <span class="news-list__scope" :class="{ 'is-sector': h.scope === 'sector' }">
+                  {{ h.scope === 'sector' ? '板块' : '个股' }}
+                </span>
+                <div class="news-list__body">
+                  <span class="news-list__title">{{ h.title }}</span>
+                  <span class="news-list__meta">
+                    {{ h.source || '未知来源' }}<template v-if="h.date"> · {{ h.date }}</template>
+                  </span>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="trade-window__hint">没有可展示的新闻标题。</p>
+            <p class="trade-window__hint">
+              新闻分每天盘中约每 30 分钟刷新，只参与选股加分、不会自动交易；
+              重大利空可在高级规则里开启硬过滤，持仓预警请结合自身仓位判断。
+            </p>
+          </template>
+          <p v-else class="trade-window__hint">今天还没有这只股票的新闻分析。</p>
+        </div>
+      </div>
+    </div>
+
     <!-- 手动买卖弹窗 -->
     <TradeDialog
       :show="tradeOpen"
@@ -1796,6 +1879,8 @@ import { fetchMarketSentiment } from '@/api/stock'
 import type { MarketSentiment } from '@/api/stock'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
 import { useSettings } from '@/composables/useSettings'
+import { fetchStockNewsBatch, fetchStockNewsDetail } from '@/api/news'
+import type { StockNewsDetail, StockNewsItem } from '@/api/news'
 
 const router = useRouter()
 
@@ -2292,6 +2377,19 @@ const deleteBusy = ref(false)
 const account = ref<PaperAccount | null>(null)
 const positions = ref<PaperPosition[]>([])
 const nav = ref<PaperNavPoint[]>([])
+
+// —— 新闻情绪（候选/持仓徽标 + 新闻面板） ——
+const newsMap = ref<Record<string, StockNewsItem>>({})
+const newsOpen = ref(false)
+const newsLoading = ref(false)
+const newsError = ref('')
+const newsDetail = ref<StockNewsDetail | null>(null)
+let newsSeq = 0
+let newsDetailSeq = 0
+/** 新闻分 60 秒内复用上次结果（后端本身 30 分钟才更新一轮）。 */
+const NEWS_TTL_MS = 60_000
+let newsLoadedAt = 0
+let newsLoadedKey = ''
 const navDays = ref(90)
 const navLoading = ref(false)
 
@@ -2550,6 +2648,7 @@ async function loadPositions(silent = false) {
     const data = (await fetchPaperPositions(activeAccountId())) ?? []
     if (epoch !== accountEpoch) return
     positions.value = data
+    void loadNews(epoch)
   } catch (err) {
     if (epoch === accountEpoch) captureError(err, silent)
   }
@@ -2836,11 +2935,110 @@ async function loadSelections() {
     if (epoch !== accountEpoch) return
     selections.value = data
     selectionsError.value = ''
+    void loadNews(epoch)
   } catch (err) {
     if (epoch === accountEpoch) selectionsError.value = errText(err)
   } finally {
     if (epoch === accountEpoch) selectionsLoading.value = false
   }
+}
+
+/**
+ * 拉取候选与持仓的今日新闻分；失败静默降级（新闻只是展示增强）。
+ *
+ * <p>新闻每 30 分钟才刷新一轮，而行情轮询是秒级，所以同一批代码 60 秒内复用上次结果；
+ * 候选/持仓代码变化时会立即重拉。</p>
+ */
+async function loadNews(epoch = accountEpoch, force = false) {
+  const codes = Array.from(
+    new Set([
+      ...selections.value.map((item) => item.code),
+      ...positions.value.map((item) => item.code)
+    ].filter(Boolean))
+  )
+  if (!codes.length) {
+    newsMap.value = {}
+    newsLoadedKey = ''
+    return
+  }
+  const key = codes.join(',')
+  if (!force && key === newsLoadedKey && Date.now() - newsLoadedAt < NEWS_TTL_MS) return
+  const seq = ++newsSeq
+  try {
+    const items = (await fetchStockNewsBatch(codes)) ?? []
+    if (seq !== newsSeq || epoch !== accountEpoch) return
+    const map: Record<string, StockNewsItem> = {}
+    for (const item of items) map[item.code] = item
+    newsMap.value = map
+    newsLoadedKey = key
+    newsLoadedAt = Date.now()
+  } catch {
+    // 新闻接口失败不影响模拟盘主流程，保留上一次展示
+  }
+}
+
+function newsOf(code: string): StockNewsItem | undefined {
+  return newsMap.value[code]
+}
+
+function newsTone(score: number): string {
+  return score >= 20 ? 'pos' : score <= -20 ? 'neg' : 'neutral'
+}
+
+function newsText(item: StockNewsItem): string {
+  return `${item.label} ${item.score > 0 ? '+' : ''}${item.score}`
+}
+
+function newsScoreOf(code: string): number {
+  return newsMap.value[code]?.score ?? 0
+}
+
+function newsTextOf(code: string): string {
+  const item = newsMap.value[code]
+  return item ? newsText(item) : ''
+}
+
+function newsSummaryOf(code: string): string {
+  return newsMap.value[code]?.summary || '查看新闻来源'
+}
+
+const newsDetailText = computed(() => (newsDetail.value ? newsText(newsDetail.value) : ''))
+const newsDetailTone = computed(() => newsTone(newsDetail.value?.score ?? 0))
+const newsDetailConfidence = computed(() =>
+  Math.round((newsDetail.value?.confidence ?? 0) * 100)
+)
+
+/** 强利空只有置信度足够时才给建议，避免一条小作文让人砍仓。 */
+const newsAdvice = computed(() => {
+  const detail = newsDetail.value
+  if (!detail || detail.confidence < 0.6) return ''
+  if (detail.score > -40) return ''
+  const held = positions.value.some((item) => item.code === detail.code)
+  return held
+    ? '利空信号较强：已持仓建议评估减仓，必要时清仓。'
+    : '利空信号较强：空仓不建议参与。'
+})
+
+async function openNews(code: string) {
+  const seq = ++newsDetailSeq
+  newsOpen.value = true
+  newsLoading.value = true
+  newsError.value = ''
+  newsDetail.value = null
+  try {
+    const detail = (await fetchStockNewsDetail(code)) ?? null
+    if (seq !== newsDetailSeq) return
+    newsDetail.value = detail
+  } catch (err) {
+    if (seq === newsDetailSeq) newsError.value = errText(err)
+  } finally {
+    if (seq === newsDetailSeq) newsLoading.value = false
+  }
+}
+
+function closeNews() {
+  newsOpen.value = false
+  newsDetailSeq += 1
 }
 
 async function loadSignals() {
@@ -2974,6 +3172,8 @@ async function refreshSelections() {
   selectionsError.value = ''
   try {
     selections.value = (await refreshPaperSelections(activeAccountId())) ?? []
+    // 手动选股后强制刷新，避免 60 秒节流挡住刚扫出来的新闻分（同一批代码会命中缓存）
+    void loadNews(accountEpoch, true)
     flash(
       selections.value.length
         ? `选股完成，共 ${selections.value.length} 只候选`
@@ -3153,6 +3353,12 @@ function resetAccountScopedState() {
   accountEpoch += 1
   account.value = null
   positions.value = []
+  newsMap.value = {}
+  newsLoadedKey = ''
+  newsLoadedAt = 0
+  newsDetailSeq += 1
+  newsOpen.value = false
+  newsDetail.value = null
   nav.value = []
   orders.value = []
   ordersTotal.value = 0
@@ -4965,6 +5171,140 @@ onBeforeUnmount(() => {
     max-width: none;
     text-align: center;
   }
+}
+
+/* ---------- 新闻情绪 ---------- */
+.news-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 2px 8px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-surface-sunken);
+  color: var(--c-text-muted);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease-out),
+    color 0.15s var(--ease-out);
+}
+
+.news-badge:hover {
+  border-color: var(--c-border-strong);
+  color: var(--c-text);
+}
+
+.news-badge--pos {
+  border-color: color-mix(in srgb, var(--stock-up) 35%, transparent);
+  background: color-mix(in srgb, var(--stock-up) 10%, transparent);
+  color: var(--stock-up);
+}
+
+.news-badge--neg {
+  border-color: color-mix(in srgb, var(--stock-down) 35%, transparent);
+  background: color-mix(in srgb, var(--stock-down) 10%, transparent);
+  color: var(--stock-down);
+}
+
+.news-badge--neutral {
+  color: var(--c-text-muted);
+}
+
+.news-modal__box {
+  width: min(640px, 100%);
+}
+
+.news-panel {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.news-panel__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.news-panel__text {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.75;
+  color: var(--c-text);
+}
+
+.news-panel__advice {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--c-accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  color: var(--c-accent);
+}
+
+.news-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.news-list__item {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-start;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.news-list__item:last-child {
+  border-bottom: 0;
+}
+
+.news-list__scope {
+  flex: none;
+  margin-top: 1px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--c-surface-sunken);
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
+
+.news-list__scope.is-sector {
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
+}
+
+.news-list__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.news-list__title {
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--c-text);
+  word-break: break-word;
+}
+
+.news-list__meta {
+  font-size: var(--t-xs);
+  color: var(--c-text-faint);
 }
 
 @media (prefers-reduced-motion: reduce) {
