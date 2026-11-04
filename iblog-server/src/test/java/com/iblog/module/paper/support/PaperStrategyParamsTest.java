@@ -147,6 +147,45 @@ class PaperStrategyParamsTest {
     }
 
     @Test
+    void newsFieldsDefaultOnAndClamp() {
+        // 默认开启（新闻是情绪市场的重要输入，与盘前预选一致）
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper, "{}");
+        assertTrue(p.isNewsEnabled());
+        assertEquals(15, p.getNewsScoreMax());
+        assertEquals(10, p.getNewsPenaltyMax());
+        assertFalse(p.isNewsHardFilter());
+        assertEquals(-50, p.getNewsMinScore(), 0.001);
+        assertEquals(0.6, p.getNewsMinConfidence(), 0.001);
+        assertEquals(30, p.getNewsRefreshMin());
+
+        // 显式关闭 + 越界钳制
+        PaperStrategyParams c = PaperStrategyParams.parse(mapper,
+                "{\"newsEnabled\":false,\"newsScoreMax\":500,\"newsPenaltyMax\":-3,"
+                        + "\"newsMinScore\":-999,\"newsMinConfidence\":5,\"newsRefreshMin\":3}");
+        assertFalse(c.isNewsEnabled());
+        assertEquals(100, c.getNewsScoreMax());
+        assertEquals(0, c.getNewsPenaltyMax());
+        assertEquals(-100, c.getNewsMinScore(), 0.001);
+        assertEquals(1.0, c.getNewsMinConfidence(), 0.001);
+        assertEquals(10, c.getNewsRefreshMin());
+    }
+
+    @Test
+    void newsRoundTrip() throws Exception {
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper,
+                "{\"newsEnabled\":true,\"newsScoreMax\":20,\"newsPenaltyMax\":5,"
+                        + "\"newsHardFilter\":true,\"newsMinScore\":-40,"
+                        + "\"newsMinConfidence\":0.7,\"newsRefreshMin\":60}");
+        PaperStrategyParams again = PaperStrategyParams.parse(mapper, p.toJson(mapper));
+        assertTrue(again.isNewsEnabled());
+        assertTrue(again.isNewsHardFilter());
+        assertEquals(20, again.getNewsScoreMax());
+        assertEquals(5, again.getNewsPenaltyMax());
+        assertEquals(-40, again.getNewsMinScore(), 0.001);
+        assertEquals(60, again.getNewsRefreshMin());
+    }
+
+    @Test
     void sentimentFieldsDefaultToOff() {
         PaperStrategyParams params = PaperStrategyParams.parse(mapper, "{}");
         assertFalse(params.isSentimentEnabled());

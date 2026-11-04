@@ -873,6 +873,53 @@
                   </p>
                 </div>
                 <div class="advanced__group">
+                  <h3 class="advanced__title">新闻情绪（AI 资讯）</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.newsEnabled"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">启用新闻因子</span>
+                    <span class="trade-window__hint">
+                      每 30 分钟扫描候选池的新闻/公告/小作文，用 AI（无 Key 时用关键词兜底）打出
+                      利好/利空分，作为选股总分的加分项。A 股是情绪市场，一条新闻可能直接改变次日方向。
+                    </span>
+                  </label>
+                  <div class="advanced__grid">
+                    <label v-for="item in NEWS_NUMERIC_FIELDS" :key="item.key" class="field">
+                      <span class="field__label">{{ item.label }}</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm[item.key]"
+                          class="field__input"
+                          type="number"
+                          :min="ruleOf(item.key).min"
+                          :max="ruleOf(item.key).max"
+                          :step="item.step"
+                          :disabled="!strategy"
+                        />
+                        <span v-if="item.unit" class="field__unit">{{ item.unit }}</span>
+                      </span>
+                      <span v-if="item.hint" class="field__hint">{{ item.hint }}</span>
+                    </label>
+                  </div>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.newsHardFilter"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">重大利空直接剔除（硬过滤）</span>
+                    <span class="trade-window__hint">
+                      默认关闭。开启后仅当新闻分低于阈值且置信度足够（排除传闻）时才把票淘汰。
+                    </span>
+                  </label>
+                  <p class="trade-window__hint">
+                    新闻分只是总分的一部分，仍要和其他因子一起达到「入选最低分」；扫新闻失败也绝不影响选股。
+                  </p>
+                </div>
+                <div class="advanced__group">
                   <h3 class="advanced__title">交易时段</h3>
                   <label class="trade-window__check">
                     <input
@@ -1792,6 +1839,8 @@ type NumericParamKey = Exclude<
   | 'sentimentEnabled'
   | 'requireHotRankUp'
   | 'preMarketPreselect'
+  | 'newsEnabled'
+  | 'newsHardFilter'
 >
 
 /** 次日开盘强制卖出默认关闭 */
@@ -1873,7 +1922,14 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   hotRankTopN: 0,
   requireHotRankUp: false,
   hotnessScore: 0,
-  sentimentChangeMaxPct: 0
+  sentimentChangeMaxPct: 0,
+  newsEnabled: true,
+  newsScoreMax: 15,
+  newsPenaltyMax: 10,
+  newsHardFilter: false,
+  newsMinScore: -50,
+  newsMinConfidence: 0.6,
+  newsRefreshMin: 30
 }
 
 interface NumberRule {
@@ -1937,7 +1993,12 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   sentimentExitScore: { min: 0, max: 100, integer: true },
   hotRankTopN: { min: 0, max: 100, integer: true },
   hotnessScore: { min: 0, max: 100, integer: true },
-  sentimentChangeMaxPct: { min: 0, max: 20, integer: false }
+  sentimentChangeMaxPct: { min: 0, max: 20, integer: false },
+  newsScoreMax: { min: 0, max: 100, integer: true },
+  newsPenaltyMax: { min: 0, max: 100, integer: true },
+  newsMinScore: { min: -100, max: 0, integer: false },
+  newsMinConfidence: { min: 0, max: 1, integer: false },
+  newsRefreshMin: { min: 10, max: 600, integer: true }
 }
 
 const NUMERIC_KEYS = Object.keys(STRATEGY_RULES) as NumericParamKey[]
@@ -2107,6 +2168,47 @@ const NEW_HIGH_FIELD_COUNT = 4
 const STRICT_FILTER_FIELD_COUNT = STRICT_NUMERIC_FIELDS.length + 9
 /** 情绪维度区固定 7 项：5 个数值 + 总开关 + 「热度须上升」开关 */
 const SENTIMENT_FIELD_COUNT = SENTIMENT_NUMERIC_FIELDS.length + 2
+
+/** 新闻情绪区固定 7 项：5 个数值 + 总开关 + 硬过滤开关 */
+const NEWS_NUMERIC_FIELDS: AdvancedField[] = [
+  {
+    key: 'newsScoreMax',
+    label: '利好加分上限',
+    step: 1,
+    unit: '分',
+    hint: '新闻明确利好的最大加分（作用于总分）'
+  },
+  {
+    key: 'newsPenaltyMax',
+    label: '利空扣分上限',
+    step: 1,
+    unit: '分',
+    hint: '新闻明确利空的最大扣分'
+  },
+  {
+    key: 'newsMinScore',
+    label: '硬过滤阈值',
+    step: 5,
+    unit: '分',
+    hint: '开启硬过滤后，新闻分低于该值且置信度达标就剔除'
+  },
+  {
+    key: 'newsMinConfidence',
+    label: '硬过滤最低置信度',
+    step: 0.1,
+    unit: '',
+    hint: '传闻（低置信）不触发硬过滤，避免小作文误杀'
+  },
+  {
+    key: 'newsRefreshMin',
+    label: '缓存新鲜度',
+    step: 10,
+    unit: '分钟',
+    hint: '新闻分超过该时长视为过期，选股按无新闻处理'
+  }
+]
+const NEWS_FIELD_COUNT = NEWS_NUMERIC_FIELDS.length + 2
+
 /** 表单顶部固定的 4 项基础参数：最低分、止损、止盈、最长持有天数 */
 const BASIC_FIELD_COUNT = 4
 /** 高级规则面板内的可编辑参数数（不含顶部 4 项基础参数），用于折叠按钮上的「共 N 项」 */
@@ -2117,8 +2219,9 @@ const ADVANCED_PANEL_FIELD_COUNT =
   BOARD_FIELD_COUNT +
   NEW_HIGH_FIELD_COUNT +
   STRICT_FILTER_FIELD_COUNT +
-  SENTIMENT_FIELD_COUNT
-/** 策略参数总数（含顶部 4 项基础参数），与后端 PaperStrategyParams 的 66 个字段一致 */
+  SENTIMENT_FIELD_COUNT +
+  NEWS_FIELD_COUNT
+/** 策略参数总数（含顶部 4 项基础参数），与后端 PaperStrategyParams 的字段一一对应 */
 const PARAM_FIELD_COUNT = BASIC_FIELD_COUNT + ADVANCED_PANEL_FIELD_COUNT
 
 /** 参与「权重合计」提示的因子权重字段（用户借此判断分数上限，需与实际加分项保持一致） */
@@ -2139,7 +2242,8 @@ const WEIGHT_KEYS: NumericParamKey[] = [
   'newHighScore',
   'shrinkVolumeScore',
   'firstBoardScore',
-  'hotnessScore'
+  'hotnessScore',
+  'newsScoreMax'
 ]
 
 const ORDER_FILTERS: { value: PaperOrderStatus | ''; label: string }[] = [
@@ -2606,6 +2710,8 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     result.affordableOnly = toBoolean(node.affordableOnly)
     result.sentimentEnabled = toBoolean(node.sentimentEnabled)
     result.requireHotRankUp = toBoolean(node.requireHotRankUp)
+    result.newsEnabled = toBoolean(node.newsEnabled, true)
+    result.newsHardFilter = toBoolean(node.newsHardFilter)
     // 与后端默认值一致：旧规则里没有这个字段时视为开启
     result.preMarketPreselect = toBoolean(node.preMarketPreselect, true)
     result.openTurnoverStart = toTimeText(
@@ -2656,6 +2762,8 @@ function clampStrategyForm(): StrategyForm {
   result.affordableOnly = strategyForm.value.affordableOnly === true
   result.sentimentEnabled = strategyForm.value.sentimentEnabled === true
   result.requireHotRankUp = strategyForm.value.requireHotRankUp === true
+  result.newsEnabled = strategyForm.value.newsEnabled === true
+  result.newsHardFilter = strategyForm.value.newsHardFilter === true
   result.preMarketPreselect = strategyForm.value.preMarketPreselect === true
   result.openTurnoverStart = toTimeText(
     strategyForm.value.openTurnoverStart,

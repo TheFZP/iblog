@@ -188,6 +188,31 @@ public class PaperStrategyParams {
     /** 情绪越好，「当日涨幅上限」在此基础上额外放宽到该值（0 表示不额外放宽） */
     private double sentimentChangeMaxPct = 0;
 
+    // ---------- 新闻资讯 / 情绪小作文 ----------
+
+    /**
+     * 新闻因子总开关。
+     *
+     * <p>默认开启，与盘前预选一致（新闻是情绪市场的重要输入）。老规则没有这些字段，
+     * 解析后跟随默认值 true；若想完全保持老规则行为可在高级规则里关掉。</p>
+     *
+     * <p>只影响选股打分，不影响任何硬性下/平仓。新闻分来自批量 LLM + 关键词兜底
+     * （见 {@code AiNewsScoreService}），选股主链路只读缓存，扫新闻失败不影响选股。</p>
+     */
+    private boolean newsEnabled = true;
+    /** 利好最大加分（作用于总分） */
+    private int newsScoreMax = 15;
+    /** 利空最大扣分 */
+    private int newsPenaltyMax = 10;
+    /** 是否用新闻分做硬过滤（默认关；开启后置信度足够且分低于阈值才剔除） */
+    private boolean newsHardFilter = false;
+    /** 硬过滤阈值：低于该原始分剔除 */
+    private double newsMinScore = -50;
+    /** 硬过滤要求的最低置信度 */
+    private double newsMinConfidence = 0.6;
+    /** 新闻缓存新鲜度（分钟）：超过视为过期，选股按无新闻处理 */
+    private int newsRefreshMin = 30;
+
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     public static PaperStrategyParams parse(ObjectMapper mapper, String json) {
@@ -278,6 +303,14 @@ public class PaperStrategyParams {
             if (params.sentimentExitScore > params.sentimentBuyMinScore) {
                 params.sentimentExitScore = params.sentimentBuyMinScore;
             }
+
+            params.newsEnabled = bool(node, "newsEnabled", params.newsEnabled);
+            params.newsScoreMax = integer(node, "newsScoreMax", params.newsScoreMax, 0, 100);
+            params.newsPenaltyMax = integer(node, "newsPenaltyMax", params.newsPenaltyMax, 0, 100);
+            params.newsHardFilter = bool(node, "newsHardFilter", params.newsHardFilter);
+            params.newsMinScore = number(node, "newsMinScore", params.newsMinScore, -100, 0);
+            params.newsMinConfidence = number(node, "newsMinConfidence", params.newsMinConfidence, 0, 1);
+            params.newsRefreshMin = integer(node, "newsRefreshMin", params.newsRefreshMin, 10, 600);
         } catch (Exception ignored) {
             // 脏 JSON 用默认值
         }

@@ -24,6 +24,9 @@ import com.iblog.module.stock.service.HotListService;
 import com.iblog.module.stock.service.MarketSentimentService;
 import com.iblog.module.stock.service.StockFundamentalService;
 import com.iblog.module.stock.service.TencentService;
+import com.iblog.module.stock.ai.AiNewsScoreService;
+import com.iblog.module.stock.entity.StockNewsScore;
+import com.iblog.module.paper.support.NewsScoreRule;
 import com.iblog.module.stock.support.MarketSentimentRule;
 import com.iblog.module.stock.support.StockCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -94,6 +97,7 @@ public class PaperSelectionService {
     private final PaperStrategyService strategyService;
     private final PaperAccountService accountService;
     private final MarketSentimentService sentimentService;
+    private final AiNewsScoreService newsScoreService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
     private final ObjectMapper objectMapper;
@@ -463,6 +467,32 @@ public class PaperSelectionService {
                 if (boost > 0) {
                     score += boost;
                     reasons.add("热榜第 " + hotRank + " 名");
+                }
+            }
+        }
+        // 新闻情绪分：只做边际调整（利好最多加 newsScoreMax、利空最多扣 newsPenaltyMax），
+        // 缓存不新鲜或扫新闻失败都按 0 分处理，绝不因为新闻因子让选股失败。盘前照常参与。
+        if (params.isNewsEnabled()) {
+            StockNewsScore news = newsScoreService.latest(code, params.getNewsRefreshMin());
+            if (news != null) {
+                int bonus = NewsScoreRule.bonus(params.getNewsScoreMax(), params.getNewsPenaltyMax(),
+                        news.getScore() == null ? 0 : news.getScore(),
+                        news.getConfidence() == null ? 0 : news.getConfidence().doubleValue());
+                if (bonus != 0) {
+                    score += bonus;
+                    String verb = bonus > 0 ? "新闻+" + bonus : "新闻" + bonus;
+                    String summary = news.getSummary();
+                    reasons.add(summary == null || summary.isBlank()
+                            ? verb + "（" + news.getLabel() + "）"
+                            : verb + "（" + summary + "）");
+                }
+                // 硬过滤：置信度足够且分低于阈值才剔除（默认关）
+                if (params.isNewsHardFilter()
+                        && NewsScoreRule.filtered(news.getScore() == null ? 0 : news.getScore(),
+                        news.getConfidence() == null ? 0 : news.getConfidence().doubleValue(),
+                        params.getNewsMinConfidence(), params.getNewsMinScore())) {
+                    log.debug("选股：新闻硬过滤剔除 code={} name={} 新闻分={}", code, name, news.getScore());
+                    return null;
                 }
             }
         }

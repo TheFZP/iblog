@@ -478,6 +478,20 @@ export interface PaperStrategyParams {
   hotnessScore?: number
   /** 情绪越热，当日涨幅上限可放宽到该值（0=不做自适应） */
   sentimentChangeMaxPct?: number
+  /** 新闻情绪总开关：默认开（A 股情绪市场，新闻/小作文影响大） */
+  newsEnabled?: boolean
+  /** 新闻·利好最大加分 */
+  newsScoreMax?: number
+  /** 新闻·利空最大扣分 */
+  newsPenaltyMax?: number
+  /** 新闻·是否用新闻分做硬过滤（默认关；开启后置信度足够且分低于阈值才剔除） */
+  newsHardFilter?: boolean
+  /** 新闻·硬过滤阈值（低于该原始分剔除） */
+  newsMinScore?: number
+  /** 新闻·硬过滤要求的最低置信度 */
+  newsMinConfidence?: number
+  /** 新闻·缓存新鲜度（分钟） */
+  newsRefreshMin?: number
 }
 
 /** 更新策略：enabled 与 params 都可选，只传要改的字段 */

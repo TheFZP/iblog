@@ -496,3 +496,25 @@ CREATE TABLE IF NOT EXISTS `stock_ai_chat_message`
     PRIMARY KEY (`id`),
     KEY `idx_session` (`session_id`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='AI 对话消息';
+
+-- 个股新闻情绪分：选股「新闻资讯分析」因子的落库缓存。
+-- 按「交易日 + 代码」唯一，每次扫描覆盖；选股主链路读内存缓存，这里主要供复盘/后续面板使用。
+CREATE TABLE IF NOT EXISTS `stock_news_score`
+(
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `trade_date`   DATE         NOT NULL COMMENT '交易日',
+    `code`         VARCHAR(16)  NOT NULL COMMENT '归一化代码',
+    `name`         VARCHAR(50)  NOT NULL DEFAULT '' COMMENT '股票名称',
+    `score`        INT          NOT NULL DEFAULT 0 COMMENT '新闻情绪分 -100~100',
+    `confidence`   DECIMAL(3, 2) NOT NULL DEFAULT 0 COMMENT '置信度 0~1',
+    `label`        VARCHAR(16)  NOT NULL DEFAULT '中性' COMMENT '利好 / 中性 / 利空',
+    `tags`         VARCHAR(255) NOT NULL DEFAULT '' COMMENT '话题标签逗号分隔',
+    `summary`      VARCHAR(500) NOT NULL DEFAULT '' COMMENT '一句结论摘要',
+    `headlines`    MEDIUMTEXT COMMENT '命中新闻标题/来源/时间 JSON',
+    `source_count` INT          NOT NULL DEFAULT 0 COMMENT '参与评分的新闻条数',
+    `model`        VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '打分方式：ai / keyword',
+    `update_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_date_code` (`trade_date`, `code`),
+    KEY `idx_code_time` (`code`, `update_time`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='个股新闻情绪分';

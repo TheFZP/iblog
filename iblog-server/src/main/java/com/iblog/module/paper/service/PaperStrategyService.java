@@ -54,6 +54,28 @@ public class PaperStrategyService {
                 .orderByAsc(PaperStrategy::getId));
     }
 
+    /**
+     * 是否存在开启了新闻因子的策略。
+     *
+     * <p>新闻扫描是全局任务（热榜前 N 只扫一次，所有账户共用），只有所有账户都关掉
+     * {@code newsEnabled} 时才值得整轮跳过——否则用户关了开关仍会每 30 分钟消耗 AI 调用。
+     * 解析失败的脏配置按「未开启」处理，避免一条坏 JSON 把扫描永久卡住。</p>
+     */
+    public boolean anyNewsEnabled() {
+        try {
+            List<PaperStrategy> all = strategyMapper.selectList(Wrappers.<PaperStrategy>lambdaQuery());
+            for (PaperStrategy strategy : all) {
+                if (PaperStrategyParams.parse(objectMapper, strategy.getParams()).isNewsEnabled()) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 读库失败时宁可扫一次，也不要因为一次数据库抖动让新闻缓存长期为空
+            return true;
+        }
+        return false;
+    }
+
     @Transactional
     public PaperStrategy update(Long accountId, Long strategyId, PaperStrategyUpdateRequest request) {
         PaperStrategy strategy = strategyMapper.selectById(strategyId);
