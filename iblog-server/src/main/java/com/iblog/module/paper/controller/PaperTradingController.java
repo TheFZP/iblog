@@ -105,7 +105,17 @@ public class PaperTradingController {
         PaperAccount account = requireAccount(accountId);
         List<PaperPosition> positions = positionService.refreshQuotes(account.getId());
         accountService.recompute(account, positions);
-        return R.ok(positionService.toVOList(positions));
+        List<PaperPositionVO> list = positionService.toVOList(positions);
+        // 附上最近一次重选股时按当前策略算的持仓分（纯展示，未评分则为 null）
+        Map<String, PaperSelectionService.HeldScore> scores = selectionService.heldScores(account.getId());
+        for (PaperPositionVO vo : list) {
+            PaperSelectionService.HeldScore score = scores.get(vo.getCode());
+            if (score != null) {
+                vo.setScore(score.score());
+                vo.setScoreReason(score.reason());
+            }
+        }
+        return R.ok(list);
     }
 
     @GetMapping("/orders")

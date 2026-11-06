@@ -1207,6 +1207,7 @@
                   <th scope="col" class="num">现价</th>
                   <th scope="col" class="num">市值</th>
                   <th scope="col" class="num">浮动盈亏</th>
+                  <th scope="col" class="num">评分</th>
                   <th scope="col" class="num">新闻</th>
                   <th scope="col" class="num">操作</th>
                 </tr>
@@ -1234,6 +1235,20 @@
                       <span>{{ signedMoney(position.profit, position.currency) }}</span>
                       <span class="cell-sub">{{ pct(position.profitPct) }}</span>
                     </div>
+                  </td>
+                  <td class="num" @click.stop>
+                    <span
+                      v-if="position.score != null"
+                      class="score-badge"
+                      :class="{
+                        'score-badge--hot': position.score >= 80,
+                        'score-badge--warm': position.score >= 65 && position.score < 80
+                      }"
+                      :title="position.scoreReason || ''"
+                    >
+                      {{ position.score }}
+                    </span>
+                    <span v-else class="cell-sub" title="下次重新选股后生成">--</span>
                   </td>
                   <td class="num" @click.stop>
                     <button
@@ -2454,7 +2469,15 @@ let strategyLoaded = false
 
 const selections = ref<PaperSignal[]>([])
 const selectionsLoading = ref(false)
-const selectionsRefreshing = ref(false)
+/**
+ * 正在重新选股的账户集合。之前是一个全局布尔，切换账户时不清空，
+ * 会导致「一个账户选股中，其他账户的按钮也一直禁用」。按账户记住才会互不影响。
+ */
+const selectionsRefreshingIds = ref<number[]>([])
+const selectionsRefreshing = computed(() => {
+  const id = currentAccountId.value
+  return id != null && selectionsRefreshingIds.value.includes(id)
+})
 const selectionsError = ref('')
 
 /** 今日选股时间：同一次选股插入的候选时间相同，取最大的一条即可 */
@@ -3167,24 +3190,32 @@ async function applyAutoTrade(enabled: boolean) {
 }
 
 async function refreshSelections() {
-  if (selectionsRefreshing.value) return
-  selectionsRefreshing.value = true
+  const accountId = currentAccountId.value
+  if (accountId == null || selectionsRefreshingIds.value.includes(accountId)) return
+  selectionsRefreshingIds.value = [...selectionsRefreshingIds.value, accountId]
   selectionsError.value = ''
+  const epoch = accountEpoch
   try {
-    selections.value = (await refreshPaperSelections(activeAccountId())) ?? []
+    const data = (await refreshPaperSelections(accountId)) ?? []
+    // 请求期间用户可能已经切走账户，旧账户的结果不能覆盖当前账户
+    if (epoch !== accountEpoch) return
+    selections.value = data
     // 手动选股后强制刷新，避免 60 秒节流挡住刚扫出来的新闻分（同一批代码会命中缓存）
-    void loadNews(accountEpoch, true)
+    void loadNews(epoch, true)
     flash(
       selections.value.length
         ? `选股完成，共 ${selections.value.length} 只候选`
         : '选股完成，暂无符合条件的股票'
     )
-    await Promise.all([loadEngine(), loadSignals()])
+    // 重选股时后端会顺带给持仓重新打分，这里拉一次持仓把最新评分显示出来
+    await Promise.all([loadEngine(), loadSignals(), loadPositions()])
   } catch (err) {
-    selectionsError.value = errText(err)
-    flash(selectionsError.value, 'error')
+    if (epoch === accountEpoch) {
+      selectionsError.value = errText(err)
+      flash(selectionsError.value, 'error')
+    }
   } finally {
-    selectionsRefreshing.value = false
+    selectionsRefreshingIds.value = selectionsRefreshingIds.value.filter((id) => id !== accountId)
   }
 }
 

@@ -3,8 +3,10 @@ package com.iblog.module.paper.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.iblog.config.IblogProperties;
 import com.iblog.module.paper.entity.PaperAccount;
+import com.iblog.module.paper.entity.PaperPosition;
 import com.iblog.module.paper.entity.PaperSignal;
 import com.iblog.module.paper.entity.PaperStrategy;
+import com.iblog.module.paper.mapper.PaperPositionMapper;
 import com.iblog.module.paper.mapper.PaperSignalMapper;
 import com.iblog.module.paper.support.Indicators;
 import com.iblog.module.paper.support.LotRule;
@@ -93,6 +95,7 @@ public class PaperSelectionService {
     private final StockFundamentalService fundamentalService;
     private final TencentService tencentService;
     private final PaperQuoteService quoteService;
+    private final PaperPositionMapper positionMapper;
     private final PaperSignalMapper signalMapper;
     private final PaperStrategyService strategyService;
     private final PaperAccountService accountService;
@@ -219,7 +222,7 @@ public class PaperSelectionService {
             scanned++;
             try {
                 Candidate candidate = evaluate(strategy, params, code, name, item, rank, sentiment,
-                        account, vwapBudget, deepBudget, fundamentalBudget, preMarket);
+                        account, vwapBudget, deepBudget, fundamentalBudget, preMarket, false);
                 if (candidate != null) {
                     selected.add(candidate);
                 }
@@ -254,6 +257,12 @@ public class PaperSelectionService {
         if (selected.size() > limit) {
             selected = new ArrayList<>(selected.subList(0, limit));
         }
+        // 顺带给当前持仓也按同一套策略打一遍分（不计热度，热度对已持有的票没意义），
+        // 存内存缓存供持仓列表展示 —— 让用户一眼看到「策略现在觉得我这票值不值得拿」。
+        // 不写信号、不进候选，纯展示，绝不触发交易。放在「保留候选」提前返回之前，
+        // 保证开盘复核兜底那轮也会刷新持仓分。
+        scoreHeldPositions(accountId, strategy, params, account, sentiment, preMarket);
+
         if (selected.isEmpty() && keepWhenEmpty) {
             log.warn("模拟盘开盘复核未选出候选，保留盘前预选结果 account={}", accountId);
             return recentCandidates(accountId);
@@ -280,6 +289,55 @@ public class PaperSelectionService {
 
     /** 候选 + 低价比，用于「按低价比升序」排序（PaperSignal 不落库这个字段）。 */
     private record Candidate(PaperSignal signal, double lowRatio) {
+    }
+
+    /** 持仓评分结果：仅展示用，命中候选规则的打分 + 理由。 */
+    public record HeldScore(int score, String name, String reason) {
+    }
+
+    /** 最近一次重选股时对持仓打的分数，accountId → code → score。 */
+    private final Map<Long, Map<String, HeldScore>> heldScoreCache = new ConcurrentHashMap<>();
+
+    /**
+     * 给当前持仓按同一策略打分并存缓存。
+     *
+     * <p>持仓可能不在热榜，热度相关项一律为 0（hot=null、hotRank=0），其余因子与候选完全一致。
+     * 用独立预算，避免吃掉候选打分的分时/深历史/基本面子请求额度。</p>
+     */
+    private void scoreHeldPositions(Long accountId, PaperStrategy strategy, PaperStrategyParams params,
+                                    PaperAccount account, MarketSentiment sentiment, boolean preMarket) {
+        List<PaperPosition> positions;
+        try {
+            positions = positionMapper.selectList(Wrappers.<PaperPosition>lambdaQuery()
+                    .eq(PaperPosition::getAccountId, accountId));
+        } catch (RuntimeException ex) {
+            log.debug("选股：持仓读取失败 account={} msg={}", accountId, ex.getMessage());
+            return;
+        }
+        Map<String, HeldScore> scores = new ConcurrentHashMap<>();
+        for (PaperPosition position : positions) {
+            if (position.getCode() == null || position.getCode().isBlank()) {
+                continue;
+            }
+            try {
+                String name = position.getName() == null ? "" : position.getName();
+                Candidate candidate = scoreCandidate(strategy, params,
+                        StockCode.normalize(position.getCode()), name, account, sentiment, preMarket);
+                if (candidate != null) {
+                    scores.put(position.getCode(),
+                            new HeldScore(candidate.signal().getScore(), name, candidate.signal().getReason()));
+                }
+            } catch (RuntimeException ex) {
+                log.debug("选股：持仓打分失败 code={} msg={}", position.getCode(), ex.getMessage());
+            }
+        }
+        heldScoreCache.put(accountId, scores);
+    }
+
+    /** 最近一次重选股给该账户持仓打的分数；无则返回空 map（不缓存 null，避免穿透查询）。 */
+    public Map<String, HeldScore> heldScores(Long accountId) {
+        Map<String, HeldScore> scores = heldScoreCache.get(accountId);
+        return scores == null ? Map.of() : scores;
     }
 
     /** 候选池为空/太旧时按最小间隔重扫，自动交易每 tick 调用。 */
@@ -319,9 +377,21 @@ public class PaperSelectionService {
 
     // ---------- 打分 ----------
 
+    /**
+     * 给单只持仓打分：与候选同一套因子，但不套用买入侧的硬性剔除与入选门槛。
+     * 热度相关项对已持有的票没有意义，传 {@code hot=null、hotRank=0}。
+     */
+    private Candidate scoreCandidate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
+                                     PaperAccount account, MarketSentiment sentiment, boolean preMarket) {
+        return evaluate(strategy, params, code, name, null, 0, sentiment, account,
+                new int[]{MAX_VWAP_CHECKS}, new int[]{MAX_DEEP_CHECKS},
+                new int[]{fundamentalService.upstreamRequests()}, preMarket, true);
+    }
+
     private Candidate evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
                                HotStockItem hot, int hotRank, MarketSentiment sentiment, PaperAccount account,
-                               int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget, boolean preMarket) {
+                               int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget, boolean preMarket,
+                               boolean forHeld) {
         List<KlineItem> bars = klineCacheService.load(code, MIN_BARS);
         if (bars.size() < 30) {
             return null;
@@ -349,7 +419,7 @@ public class PaperSelectionService {
         }
         // 连板高度：配了上限就作为硬条件（一进二严格只做昨日首板），不满足直接剔除
         int boardHeight = PaperScreenRules.boardHeight(bars, code, name);
-        if (params.getBoardHeightMax() > 0
+        if (!forHeld && params.getBoardHeightMax() > 0
                 && (boardHeight < 1 || boardHeight > params.getBoardHeightMax())) {
             return null;
         }
@@ -403,7 +473,9 @@ public class PaperSelectionService {
         PaperScreenRules.Technicals technicals =
                 new PaperScreenRules.Technicals(volumeRatio, ma5, ma20,
                         PaperScreenRules.volumeTrendRatio(bars, 5, 20));
-        if (params.isStrictFilters()) {
+        // 持仓评分只看「策略给它多少分」，不套用选股的硬性剔除条件：
+        // 持仓已经买在手里，硬条件不满足恰恰是要展示的信号，而不是「没有分」。
+        if (!forHeld && params.isStrictFilters()) {
             String reject = strictReject(params, code, name, bars, quote, intraday, account,
                     lowRatio, technicals, fundamentalBudget, preMarket);
             if (reject != null) {
@@ -411,8 +483,8 @@ public class PaperSelectionService {
                 return null;
             }
         }
-        // 热度硬条件：只做热度还在上升的票（排名比上一次靠前）
-        if (params.isRequireHotRankUp() && (hot == null || hot.getHotRankChg() <= 0)) {
+        // 热度硬条件：只做热度还在上升的票（排名比上一次靠前）。持仓不在热榜，不适用。
+        if (!forHeld && params.isRequireHotRankUp() && (hot == null || hot.getHotRankChg() <= 0)) {
             log.debug("选股：剔除热度未上升 code={} name={}", code, name);
             return null;
         }
@@ -490,8 +562,8 @@ public class PaperSelectionService {
                             ? verb + "（" + news.getLabel() + "）"
                             : verb + "（" + summary + "）") + (discounted ? "，高位打折" : ""));
                 }
-                // 硬过滤：置信度足够且分低于阈值才剔除（默认关）
-                if (params.isNewsHardFilter()
+                // 硬过滤：置信度足够且分低于阈值才剔除（默认关）。持仓评分只展示分，不剔除。
+                if (!forHeld && params.isNewsHardFilter()
                         && NewsScoreRule.filtered(news.getScore() == null ? 0 : news.getScore(),
                         news.getConfidence() == null ? 0 : news.getConfidence().doubleValue(),
                         params.getNewsMinConfidence(), params.getNewsMinScore())) {
@@ -570,8 +642,12 @@ public class PaperSelectionService {
                 log.debug("选股：分时获取失败 code={} msg={}", code, ex.getMessage());
             }
         }
-        if (score < params.getMinScore() || reasons.isEmpty()) {
+        // 持仓评分不设入选门槛：低于 minScore 的持仓也要给出分数，这正是「策略还看不看得上」的信号
+        if (!forHeld && (score < params.getMinScore() || reasons.isEmpty())) {
             return null;
+        }
+        if (forHeld && reasons.isEmpty()) {
+            reasons.add("无加分项");
         }
         // 低价比只作为附注写进理由（放在阈值判定之后，避免它把 0 分的票「救」进候选）
         if (!Double.isNaN(lowRatio)) {

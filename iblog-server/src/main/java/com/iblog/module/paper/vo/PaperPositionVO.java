@@ -38,4 +38,10 @@ public class PaperPositionVO {
 
     /** ¥ / HK$ */
     private String currency;
+
+    /** 最近一次重选股时按当前策略给该持仓打的评分（未评分为 null） */
+    private Integer score;
+
+    /** 评分理由（供前端展示工具提示） */
+    private String scoreReason;
 }

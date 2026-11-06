@@ -87,6 +87,10 @@ export interface PaperPosition {
   openDate: string
   /** 币种符号：¥ 或 HK$ */
   currency: string
+  /** 最近一次重选股按当前策略给该持仓打的评分（未评分为 null） */
+  score?: number | null
+  /** 评分理由 */
+  scoreReason?: string | null
 }
 
 /** 委托 */
