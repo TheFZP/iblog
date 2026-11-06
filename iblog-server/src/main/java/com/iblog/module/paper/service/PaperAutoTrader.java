@@ -5,7 +5,6 @@ import com.iblog.common.exception.BizException;
 import com.iblog.config.IblogProperties;
 import com.iblog.module.paper.dto.PaperOrderRequest;
 import com.iblog.module.paper.entity.PaperAccount;
-import com.iblog.module.paper.entity.PaperOrder;
 import com.iblog.module.paper.entity.PaperPosition;
 import com.iblog.module.paper.entity.PaperSignal;
 import com.iblog.module.paper.entity.PaperStrategy;
@@ -28,7 +27,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 自动交易执行器：按策略参数做「卖出规则 → 风控熔断 → 买入候选」。
@@ -75,7 +76,9 @@ public class PaperAutoTrader {
         // 情绪只在规则显式开启时去取；关掉的人连一次上游请求都不该多花
         MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
 
-        sell(account, positions, strategy, params, sentiment);
+        // sell() 返回本 tick 实际卖出成功（卖单已成交）的代码：传给 buy()，避免同一 tick
+        // 刚因为止盈/止损清仓、又立刻把这票从候选里买回来（空转手续费 + 仓位被 T+1 锁死）。
+        Set<String> justSold = sell(account, positions, strategy, params, sentiment);
 
         if (brake) {
             log.warn("模拟盘触发日亏熔断 account={} 今日收益={}%，只减仓不加仓", account.getId(), account.getTotalProfitPct());
@@ -87,7 +90,7 @@ public class PaperAutoTrader {
             return;
         }
         account = accountService.recompute(account, positionService.list(account.getId()));
-        buy(account, strategy, sentiment);
+        buy(account, strategy, sentiment, justSold);
     }
 
     private boolean isAutoTradeOn(PaperAccount account) {
@@ -98,8 +101,10 @@ public class PaperAutoTrader {
 
     // ---------- 卖出 ----------
 
-    private void sell(PaperAccount account, List<PaperPosition> positions, PaperStrategy strategy,
-                      PaperStrategyParams params, MarketSentiment sentiment) {
+    private Set<String> sell(PaperAccount account, List<PaperPosition> positions, PaperStrategy strategy,
+                             PaperStrategyParams params, MarketSentiment sentiment) {
+        // 本 tick 实际卖出成交的代码（成功清仓/减仓的都要：减仓后再买回等于原地加仓，同理应避免）。
+        Set<String> soldCodes = new HashSet<>();
         // 情绪冰点清仓：整市场跌停一片时，技术位止盈止损都来不及，先降风险
         String exitReason = sentimentExitReason(params, sentiment);
         for (PaperPosition position : positions) {
@@ -119,11 +124,14 @@ public class PaperAutoTrader {
             if (reason == null) {
                 continue;
             }
-            doSell(account, strategy, position, available, reason);
+            if (doSell(account, strategy, position, available, reason)) {
+                soldCodes.add(position.getCode());
+            }
         }
+        return soldCodes;
     }
 
-    private void doSell(PaperAccount account, PaperStrategy strategy, PaperPosition position, int available, String reason) {
+    private boolean doSell(PaperAccount account, PaperStrategy strategy, PaperPosition position, int available, String reason) {
         PaperOrderRequest request = new PaperOrderRequest();
         request.setCode(position.getCode());
         request.setSide(PaperConstants.SIDE_SELL);
@@ -133,8 +141,10 @@ public class PaperAutoTrader {
             var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
             recordSignal(account, strategy, position.getCode(), position.getName(), PaperConstants.ACTION_SELL,
                     "自动卖出（" + reason + "）", filled.getAvgPrice());
+            return true;
         } catch (BizException ex) {
             log.info("自动卖出被拒 code={} reason={}", position.getCode(), ex.getMessage());
+            return false;
         }
     }
 
@@ -206,7 +216,8 @@ public class PaperAutoTrader {
 
     // ---------- 买入 ----------
 
-    private void buy(PaperAccount account, PaperStrategy strategy, MarketSentiment sentiment) {
+    private void buy(PaperAccount account, PaperStrategy strategy, MarketSentiment sentiment,
+                     Set<String> justSold) {
         PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
         if (!params.inBuyWindow(calendar.now())) {
             return;
@@ -234,6 +245,12 @@ public class PaperAutoTrader {
         double maxTotalPct = properties.getPaper().getMaxTotalPositionPct();
 
         for (PaperSignal candidate : candidates) {
+            // 本 tick 刚因止盈/止损/情绪清仓或减仓过的标的，不再立即买回：
+            // 否则会陷入「卖出 → 仍入选 → 立刻买回」的空转，白付手续费还让当日买入仓位被 T+1 锁死。
+            // 只抑制同一 tick，跨 tick 后若该票重新符合候选，允许正常接回。
+            if (justSold.contains(candidate.getCode())) {
+                continue;
+            }
             PaperAccount fresh = accountMapper.selectById(account.getId());
             if (fresh == null) {
                 return;
