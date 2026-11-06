@@ -116,6 +116,15 @@ public class PaperStrategyParams {
 
     /** 次日开盘强制卖出（隔夜策略用：T+1 可卖后的第一个 tick 直接市价清仓，不看止损止盈） */
     private boolean sellAtOpen = false;
+    /**
+     * 持仓评分过低时自动卖出（默认关）。
+     *
+     * <p>评分来自最近一次重新选股时对持仓打的分数（见 {@code PaperSelectionService#heldScores}）。
+     * 还没评分时一律不卖，避免服务刚启动、缓存为空就误清仓。</p>
+     */
+    private boolean heldScoreSellEnabled = false;
+    /** 持仓评分低于该值时卖出（0~200，默认 40） */
+    private int heldScoreSellMin = 40;
     /** 自动买入时间窗起点（HH:mm，含） */
     private String buyStartTime = "09:30";
     /** 自动买入时间窗终点（HH:mm，含） */
@@ -267,6 +276,8 @@ public class PaperStrategyParams {
             params.shrinkVolumeMaxRatio = number(node, "shrinkVolumeMaxRatio", params.shrinkVolumeMaxRatio, 0.1, 1);
 
             params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
+            params.heldScoreSellEnabled = bool(node, "heldScoreSellEnabled", params.heldScoreSellEnabled);
+            params.heldScoreSellMin = integer(node, "heldScoreSellMin", params.heldScoreSellMin, 0, 200);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);
             params.buyEndTime = timeText(node, "buyEndTime", params.buyEndTime);
 

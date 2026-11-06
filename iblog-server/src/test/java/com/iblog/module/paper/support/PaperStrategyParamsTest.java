@@ -270,4 +270,21 @@ class PaperStrategyParamsTest {
         assertEquals(6, again.getHotnessScore());
         assertEquals(9.5, again.getSentimentChangeMaxPct(), 0.001);
     }
+
+    @Test
+    void heldScoreSellDefaultsOffAndClamps() throws Exception {
+        // 默认关闭：老规则升级后不会突然开始自动清仓
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper, "{}");
+        assertFalse(p.isHeldScoreSellEnabled());
+        assertEquals(40, p.getHeldScoreSellMin());
+
+        PaperStrategyParams c = PaperStrategyParams.parse(mapper,
+                "{\"heldScoreSellEnabled\":true,\"heldScoreSellMin\":500}");
+        assertTrue(c.isHeldScoreSellEnabled());
+        assertEquals(200, c.getHeldScoreSellMin());
+
+        PaperStrategyParams again = PaperStrategyParams.parse(mapper, c.toJson(mapper));
+        assertTrue(again.isHeldScoreSellEnabled());
+        assertEquals(200, again.getHeldScoreSellMin());
+    }
 }

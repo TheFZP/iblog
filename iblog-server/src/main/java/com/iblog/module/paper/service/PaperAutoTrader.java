@@ -5,10 +5,12 @@ import com.iblog.common.exception.BizException;
 import com.iblog.config.IblogProperties;
 import com.iblog.module.paper.dto.PaperOrderRequest;
 import com.iblog.module.paper.entity.PaperAccount;
+import com.iblog.module.paper.entity.PaperOrder;
 import com.iblog.module.paper.entity.PaperPosition;
 import com.iblog.module.paper.entity.PaperSignal;
 import com.iblog.module.paper.entity.PaperStrategy;
 import com.iblog.module.paper.mapper.PaperAccountMapper;
+import com.iblog.module.paper.mapper.PaperOrderMapper;
 import com.iblog.module.paper.mapper.PaperSignalMapper;
 import com.iblog.module.paper.support.LotRule;
 import com.iblog.module.paper.support.PaperConstants;
@@ -29,6 +31,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -51,6 +54,7 @@ public class PaperAutoTrader {
     private final PaperSelectionService selectionService;
     private final PaperStrategyService strategyService;
     private final PaperOrderService orderService;
+    private final PaperOrderMapper orderMapper;
     private final PaperSignalMapper signalMapper;
     private final KlineCacheService klineCacheService;
     private final MarketSentimentService sentimentService;
@@ -107,6 +111,9 @@ public class PaperAutoTrader {
         Set<String> soldCodes = new HashSet<>();
         // 情绪冰点清仓：整市场跌停一片时，技术位止盈止损都来不及，先降风险
         String exitReason = sentimentExitReason(params, sentiment);
+        // 持仓评分来自最近一次重新选股；缓存为空时不触发，避免服务刚启动就误清仓
+        Map<String, PaperSelectionService.HeldScore> heldScores = params.isHeldScoreSellEnabled()
+                ? selectionService.heldScores(account.getId()) : Map.of();
         for (PaperPosition position : positions) {
             int available = position.getAvailableQuantity() == null ? 0 : position.getAvailableQuantity();
             if (available <= 0) {
@@ -120,6 +127,10 @@ public class PaperAutoTrader {
                 reason = "次日开盘卖出";
             } else {
                 reason = sellReason(position, params);
+                if (reason == null) {
+                    // 技术面没触发时，再看策略还看不看得上这只票；止损/止盈等价格规则优先
+                    reason = heldScoreSellReason(heldScores.get(position.getCode()), params);
+                }
             }
             if (reason == null) {
                 continue;
@@ -190,6 +201,22 @@ public class PaperAutoTrader {
         return null;
     }
 
+    /**
+     * 持仓评分过低是否卖出。
+     *
+     * <p>评分缺失（还没重新选股 / 服务刚重启）时返回 null，不卖：
+     * 把「没有分」当成 0 分会把所有持仓一次清光，这是最坏的失败模式。</p>
+     */
+    private String heldScoreSellReason(PaperSelectionService.HeldScore score, PaperStrategyParams params) {
+        if (score == null || params.getHeldScoreSellMin() <= 0) {
+            return null;
+        }
+        if (score.score() < params.getHeldScoreSellMin()) {
+            return "持仓评分过低 " + score.score() + " 分（低于 " + params.getHeldScoreSellMin() + "）";
+        }
+        return null;
+    }
+
     private double ma10(String code) {
         List<KlineItem> bars = klineCacheService.load(code, 20);
         if (bars.size() < 10) {
@@ -243,12 +270,14 @@ public class PaperAutoTrader {
         }
         double maxPositionPct = properties.getPaper().getMaxPositionPct();
         double maxTotalPct = properties.getPaper().getMaxTotalPositionPct();
+        // 当天自动卖出过的标的整天不再买回：不然「评分过低卖出」会在下一个 tick 又买回来，
+        // 变成反复买卖空转。手动卖出不在此列（用户手动卖就是想离场，后续想接回由用户自己决定）。
+        Set<String> soldToday = todaySoldCodes(account.getId());
 
         for (PaperSignal candidate : candidates) {
-            // 本 tick 刚因止盈/止损/情绪清仓或减仓过的标的，不再立即买回：
+            // 本 tick 刚卖出（或当天自动卖出过）的标的，不再买回：
             // 否则会陷入「卖出 → 仍入选 → 立刻买回」的空转，白付手续费还让当日买入仓位被 T+1 锁死。
-            // 只抑制同一 tick，跨 tick 后若该票重新符合候选，允许正常接回。
-            if (justSold.contains(candidate.getCode())) {
+            if (justSold.contains(candidate.getCode()) || soldToday.contains(candidate.getCode())) {
                 continue;
             }
             PaperAccount fresh = accountMapper.selectById(account.getId());
@@ -299,6 +328,25 @@ public class PaperAutoTrader {
     private boolean holds(List<PaperPosition> positions, String code) {
         return positions.stream().anyMatch(position ->
                 code.equals(position.getCode()) && position.getQuantity() != null && position.getQuantity() > 0);
+    }
+
+    /** 当天由自动交易卖出过的代码（source=STRATEGY），用于禁止当天买回。 */
+    private Set<String> todaySoldCodes(Long accountId) {
+        try {
+            List<String> sold = orderMapper.selectList(Wrappers.<PaperOrder>lambdaQuery()
+                    .select(PaperOrder::getCode)
+                    .eq(PaperOrder::getAccountId, accountId)
+                    .eq(PaperOrder::getSide, PaperConstants.SIDE_SELL)
+                    .eq(PaperOrder::getSource, PaperConstants.SOURCE_STRATEGY)
+                    .ge(PaperOrder::getCreateTime, calendar.today().atStartOfDay())
+                    .groupBy(PaperOrder::getCode))
+                    .stream().map(PaperOrder::getCode).toList();
+            return new HashSet<>(sold);
+        } catch (RuntimeException ex) {
+            // 查询失败时退回到「只抑制同一 tick」，不影响正常买入
+            log.warn("查询今日自动卖出标的失败 account={} err={}", accountId, ex.toString());
+            return Set.of();
+        }
     }
 
     /**

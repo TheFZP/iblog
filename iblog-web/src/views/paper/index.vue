@@ -945,6 +945,37 @@
                       T+1 可卖后的首个 tick 直接市价清仓，不看止损/止盈/MA10，适合隔夜策略。
                     </span>
                   </label>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.heldScoreSellEnabled"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">持仓评分过低卖出</span>
+                    <span class="trade-window__hint">
+                      用最近一次重新选股给持仓打的分数判断；止损/止盈等价格规则优先。
+                      评分还没生成（服务刚启动或尚未重新选股）时不卖，避免误清仓。
+                      当天自动卖出的票当天不再自动买回。
+                    </span>
+                  </label>
+                  <div v-if="strategyForm.heldScoreSellEnabled" class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">持仓评分卖出阈值</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.heldScoreSellMin"
+                          class="field__input"
+                          type="number"
+                          min="0"
+                          max="200"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">评分低于该值时卖出</span>
+                    </label>
+                  </div>
                   <div class="trade-window__row">
                     <label class="field trade-window__field">
                       <span class="field__label">自动买入时间窗（开始）</span>
@@ -1926,6 +1957,7 @@ type StrategyForm = Required<PaperStrategyParams>
 type NumericParamKey = Exclude<
   keyof PaperStrategyParams,
   | 'sellAtOpen'
+  | 'heldScoreSellEnabled'
   | 'buyStartTime'
   | 'buyEndTime'
   | 'strictFilters'
@@ -1980,6 +2012,8 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   changeMinPct: 0,
   changeMaxPct: 9,
   sellAtOpen: DEFAULT_SELL_AT_OPEN,
+  heldScoreSellEnabled: false,
+  heldScoreSellMin: 40,
   buyStartTime: DEFAULT_BUY_START_TIME,
   buyEndTime: DEFAULT_BUY_END_TIME,
   turnoverScore: 5,
@@ -2045,6 +2079,7 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   stopLossPct: { min: 0.2, max: 50, integer: false },
   takeProfitPct: { min: 0.2, max: 200, integer: false },
   maxHoldDays: { min: 1, max: 250, integer: true },
+  heldScoreSellMin: { min: 0, max: 200, integer: true },
   universeSize: { min: 1, max: 100, integer: true },
   maxCandidates: { min: 1, max: 20, integer: true },
   selectionRefreshSec: { min: 30, max: 3600, integer: true },
@@ -2256,8 +2291,8 @@ const SENTIMENT_NUMERIC_FIELDS: AdvancedField[] = [
   }
 ]
 
-/** 交易时段区固定 3 项：次日开盘强制卖出开关 + 自动买入时间窗起止 */
-const TRADE_WINDOW_FIELD_COUNT = 3
+/** 交易时段区固定 5 项：次日开盘卖出开关 + 持仓评分卖出开关/阈值 + 自动买入时间窗起止 */
+const TRADE_WINDOW_FIELD_COUNT = 5
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
 const QUALITY_FIELD_COUNT = 10
 /** 涨停结构区固定 2 项：首板加分 + 连板高度上限 */
@@ -2822,6 +2857,7 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
       if (typeof value === 'number' && Number.isFinite(value)) result[key] = value
     })
     result.sellAtOpen = toBoolean(node.sellAtOpen)
+    result.heldScoreSellEnabled = toBoolean(node.heldScoreSellEnabled)
     result.buyStartTime = toTimeText(node.buyStartTime, DEFAULT_BUY_START_TIME)
     result.buyEndTime = toTimeText(node.buyEndTime, DEFAULT_BUY_END_TIME)
     result.strictFilters = toBoolean(node.strictFilters)
@@ -2874,6 +2910,7 @@ function clampStrategyForm(): StrategyForm {
   }
   if (result.floatCapMaxYi < result.floatCapMinYi) result.floatCapMaxYi = result.floatCapMinYi
   result.sellAtOpen = strategyForm.value.sellAtOpen === true
+  result.heldScoreSellEnabled = strategyForm.value.heldScoreSellEnabled === true
   result.buyStartTime = toTimeText(strategyForm.value.buyStartTime, DEFAULT_BUY_START_TIME)
   result.buyEndTime = toTimeText(strategyForm.value.buyEndTime, DEFAULT_BUY_END_TIME)
   result.strictFilters = strategyForm.value.strictFilters === true
