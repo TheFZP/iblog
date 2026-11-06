@@ -571,7 +571,12 @@ function toggleWatch() {
 }
 
 function goBack() {
-  router.push('/stock')
+  // 从模拟盘 / 自选等页面跳进来时，返回上一页而不是固定进行情首页
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/stock')
+  }
 }
 
 const stats = computed(() => {
