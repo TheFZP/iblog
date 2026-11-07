@@ -789,7 +789,9 @@ function errText(err: unknown): string {
   inset: 0;
   z-index: 200;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-5);
   background: rgba(15, 20, 22, 0.32);
   backdrop-filter: blur(2px);
 }
@@ -797,12 +799,14 @@ function errText(err: unknown): string {
 .ai-panel {
   display: flex;
   flex-direction: column;
-  width: 420px;
+  width: 80%;
   max-width: 100%;
-  height: 100%;
+  height: min(760px, 100%);
+  overflow: hidden;
   background: var(--c-surface);
-  border-left: 1px solid var(--c-border);
-  box-shadow: -16px 0 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--c-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
 }
 
 .ai-slide-enter-active,
@@ -821,7 +825,7 @@ function errText(err: unknown): string {
 }
 
 .ai-slide-enter-from .ai-panel {
-  transform: translateX(28px);
+  transform: translateY(16px) scale(0.98);
 }
 
 .ai-panel__head {
@@ -1309,9 +1313,15 @@ function errText(err: unknown): string {
 }
 
 @media (max-width: 720px) {
+  .ai-mask {
+    padding: var(--s-2);
+  }
+
   .ai-panel {
     width: 100%;
-    border-left: none;
+    height: 100%;
+    border: none;
+    border-radius: 12px;
   }
 
   .ai-panel__head {
