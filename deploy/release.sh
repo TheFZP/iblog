@@ -99,6 +99,7 @@ build_front() {  # $1=iblog-admin|iblog-web  $2=admin|web
   log "[$name] vite build"
   [ -d "$ROOT/$dir/node_modules" ] || die "$dir/node_modules 不存在，先执行：cd $dir && pnpm install"
   ( cd "$ROOT/$dir" && node ./node_modules/vite/bin/vite.js build )
+  mkdir -p "$DIST/$name"
   rm -rf "$DIST/$name/dist"
   cp -r "$ROOT/$dir/dist" "$DIST/$name/dist"
   cp "$ROOT/$dir/nginx.conf" "$DIST/$name/nginx.conf"
