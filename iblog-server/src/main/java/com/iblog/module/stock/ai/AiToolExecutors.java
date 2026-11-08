@@ -18,6 +18,7 @@ import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
 import com.iblog.module.stock.service.IndustryService;
+import com.iblog.module.stock.service.StockFundamentalService;
 import com.iblog.module.stock.service.StockSettingService;
 import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.support.StockHttpClient;
@@ -62,6 +63,7 @@ public class AiToolExecutors {
     private final HotListService hotListService;
     private final EastmoneyService eastmoneyService;
     private final IndustryService industryService;
+    private final StockFundamentalService fundamentalService;
     private final AiWebSearchService webSearchService;
     private final IwencaiClient iwencaiClient;
     private final StockHttpClient stockHttpClient;
@@ -92,6 +94,7 @@ public class AiToolExecutors {
                 case "get_stock_money_flow" -> json(eastmoneyService.fetchMoneyFlow(text(args, "code")));
                 case "get_stock_money_flow_history" -> moneyFlowHistory(args);
                 case "get_stock_industry" -> json(industryService.fetchIndustry(text(args, "code")));
+                case "get_stock_fundamental" -> json(fundamentalService.fundamental(text(args, "code")));
                 case "get_market_indices" -> indices();
                 case "get_stock_intraday" -> intraday(args);
                 case "get_hot_list" -> hotList();

@@ -2,6 +2,7 @@ package com.iblog.module.stock.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iblog.module.stock.model.FundamentalData;
 import com.iblog.module.stock.support.StockCode;
 import com.iblog.module.stock.support.StockHttpClient;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -147,6 +150,205 @@ public class StockFundamentalService {
             return null;
         }
         return latest < previous;
+    }
+
+    // ==================== 基本面快照（盈利质量 + 现金流） ====================
+
+    /** 取最近这么多期报表：够算最新一期的同比（去年同期在第 4~5 行），也够看三年趋势。 */
+    private static final int FUNDAMENTAL_PERIODS = 10;
+    /** 返回给模型的期数：6 期已能看出趋势与季节性，再多只是重复。 */
+    private static final int FUNDAMENTAL_RETURN_PERIODS = 6;
+
+    /**
+     * 基本面快照：盈利模式、现金流质量、成长性。
+     *
+     * <p>两次上游请求（主指标报表 + 现金流量表）拼成一份数据。任何一步失败都返回
+     * {@code available=false} 的空壳而不是抛异常 —— 基本面是分析的输入之一，
+     * 拿不到就让模型改用其它维度，不该让整轮对话挂掉。</p>
+     */
+    public FundamentalData fundamental(String rawCode) {
+        String code = StockCode.normalize(rawCode);
+        FundamentalData data = new FundamentalData();
+        data.setCode(code);
+        if (code.isEmpty()) {
+            data.setReason(REASON_EMPTY);
+            return data;
+        }
+        if (StockCode.isHk(code)) {
+            // 东财 F10 只覆盖 A 股/北交所，港股没有这套报表
+            data.setReason(REASON_HK);
+            return data;
+        }
+        return cached("fd:" + code, () -> fetchFundamental(code));
+    }
+
+    /** 基本面不可用的原因常量 */
+    public static final String REASON_HK = "hk";
+    /** 基本面不可用的原因常量 */
+    public static final String REASON_NETWORK = "network";
+    /** 基本面不可用的原因常量 */
+    public static final String REASON_EMPTY = "empty";
+
+    private FundamentalData fetchFundamental(String code) {
+        JsonNode rows = fetchReport("RPT_F10_FINANCE_MAINFINADATA",
+                MAIN_COLUMNS, "(SECURITY_CODE=\"" + code + "\")", FUNDAMENTAL_PERIODS, "REPORT_DATE");
+        JsonNode cashRows = rows == null || rows.isEmpty()
+                ? null
+                : fetchReport("RPT_F10_FINANCE_GCASHFLOW",
+                        CASHFLOW_COLUMNS, "(SECURITY_CODE=\"" + code + "\")", 6, "REPORT_DATE");
+        return parseFundamental(code, rows, cashRows);
+    }
+
+    /** 主指标报表要取的列（扣非字段是 KCFJCXSYJLR，不是 DEDUCT_PARENT_NETPROFIT）。 */
+    private static final String MAIN_COLUMNS =
+            "SECURITY_CODE,REPORT_DATE,REPORT_TYPE,TOTALOPERATEREVE,PARENTNETPROFIT,"
+                    + "KCFJCXSYJLR,XSMLL,XSJLL,ROEJQ,EPSJB,BPS,MGJYXJJE";
+
+    /** 现金流量表要取的列。 */
+    private static final String CASHFLOW_COLUMNS =
+            "SECURITY_CODE,REPORT_DATE,NETCASH_OPERATE,NETCASH_INVEST,NETCASH_FINANCE";
+
+    /**
+     * 纯解析：把两张报表的原始 JSON 拼成 {@link FundamentalData}。
+     *
+     * <p>从 {@link #fetchFundamental} 里拆出来是为了可单测 —— 这部分全是字段映射和
+     * 同比配对逻辑，最容易写错（尤其扣非字段名和「去年同期」的匹配方式），
+     * 但不需要真的打网络才能验证。</p>
+     *
+     * @param mainRows 主指标报表，{@code null} 表示上游失败
+     * @param cashRows 现金流量表，可为 {@code null}
+     */
+    FundamentalData parseFundamental(String code, JsonNode mainRows, JsonNode cashRows) {
+        FundamentalData data = new FundamentalData();
+        data.setCode(code);
+        if (mainRows == null) {
+            data.setReason(REASON_NETWORK);
+            return data;
+        }
+        if (mainRows.isEmpty()) {
+            data.setReason(REASON_EMPTY);
+            return data;
+        }
+        JsonNode latest = mainRows.get(0);
+        data.setAvailable(true);
+        data.setReportDate(dateOf(latest));
+        data.setReportType(latest.path("REPORT_TYPE").asText(""));
+        data.setRevenue(latest.path("TOTALOPERATEREVE").asDouble(0));
+        data.setNetProfit(latest.path("PARENTNETPROFIT").asDouble(0));
+        data.setDeductedNetProfit(latest.path("KCFJCXSYJLR").asDouble(0));
+        data.setGrossMargin(latest.path("XSMLL").asDouble(0));
+        data.setNetMargin(latest.path("XSJLL").asDouble(0));
+        data.setRoe(latest.path("ROEJQ").asDouble(0));
+        data.setEps(latest.path("EPSJB").asDouble(0));
+        data.setBps(latest.path("BPS").asDouble(0));
+        data.setCashPerShare(latest.path("MGJYXJJE").asDouble(0));
+
+        data.setPeriods(buildPeriods(mainRows));
+        applyGrowth(data, mainRows);
+        applyCashFlow(data, cashRows);
+        return data;
+    }
+
+    /** 把报表行转成趋势用的期列表（新→旧，只取前 6 期）。 */
+    private List<FundamentalData.Period> buildPeriods(JsonNode rows) {
+        List<FundamentalData.Period> periods = new ArrayList<>();
+        int limit = Math.min(FUNDAMENTAL_RETURN_PERIODS, rows.size());
+        for (int i = 0; i < limit; i++) {
+            JsonNode row = rows.get(i);
+            FundamentalData.Period period = new FundamentalData.Period();
+            period.setReportDate(dateOf(row));
+            period.setReportType(row.path("REPORT_TYPE").asText(""));
+            period.setRevenue(row.path("TOTALOPERATEREVE").asDouble(0));
+            period.setNetProfit(row.path("PARENTNETPROFIT").asDouble(0));
+            period.setGrossMargin(row.path("XSMLL").asDouble(0));
+            period.setRoe(row.path("ROEJQ").asDouble(0));
+            periods.add(period);
+        }
+        return periods;
+    }
+
+    /**
+     * 计算最新一期同比：在列表里找「同月日、上一年」的那一行。
+     *
+     * <p>不能简单取 {@code rows.get(4)}：报告期是季报/中报/年报混杂的，
+     * 同一列表里去年同期未必正好隔 4 行（缺一期就错位）。按 MM-dd 匹配最稳。</p>
+     */
+    private void applyGrowth(FundamentalData data, JsonNode rows) {
+        String latestDate = data.getReportDate();
+        if (latestDate == null || latestDate.length() < 10) {
+            return;
+        }
+        String monthDay = latestDate.substring(5, 10);
+        int latestYear = Integer.parseInt(latestDate.substring(0, 4));
+        JsonNode previous = null;
+        for (JsonNode row : rows) {
+            String date = dateOf(row);
+            if (date == null || date.length() < 10) {
+                continue;
+            }
+            if (date.substring(5, 10).equals(monthDay)
+                    && Integer.parseInt(date.substring(0, 4)) == latestYear - 1) {
+                previous = row;
+                break;
+            }
+        }
+        if (previous == null) {
+            data.setRevenueYoY(Double.NaN);
+            data.setProfitYoY(Double.NaN);
+            return;
+        }
+        data.setRevenueYoY(yoy(data.getRevenue(), previous.path("TOTALOPERATEREVE").asDouble(0)));
+        data.setProfitYoY(yoy(data.getNetProfit(), previous.path("PARENTNETPROFIT").asDouble(0)));
+    }
+
+    /** 同比增速（%）；基数为 0 或负数时同比没有意义，返回 NaN。 */
+    private static double yoy(double current, double previous) {
+        if (previous <= 0 || !Double.isFinite(current)) {
+            return Double.NaN;
+        }
+        return (current - previous) / previous * 100;
+    }
+
+    /** 现金流量表：经营/投资/筹资三项净额，并算出净现比。 */
+    private void applyCashFlow(FundamentalData data, JsonNode rows) {
+        if (rows == null || rows.isEmpty()) {
+            data.setCashToProfitRatio(Double.NaN);
+            return;
+        }
+        String target = data.getReportDate();
+        JsonNode hit = null;
+        for (JsonNode row : rows) {
+            if (target != null && target.equals(dateOf(row))) {
+                hit = row;
+                break;
+            }
+        }
+        // 两份报表的最新期未必对齐（其中一份可能先披露），取最新一期兜底
+        if (hit == null) {
+            hit = rows.get(0);
+        }
+        double operate = hit.path("NETCASH_OPERATE").asDouble(0);
+        data.setOperatingCashFlow(operate);
+        data.setInvestingCashFlow(hit.path("NETCASH_INVEST").asDouble(0));
+        data.setFinancingCashFlow(hit.path("NETCASH_FINANCE").asDouble(0));
+        data.setCashToProfitRatio(data.getNetProfit() > 0
+                ? operate / data.getNetProfit()
+                : Double.NaN);
+        // 把经营现金流补进期列表，方便趋势对比（同一期才补）
+        if (data.getPeriods() != null) {
+            for (FundamentalData.Period period : data.getPeriods()) {
+                if (period.getReportDate() != null && period.getReportDate().equals(dateOf(hit))) {
+                    period.setOperatingCashFlow(operate);
+                    break;
+                }
+            }
+        }
+    }
+
+    /** {@code REPORT_DATE} 形如 {@code 2026-09-30 00:00:00}，只留日期部分。 */
+    private static String dateOf(JsonNode row) {
+        String raw = row.path("REPORT_DATE").asText("");
+        return raw.length() >= 10 ? raw.substring(0, 10) : null;
     }
 
     // ==================== 盈利 ====================

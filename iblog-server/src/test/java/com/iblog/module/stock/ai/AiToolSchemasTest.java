@@ -36,8 +36,9 @@ class AiToolSchemasTest {
             "{{STOCK_CONTEXT}}");
 
     @Test
-    void toolCountIsSeventeen() {
-        assertEquals(17, AiToolSchemas.TOOLS.size(), "桌面版共 17 个 function，搬运后数量必须一致");
+    void toolCountIsEighteen() {
+        // 桌面版原有 17 个；本项目补了 get_stock_fundamental（盈利模式与现金流，供股神模式使用）
+        assertEquals(18, AiToolSchemas.TOOLS.size(), "工具数量变更后必须同步更新这里");
     }
 
     @Test

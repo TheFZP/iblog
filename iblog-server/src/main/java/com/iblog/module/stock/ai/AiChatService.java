@@ -71,8 +71,10 @@ public class AiChatService {
      * @param stockCode  当前股票代码，可空
      * @param stockName  当前股票名称，可空
      * @param iwencaiV   浏览器生成的问财凭证，可空（空时问财工具会提示刷新页面）
+     * @param godMode    是否开启股神模式（四段式深度分析 + 逐步解释逻辑）
      */
-    public record Request(List<Message> messages, String stockCode, String stockName, String iwencaiV) {
+    public record Request(List<Message> messages, String stockCode, String stockName, String iwencaiV,
+                          Boolean godMode) {
     }
 
     /** 单条历史消息。 */
@@ -302,7 +304,8 @@ public class AiChatService {
         ObjectNode system = messages.addObject();
         system.put("role", "system");
         system.put("content", contextBuilder.build(request.stockCode(), request.stockName(),
-                config.webSearchEnabled(), skillsPrompt(config)));
+                config.webSearchEnabled(), skillsPrompt(config),
+                Boolean.TRUE.equals(request.godMode())));
         if (request.messages() != null) {
             for (Message message : request.messages()) {
                 if (message == null || message.content() == null || message.content().isBlank()) {

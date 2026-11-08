@@ -73,6 +73,14 @@ public final class AiToolSchemas {
     private static final String PARAMS_GET_STOCK_INDUSTRY = """
 {"type":"object","properties":{"code":{"type":"string","description":"股票代码，如 600519"}},"required":["code"]}""";
 
+    /** get_stock_fundamental 的 description */
+    private static final String DESC_GET_STOCK_FUNDAMENTAL = """
+获取个股基本面财务数据：最新报告期的营业总收入、归母净利润、扣非净利润、销售毛利率、销售净利率、加权ROE、每股收益、每股净资产，以及经营/投资/筹资活动现金流净额、净现比（经营现金流÷净利润）、营收与净利同比增速，并附最近 6 期报表趋势。用于判断盈利模式、盈利质量（利润是否为真金白银）、成长性与现金流健康度。金额单位统一为「元」，比率为百分数。港股不支持。""";
+
+    /** get_stock_fundamental 的 parameters（紧凑 JSON） */
+    private static final String PARAMS_GET_STOCK_FUNDAMENTAL = """
+{"type":"object","properties":{"code":{"type":"string","description":"股票代码，如 600519"}},"required":["code"]}""";
+
     /** get_market_indices 的 description（原样） */
     private static final String DESC_GET_MARKET_INDICES = """
 获取大盘主要指数实时行情（上证指数、深证成指、创业板指、沪深300、科创50、中证500）。""";
@@ -161,7 +169,7 @@ public final class AiToolSchemas {
     private static final String PARAMS_RENDER_STOCK_PICKS = """
 {"type":"object","properties":{"picks":{"type":"array","description":"要渲染的股票卡片列表（建议 3-10 只）","items":{"type":"object","properties":{"code":{"type":"string","description":"股票代码（纯数字，去后缀）"},"name":{"type":"string","description":"股票名称"},"price":{"type":"number","description":"现价（来自行情工具，缺失可不填）"},"changePct":{"type":"number","description":"涨跌幅 %（来自行情工具，缺失可不填）"},"reason":{"type":"string","description":"入选/推荐理由（2-3 句，基于工具数据的真实判断）"}},"required":["code","name"]}}},"required":["picks"]}""";
 
-    /** 全部 17 个工具定义（顺序：行情 → K 线 → 资金流 → 行业 → 大盘 → 分时 → 热榜 → 搜索 → 用户上下文 → 联网 → 选股 → 卡片） */
+    /** 全部 18 个工具定义（顺序：行情 → K 线 → 资金流 → 行业 → 基本面 → 大盘 → 分时 → 热榜 → 搜索 → 用户上下文 → 联网 → 选股 → 卡片） */
     public static final List<ToolDef> TOOLS = List.of(
             new ToolDef("get_stock_quote", DESC_GET_STOCK_QUOTE, PARAMS_GET_STOCK_QUOTE, AiToolPrompts.SKILL_PROMPT_STOCK_QUOTE),
             new ToolDef("get_stock_quotes_batch", DESC_GET_STOCK_QUOTES_BATCH, PARAMS_GET_STOCK_QUOTES_BATCH, AiToolPrompts.SKILL_PROMPT_STOCK_QUOTE),
@@ -169,6 +177,7 @@ public final class AiToolSchemas {
             new ToolDef("get_stock_money_flow", DESC_GET_STOCK_MONEY_FLOW, PARAMS_GET_STOCK_MONEY_FLOW, AiToolPrompts.SKILL_PROMPT_MONEY_FLOW),
             new ToolDef("get_stock_money_flow_history", DESC_GET_STOCK_MONEY_FLOW_HISTORY, PARAMS_GET_STOCK_MONEY_FLOW_HISTORY, AiToolPrompts.SKILL_PROMPT_MONEY_FLOW),
             new ToolDef("get_stock_industry", DESC_GET_STOCK_INDUSTRY, PARAMS_GET_STOCK_INDUSTRY, AiToolPrompts.SKILL_PROMPT_INDUSTRY),
+            new ToolDef("get_stock_fundamental", DESC_GET_STOCK_FUNDAMENTAL, PARAMS_GET_STOCK_FUNDAMENTAL, AiToolPrompts.SKILL_PROMPT_FUNDAMENTAL),
             new ToolDef("get_market_indices", DESC_GET_MARKET_INDICES, PARAMS_GET_MARKET_INDICES, AiToolPrompts.SKILL_PROMPT_MARKET_INDICES),
             new ToolDef("get_stock_intraday", DESC_GET_STOCK_INTRADAY, PARAMS_GET_STOCK_INTRADAY, AiToolPrompts.SKILL_PROMPT_INTRADAY),
             new ToolDef("get_hot_list", DESC_GET_HOT_LIST, PARAMS_GET_HOT_LIST, AiToolPrompts.SKILL_PROMPT_MARKET_OVERVIEW),

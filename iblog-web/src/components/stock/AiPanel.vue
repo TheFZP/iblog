@@ -64,6 +64,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_stock_money_flow: '获取资金流向',
   get_stock_money_flow_history: '获取资金流历史',
   get_stock_industry: '获取行业信息',
+  get_stock_fundamental: '获取财务与现金流',
   get_market_indices: '获取大盘指数',
   get_stock_intraday: '获取分时数据',
   get_hot_list: '获取热榜',
@@ -90,6 +91,39 @@ const historyLoading = ref(false)
 const clearing = ref(false)
 const bodyRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+
+/**
+ * 股神模式开关。
+ *
+ * <p>按股票分别记忆（key 带 code）：用户可能对某只票开着深度分析，
+ * 换一只只想快速问一句，不该被继承下去。持久化到 localStorage，
+ * 关掉面板再打开不用重新点。</p>
+ */
+const GOD_MODE_KEY = 'iblog-ai-god-mode'
+function godModeStorageKey(code: string): string {
+  return code ? `${GOD_MODE_KEY}:${code}` : GOD_MODE_KEY
+}
+const godMode = ref(false)
+/** 切股票时重新读开关，避免上一只票的选择串过来 */
+watch(
+  () => props.code,
+  (code) => {
+    try {
+      godMode.value = localStorage.getItem(godModeStorageKey(code)) === '1'
+    } catch {
+      godMode.value = false
+    }
+  },
+  { immediate: true }
+)
+function toggleGodMode() {
+  godMode.value = !godMode.value
+  try {
+    localStorage.setItem(godModeStorageKey(props.code), godMode.value ? '1' : '0')
+  } catch {
+    // 隐私模式下写不进去，开关本回合仍然生效
+  }
+}
 
 let controller: { abort: () => void } | null = null
 let messageSeq = 0
@@ -304,7 +338,7 @@ async function send(prompt?: string) {
     return
   }
   controller = chatAi(
-    { messages: buildHistory(), stockCode: props.code, stockName: props.name, iwencaiV },
+    { messages: buildHistory(), stockCode: props.code, stockName: props.name, iwencaiV, godMode: godMode.value },
     { onEvent: handleEvent, onError: handleError, onClose: handleClose }
   )
 }
@@ -630,6 +664,21 @@ function errText(err: unknown): string {
             </div>
             <div class="ai-panel__actions">
               <button
+                type="button"
+                class="ai-god"
+                :class="{ 'is-on': godMode }"
+                :aria-pressed="godMode"
+                :title="
+                  godMode
+                    ? '股神模式已开启：四段式深度分析（盈利与现金流 → 资金与活跃度 → 成长与政策 → 综合结论）'
+                    : '开启股神模式：四段式深度分析并解释每一步逻辑'
+                "
+                @click="toggleGodMode"
+              >
+                <span class="ai-god__dot" aria-hidden="true"></span>
+                股神模式
+              </button>
+              <button
                 v-if="messages.length"
                 type="button"
                 class="ai-clear"
@@ -902,6 +951,49 @@ function errText(err: unknown): string {
 .ai-clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 股神模式开关：常驻在标题栏，开启后实心高亮，避免用户忘了自己开着深度模式 */
+.ai-god {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  background: transparent;
+  padding: 3px 10px 3px 8px;
+  color: var(--c-text-muted);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.ai-god__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  background: currentColor;
+  opacity: 0.45;
+  transition: opacity 0.15s, box-shadow 0.15s;
+}
+
+.ai-god:hover {
+  border-color: var(--c-brand);
+  color: var(--c-brand);
+}
+
+.ai-god.is-on {
+  border-color: var(--c-brand);
+  background: var(--c-brand);
+  color: #fff;
+}
+
+.ai-god.is-on .ai-god__dot {
+  opacity: 1;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 35%);
 }
 
 .ai-panel__close {

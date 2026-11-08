@@ -46,13 +46,21 @@ public class AiContextBuilder {
      * @param stockName   当前股票名称，可为空
      * @param webSearch   是否启用联网搜索（决定是否注入搜索工具与搜索方法论）
      * @param skillsPrompt 各 skill 的能力说明（由 {@link AiToolSchemas} 拼好）
+     * @param godMode     是否开启股神模式（注入四段式深度分析契约）
      */
-    public String build(String stockCode, String stockName, boolean webSearch, String skillsPrompt) {
+    public String build(String stockCode, String stockName, boolean webSearch, String skillsPrompt,
+                        boolean godMode) {
+        String skills = skillsPrompt == null ? "" : skillsPrompt;
+        if (godMode) {
+            // 股神模式放在 skill 说明的最前面：它是「怎么组织回答」的总纲，
+            // 排在具体工具用法之后容易被当成又一个可选技巧而忽略。
+            skills = AiToolPrompts.GOD_MODE_PROMPT + (skills.isEmpty() ? "" : "\n\n" + skills);
+        }
         String prompt = AiToolPrompts.SYSTEM_PROMPT_TEMPLATE
                 .replace("{{BEIJING_TIME}}", LocalDateTime.now().format(TIME_FMT))
                 .replace("{{MARKET_RULES}}", AiToolPrompts.MARKET_RULES)
                 .replace("{{SEARCH_POLICY}}", webSearch ? AiToolPrompts.SEARCH_POLICY_ON : AiToolPrompts.SEARCH_POLICY_OFF)
-                .replace("{{SKILL_PROMPTS}}", skillsPrompt == null ? "" : skillsPrompt)
+                .replace("{{SKILL_PROMPTS}}", skills)
                 .replace("{{USER_PROFILE}}", userProfileSection())
                 .replace("{{PRELOAD_SECTION}}", preloadSection(stockCode, stockName))
                 .replace("{{STOCK_CONTEXT}}", stockContextSection(stockCode, stockName));

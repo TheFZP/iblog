@@ -35,6 +35,11 @@ export interface AiChatRequest {
    * 才拿得到 `v`，所以由前端生成、随请求带给后端转发。为空时问财工具会自己提示。</p>
    */
   iwencaiV?: string
+  /**
+   * 股神模式：开启后后端注入四段式深度分析契约（盈利模式与现金流 → 一月资金动向/量比/换手率
+   * → 行业空间/前景/政策 → 综合结论与风险），并要求每一步解释背后的逻辑。
+   */
+  godMode?: boolean
 }
 
 export interface AiPick {
