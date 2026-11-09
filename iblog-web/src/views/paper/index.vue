@@ -1004,6 +1004,59 @@
                     仅约束自动交易买入，手动下单不受影响；未设置时默认覆盖整个交易时段。
                   </p>
                 </div>
+                <div class="advanced__group">
+                  <h3 class="advanced__title">尾盘预测</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.predictEnabled"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">开启尾盘预测</span>
+                    <span class="trade-window__hint">
+                      每个交易日 14:30、14:50 用当日最新数据给热榜股票和持仓打分（14:50 覆盖 14:30）；
+                      开启后自动买入与「预测分卖出」都只在 14:30 之后执行，且只买预测分达到阈值的候选。
+                      止损 / 止盈 / MA10 / 时间止损等价格规则仍全天生效。
+                    </span>
+                  </label>
+                  <div v-if="strategyForm.predictEnabled" class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">买入最低预测分</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.predictBuyMinScore"
+                          class="field__input"
+                          type="number"
+                          min="0"
+                          max="200"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">低于该分不买入</span>
+                    </label>
+                    <label class="field trade-window__field">
+                      <span class="field__label">持仓卖出预测分</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.predictSellMaxScore"
+                          class="field__input"
+                          type="number"
+                          min="0"
+                          max="200"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">分</span>
+                      </span>
+                      <span class="field__hint">低于该分卖出，0 = 不按预测卖</span>
+                    </label>
+                  </div>
+                  <p v-if="strategyForm.predictEnabled" class="trade-window__hint">
+                    预测分是规则打分的相对强弱，不是真实概率；仓位上限仍按单票 20%、总仓位 80% 的风控执行。
+                  </p>
+                </div>
                 <p class="advanced__sum">
                   因子权重合计 <strong>{{ weightSum }}</strong> 分（仅作参考，不影响入选总分上限）
                 </p>
@@ -1958,6 +2011,7 @@ type NumericParamKey = Exclude<
   keyof PaperStrategyParams,
   | 'sellAtOpen'
   | 'heldScoreSellEnabled'
+  | 'predictEnabled'
   | 'buyStartTime'
   | 'buyEndTime'
   | 'strictFilters'
@@ -2014,6 +2068,9 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   sellAtOpen: DEFAULT_SELL_AT_OPEN,
   heldScoreSellEnabled: false,
   heldScoreSellMin: 40,
+  predictEnabled: false,
+  predictBuyMinScore: 60,
+  predictSellMaxScore: 40,
   buyStartTime: DEFAULT_BUY_START_TIME,
   buyEndTime: DEFAULT_BUY_END_TIME,
   turnoverScore: 5,
@@ -2080,6 +2137,8 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   takeProfitPct: { min: 0.2, max: 200, integer: false },
   maxHoldDays: { min: 1, max: 250, integer: true },
   heldScoreSellMin: { min: 0, max: 200, integer: true },
+  predictBuyMinScore: { min: 0, max: 200, integer: true },
+  predictSellMaxScore: { min: 0, max: 200, integer: true },
   universeSize: { min: 1, max: 100, integer: true },
   maxCandidates: { min: 1, max: 20, integer: true },
   selectionRefreshSec: { min: 30, max: 3600, integer: true },
@@ -2293,6 +2352,8 @@ const SENTIMENT_NUMERIC_FIELDS: AdvancedField[] = [
 
 /** 交易时段区固定 5 项：次日开盘卖出开关 + 持仓评分卖出开关/阈值 + 自动买入时间窗起止 */
 const TRADE_WINDOW_FIELD_COUNT = 5
+/** 尾盘预测区固定 3 项：总开关 + 买入最低分 + 持仓卖出预测分 */
+const PREDICT_FIELD_COUNT = 3
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
 const QUALITY_FIELD_COUNT = 10
 /** 涨停结构区固定 2 项：首板加分 + 连板高度上限 */
@@ -2350,6 +2411,7 @@ const BASIC_FIELD_COUNT = 4
 const ADVANCED_PANEL_FIELD_COUNT =
   ADVANCED_FIELDS.length +
   TRADE_WINDOW_FIELD_COUNT +
+  PREDICT_FIELD_COUNT +
   QUALITY_FIELD_COUNT +
   BOARD_FIELD_COUNT +
   NEW_HIGH_FIELD_COUNT +
@@ -2858,6 +2920,7 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     })
     result.sellAtOpen = toBoolean(node.sellAtOpen)
     result.heldScoreSellEnabled = toBoolean(node.heldScoreSellEnabled)
+    result.predictEnabled = toBoolean(node.predictEnabled)
     result.buyStartTime = toTimeText(node.buyStartTime, DEFAULT_BUY_START_TIME)
     result.buyEndTime = toTimeText(node.buyEndTime, DEFAULT_BUY_END_TIME)
     result.strictFilters = toBoolean(node.strictFilters)
@@ -2911,6 +2974,7 @@ function clampStrategyForm(): StrategyForm {
   if (result.floatCapMaxYi < result.floatCapMinYi) result.floatCapMaxYi = result.floatCapMinYi
   result.sellAtOpen = strategyForm.value.sellAtOpen === true
   result.heldScoreSellEnabled = strategyForm.value.heldScoreSellEnabled === true
+  result.predictEnabled = strategyForm.value.predictEnabled === true
   result.buyStartTime = toTimeText(strategyForm.value.buyStartTime, DEFAULT_BUY_START_TIME)
   result.buyEndTime = toTimeText(strategyForm.value.buyEndTime, DEFAULT_BUY_END_TIME)
   result.strictFilters = strategyForm.value.strictFilters === true

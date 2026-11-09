@@ -125,6 +125,17 @@ public class PaperStrategyParams {
     private boolean heldScoreSellEnabled = false;
     /** 持仓评分低于该值时卖出（0~200，默认 40） */
     private int heldScoreSellMin = 40;
+
+    /**
+     * 尾盘预测模式：14:30 / 14:50 用当日最新数据给热榜与持仓打分，
+     * 按分数排名买入，并按分数卖出预测走弱的持仓（默认关）。
+     */
+    private boolean predictEnabled = false;
+    /** 预测分低于该值不买入（0~200，默认 60） */
+    private int predictBuyMinScore = 60;
+    /** 持仓预测分低于该值时卖出（0~200，默认 40） */
+    private int predictSellMaxScore = 40;
+
     /** 自动买入时间窗起点（HH:mm，含） */
     private String buyStartTime = "09:30";
     /** 自动买入时间窗终点（HH:mm，含） */
@@ -278,6 +289,9 @@ public class PaperStrategyParams {
             params.sellAtOpen = bool(node, "sellAtOpen", params.sellAtOpen);
             params.heldScoreSellEnabled = bool(node, "heldScoreSellEnabled", params.heldScoreSellEnabled);
             params.heldScoreSellMin = integer(node, "heldScoreSellMin", params.heldScoreSellMin, 0, 200);
+            params.predictEnabled = bool(node, "predictEnabled", params.predictEnabled);
+            params.predictBuyMinScore = integer(node, "predictBuyMinScore", params.predictBuyMinScore, 0, 200);
+            params.predictSellMaxScore = integer(node, "predictSellMaxScore", params.predictSellMaxScore, 0, 200);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);
             params.buyEndTime = timeText(node, "buyEndTime", params.buyEndTime);
 

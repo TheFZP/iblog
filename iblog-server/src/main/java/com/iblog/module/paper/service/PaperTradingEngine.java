@@ -124,6 +124,26 @@ public class PaperTradingEngine {
         }
     }
 
+    /**
+     * 尾盘预测（14:30、14:50）。
+     *
+     * <p>用当日最新数据重新给热榜和持仓打分：14:30 先排一轮，14:50 用更接近收盘的
+     * 数据复核覆盖。开启尾盘预测的账户，自动交易只在这两轮之后按预测分买入。</p>
+     */
+    @Scheduled(cron = "0 30,50 14 * * ?", zone = "Asia/Shanghai")
+    public void refreshPredictions() {
+        if (!calendar.isTradingDay(calendar.today())) {
+            return;
+        }
+        for (PaperAccount account : accountMapper.selectList(Wrappers.<PaperAccount>lambdaQuery())) {
+            try {
+                selectionService.predict(account.getId());
+            } catch (RuntimeException ex) {
+                log.warn("模拟盘尾盘预测失败 accountId={}", account.getId(), ex);
+            }
+        }
+    }
+
     @Scheduled(cron = "0 5 15 * * ?", zone = "Asia/Shanghai")
     public void settleDaily() {
         if (!calendar.isTradingDay(calendar.today())) {

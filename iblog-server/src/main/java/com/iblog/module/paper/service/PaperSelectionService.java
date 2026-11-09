@@ -107,6 +107,7 @@ public class PaperSelectionService {
 
     /** 每个账户最近一次选股时间，避免自动交易每 15 秒重扫一遍。 */
     private final Map<Long, Long> lastRefreshAt = new ConcurrentHashMap<>();
+    private final PaperPredictStatService predictStatService;
 
     /** 重新选股并覆盖当日候选（手动刷新/定时刷新都走这里）。 */
     public List<PaperSignal> refresh(Long accountId) {
@@ -284,6 +285,106 @@ public class PaperSelectionService {
         strategyService.touch(strategy);
         lastRefreshAt.put(accountId, System.currentTimeMillis());
         log.info("模拟盘选股完成 account={} 扫描={} 命中={} 盘前={}", accountId, scanned, result.size(), preMarket);
+        return result;
+    }
+
+    /**
+     * 尾盘预测：14:30 / 14:50 用当日最新数据给热榜与持仓打分。
+     *
+     * <p>与早盘选股的区别：不做买入侧硬性剔除、不设候选门槛，先用同一套因子打出
+     * 原始分再按分数排名；买不买交给 {@code predictBuyMinScore} 在自动交易里判断。
+     * 持仓也一起打分并写入 {@link #heldScores}，供「预测走弱卖出」使用。</p>
+     */
+    public List<PaperSignal> predict(Long accountId) {
+        PaperStrategy strategy = strategyService.ensureDefault(accountId);
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        if (!params.isPredictEnabled() || !calendar.isTradingDay(calendar.today())) {
+            return recentCandidates(accountId);
+        }
+        String today = calendar.todayText();
+        PaperAccount account = null;
+        try {
+            account = accountService.getById(accountId);
+        } catch (RuntimeException ex) {
+            log.debug("预测：账户读取失败 account={} msg={}", accountId, ex.getMessage());
+        }
+
+        List<HotStockItem> hot = List.of();
+        try {
+            hot = hotListService.fetchHotList();
+        } catch (RuntimeException ex) {
+            log.warn("预测：热榜获取失败 {}", ex.getMessage());
+        }
+        MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
+
+        List<Candidate> scored = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int[] vwapBudget = {MAX_VWAP_CHECKS};
+        int[] deepBudget = {MAX_DEEP_CHECKS};
+        int[] fundamentalBudget = {fundamentalService.upstreamRequests()};
+        int rank = 0;
+        int scanned = 0;
+        for (HotStockItem item : hot) {
+            if (scanned >= params.getUniverseSize()) {
+                break;
+            }
+            String code = StockCode.normalize(item.getCode());
+            if (code.isEmpty() || StockCode.isHk(code) || !seen.add(code)) {
+                continue;
+            }
+            rank++;
+            if (params.getHotRankTopN() > 0 && rank > params.getHotRankTopN()) {
+                break;
+            }
+            String name = item.getName() == null ? "" : item.getName();
+            if (name.toUpperCase().contains("ST")) {
+                continue;
+            }
+            scanned++;
+            try {
+                Candidate candidate = evaluate(strategy, params, code, name, item, rank, sentiment,
+                        account, vwapBudget, deepBudget, fundamentalBudget, false, true);
+                if (candidate != null) {
+                    scored.add(candidate);
+                }
+            } catch (RuntimeException ex) {
+                log.warn("预测打分失败 code={} msg={}", code, ex.getMessage());
+            }
+        }
+
+        // 持仓单独再打一遍（可能已经跌出热榜）。预算独立，避免和候选抢分时/深历史额度。
+        scoreHeldPositions(accountId, strategy, params, account, sentiment, false);
+
+        // 按分数降序取前 maxCandidates 只作为可买候选
+        scored.sort(Comparator.comparingInt((Candidate c) -> c.signal().getScore()).reversed());
+        int limit = Math.max(1, params.getMaxCandidates());
+        if (scored.size() > limit) {
+            scored = new ArrayList<>(scored.subList(0, limit));
+        }
+
+        signalMapper.delete(Wrappers.<PaperSignal>lambdaQuery()
+                .eq(PaperSignal::getAccountId, accountId)
+                .eq(PaperSignal::getAction, PaperConstants.ACTION_CANDIDATE)
+                .eq(PaperSignal::getTradeDate, today));
+        List<PaperSignal> result = new ArrayList<>(scored.size());
+        for (Candidate candidate : scored) {
+            PaperSignal signal = candidate.signal();
+            signal.setAccountId(accountId);
+            signal.setStrategyId(strategy.getId());
+            signal.setTradeDate(today);
+            signal.setReason("尾盘预测：" + signal.getReason());
+            signalMapper.insert(signal);
+            result.add(signal);
+        }
+        strategyService.touch(strategy);
+        lastRefreshAt.put(accountId, System.currentTimeMillis());
+        log.info("模拟盘尾盘预测完成 account={} 扫描={} 候选={}", accountId, scanned, result.size());
+        // 把本轮候选落成胜率样本（预测时现价 → 当日收盘，结算时回填）
+        try {
+            predictStatService.recordCandidates(result);
+        } catch (RuntimeException ex) {
+            log.warn("尾盘预测候选落库失败 accountId={}", accountId, ex);
+        }
         return result;
     }
 

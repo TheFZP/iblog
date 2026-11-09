@@ -287,4 +287,25 @@ class PaperStrategyParamsTest {
         assertTrue(again.isHeldScoreSellEnabled());
         assertEquals(200, again.getHeldScoreSellMin());
     }
+
+    @Test
+    void predictDefaultsOffAndClamps() throws Exception {
+        // 默认关闭：不改变原有「开盘选股 + 随时买入」的交易节奏
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper, "{}");
+        assertFalse(p.isPredictEnabled());
+        assertEquals(60, p.getPredictBuyMinScore());
+        assertEquals(40, p.getPredictSellMaxScore());
+
+        // 越界钳制到 0~200，与持仓评分阈值口径一致
+        PaperStrategyParams c = PaperStrategyParams.parse(mapper,
+                "{\"predictEnabled\":true,\"predictBuyMinScore\":500,\"predictSellMaxScore\":-10}");
+        assertTrue(c.isPredictEnabled());
+        assertEquals(200, c.getPredictBuyMinScore());
+        assertEquals(0, c.getPredictSellMaxScore());
+
+        PaperStrategyParams again = PaperStrategyParams.parse(mapper, c.toJson(mapper));
+        assertTrue(again.isPredictEnabled());
+        assertEquals(200, again.getPredictBuyMinScore());
+        assertEquals(0, again.getPredictSellMaxScore());
+    }
 }

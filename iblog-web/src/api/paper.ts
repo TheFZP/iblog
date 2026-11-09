@@ -400,6 +400,12 @@ export interface PaperStrategyParams {
   heldScoreSellEnabled?: boolean
   /** 持仓评分低于该值时卖出（0~200） */
   heldScoreSellMin?: number
+  /** 尾盘预测模式：14:30、14:50 给热榜与持仓打分，14:30 后只按预测分买卖 */
+  predictEnabled?: boolean
+  /** 尾盘预测买入最低分（0~200），低于该分的候选不买 */
+  predictBuyMinScore?: number
+  /** 尾盘预测卖出阈值（0~200），持仓预测分低于该值时卖出 */
+  predictSellMaxScore?: number
   /** 自动买入时间窗起点（HH:mm，含）；仅约束自动交易买入 */
   buyStartTime?: string
   /** 自动买入时间窗终点（HH:mm，含）；start >= end 或非法时后端视为不限制 */

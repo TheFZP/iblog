@@ -28,6 +28,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
@@ -47,6 +49,9 @@ import java.util.Set;
 @RequiredArgsConstructor
 @Slf4j
 public class PaperAutoTrader {
+
+    /** 尾盘预测第一轮时间：此前的早期候选不参与预测模式的买入。 */
+    private static final LocalTime PREDICT_START = LocalTime.of(14, 30);
 
     private final PaperAccountMapper accountMapper;
     private final PaperAccountService accountService;
@@ -111,9 +116,14 @@ public class PaperAutoTrader {
         Set<String> soldCodes = new HashSet<>();
         // 情绪冰点清仓：整市场跌停一片时，技术位止盈止损都来不及，先降风险
         String exitReason = sentimentExitReason(params, sentiment);
-        // 持仓评分来自最近一次重新选股；缓存为空时不触发，避免服务刚启动就误清仓
-        Map<String, PaperSelectionService.HeldScore> heldScores = params.isHeldScoreSellEnabled()
+        // 评分来自最近一次重新选股 / 尾盘预测；缓存为空时不触发，避免服务刚启动就误清仓
+        boolean scoreSell = params.isPredictEnabled() || params.isHeldScoreSellEnabled();
+        Map<String, PaperSelectionService.HeldScore> heldScores = scoreSell
                 ? selectionService.heldScores(account.getId()) : Map.of();
+        // 预测分卖出与预测买入共用 14:30 的时间门：早盘用隔夜/早盘评分卖容易被开盘波动带偏，
+        // 也会让当天卖出过的票失去 14:30 重新预测后买回的机会。
+        boolean predictSellAllowed = !params.isPredictEnabled()
+                || !calendar.now().toLocalTime().isBefore(PREDICT_START);
         for (PaperPosition position : positions) {
             int available = position.getAvailableQuantity() == null ? 0 : position.getAvailableQuantity();
             if (available <= 0) {
@@ -127,9 +137,13 @@ public class PaperAutoTrader {
                 reason = "次日开盘卖出";
             } else {
                 reason = sellReason(position, params);
-                if (reason == null) {
-                    // 技术面没触发时，再看策略还看不看得上这只票；止损/止盈等价格规则优先
-                    reason = heldScoreSellReason(heldScores.get(position.getCode()), params);
+                if (reason == null && predictSellAllowed) {
+                    // 技术面没触发时，再看策略还看不看得上这只票；止损/止盈等价格规则优先。
+                    // 尾盘预测模式用「预测分低于 predictSellMaxScore」；否则用普通持仓评分阈值。
+                    int threshold = params.isPredictEnabled()
+                            ? params.getPredictSellMaxScore() : params.getHeldScoreSellMin();
+                    reason = heldScoreSellReason(heldScores.get(position.getCode()), threshold,
+                            params.isPredictEnabled() ? "预测走弱" : "持仓评分过低");
                 }
             }
             if (reason == null) {
@@ -202,17 +216,17 @@ public class PaperAutoTrader {
     }
 
     /**
-     * 持仓评分过低是否卖出。
+     * 评分过低是否卖出。
      *
      * <p>评分缺失（还没重新选股 / 服务刚重启）时返回 null，不卖：
      * 把「没有分」当成 0 分会把所有持仓一次清光，这是最坏的失败模式。</p>
      */
-    private String heldScoreSellReason(PaperSelectionService.HeldScore score, PaperStrategyParams params) {
-        if (score == null || params.getHeldScoreSellMin() <= 0) {
+    private String heldScoreSellReason(PaperSelectionService.HeldScore score, int threshold, String label) {
+        if (score == null || threshold <= 0) {
             return null;
         }
-        if (score.score() < params.getHeldScoreSellMin()) {
-            return "持仓评分过低 " + score.score() + " 分（低于 " + params.getHeldScoreSellMin() + "）";
+        if (score.score() < threshold) {
+            return label + " " + score.score() + " 分（低于 " + threshold + "）";
         }
         return null;
     }
@@ -249,6 +263,10 @@ public class PaperAutoTrader {
         if (!params.inBuyWindow(calendar.now())) {
             return;
         }
+        // 尾盘预测模式只在 14:30 第一轮预测之后买入；之前不买，避免用到早盘的旧候选
+        if (params.isPredictEnabled() && calendar.now().toLocalTime().isBefore(PREDICT_START)) {
+            return;
+        }
         String blockReason = sentimentBuyBlockReason(params, sentiment);
         if (blockReason != null) {
             log.info("模拟盘情绪不足不开新仓 account={} 情绪={}分({}) 门槛={}",
@@ -262,7 +280,8 @@ public class PaperAutoTrader {
             return;
         }
         List<PaperSignal> candidates = selectionService.recentCandidates(account.getId());
-        if (candidates.isEmpty()) {
+        // 预测模式只买尾盘预测写出的候选；没有预测结果就空仓等待，不回退到早盘选股
+        if (candidates.isEmpty() && !params.isPredictEnabled()) {
             candidates = selectionService.refreshIfStale(account.getId());
         }
         if (candidates.isEmpty()) {
@@ -270,11 +289,22 @@ public class PaperAutoTrader {
         }
         double maxPositionPct = properties.getPaper().getMaxPositionPct();
         double maxTotalPct = properties.getPaper().getMaxTotalPositionPct();
+        // 预测模式下只接受 14:30 之后写入的候选，且分数必须达到买入下限
+        LocalDateTime predictCutoff = params.isPredictEnabled()
+                ? calendar.today().atTime(PREDICT_START) : null;
         // 当天自动卖出过的标的整天不再买回：不然「评分过低卖出」会在下一个 tick 又买回来，
         // 变成反复买卖空转。手动卖出不在此列（用户手动卖就是想离场，后续想接回由用户自己决定）。
         Set<String> soldToday = todaySoldCodes(account.getId());
 
         for (PaperSignal candidate : candidates) {
+            if (predictCutoff != null) {
+                if (candidate.getScore() == null || candidate.getScore() < params.getPredictBuyMinScore()) {
+                    continue;
+                }
+                if (candidate.getCreateTime() == null || candidate.getCreateTime().isBefore(predictCutoff)) {
+                    continue;
+                }
+            }
             // 本 tick 刚卖出（或当天自动卖出过）的标的，不再买回：
             // 否则会陷入「卖出 → 仍入选 → 立刻买回」的空转，白付手续费还让当日买入仓位被 T+1 锁死。
             if (justSold.contains(candidate.getCode()) || soldToday.contains(candidate.getCode())) {

@@ -53,6 +53,7 @@ public class DatabaseBootstrap implements ApplicationListener<ApplicationEnviron
             "db/09-migration-visit-log.sql",
             "db/10-migration-ai-chat.sql",
             "db/11-migration-news-score.sql",
+            "db/12-migration-predict-stat.sql",
     };
     /** 用于判断「表是否已建好」的哨兵表。 */
     private static final String SENTINEL_TABLE = "sys_user";
