@@ -1900,6 +1900,12 @@
             </ul>
             <p v-else class="trade-window__hint">没有可展示的新闻标题。</p>
             <p class="trade-window__hint">
+              前面的「+45 / -35」是新闻原始情绪分（-100~100）；「计入 +6」是按当前策略的
+              加分上限换算后、实际进入选股总分的分值（利好最多 +{{ strategyForm.newsScoreMax }}、
+              利空最多 -{{ strategyForm.newsPenaltyMax }}）。当日涨幅 ≥7% 或连板时利好再打五折，
+              以候选理由里的「新闻+N」为准。
+            </p>
+            <p class="trade-window__hint">
               新闻分每天盘中约每 30 分钟刷新，只参与选股加分、不会自动交易；
               重大利空可在高级规则里开启硬过滤，持仓预警请结合自身仓位判断。
             </p>
@@ -3110,7 +3116,25 @@ function newsTone(score: number): string {
 }
 
 function newsText(item: StockNewsItem): string {
-  return `${item.label} ${item.score > 0 ? '+' : ''}${item.score}`
+  const applied = newsAppliedScore(item)
+  const appliedText = applied > 0 ? `+${applied}` : `${applied}`
+  return `${item.label} ${item.score > 0 ? '+' : ''}${item.score}（计入 ${appliedText}）`
+}
+
+/**
+ * 原始新闻分 → 实际计入选股总分的加分。
+ * 与后端 NewsScoreRule.bonus 同一公式：原始分/100 × 置信度 × 加分上限。
+ * 注意：这里不含「高位利好打五折」（需要当日涨幅/连板数据，前端拿不到），
+ * 所以显示的是打折前的上限；真正入账分以候选理由里的「新闻+N」为准。
+ */
+function newsAppliedScore(item: StockNewsItem): number {
+  if (!strategyForm.value.newsEnabled) return 0
+  const max = Math.max(Number(strategyForm.value.newsScoreMax) || 0, 0)
+  const penalty = Math.max(Number(strategyForm.value.newsPenaltyMax) || 0, 0)
+  const conf = Math.max(0, Math.min(1, item.confidence ?? 0))
+  const effective = Math.max(-1, Math.min(1, item.score / 100)) * conf
+  if (effective >= 0) return Math.round(max * effective)
+  return -Math.round(penalty * -effective)
 }
 
 function newsScoreOf(code: string): number {
