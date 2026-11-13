@@ -271,3 +271,8 @@ export interface IndustryData {
 export function fetchIndustry(code: string) {
   return get<IndustryData>('/stock/industry', { code })
 }
+
+/** 融资融券标的清单（归一化代码数组），用于代码前的「融」标签 */
+export function fetchMarginTargets() {
+  return get<string[]>('/stock/margin-targets')
+}

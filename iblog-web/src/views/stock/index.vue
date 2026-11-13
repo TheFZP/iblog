@@ -153,7 +153,7 @@
                 >
                   <div class="watch-row__id">
                     <span class="watch-row__name">{{ s.name }}</span>
-                    <span class="watch-row__code">{{ s.code }}</span>
+                    <span class="watch-row__code"><StockTags :code="s.code" />{{ s.code }}</span>
                   </div>
                   <div class="watch-row__price">
                     <span :class="toneClass(quoteOf(s.code)?.change)">{{ fmt(s.price) }}</span>
@@ -205,7 +205,7 @@
                     </span>
                   </div>
                   <div class="hot-row__sub">
-                    <span class="hot-row__code">{{ h.code }}</span>
+                    <span class="hot-row__code"><StockTags :code="h.code" />{{ h.code }}</span>
                     <span v-if="h.popularityTag" class="chip">{{ h.popularityTag }}</span>
                   </div>
                 </button>
@@ -267,6 +267,7 @@ import { usePositionAlerts } from '@/composables/usePositionAlerts'
 import { usePriceAlerts } from '@/composables/usePriceAlerts'
 import { getMarketState, marketStateBadge, refreshIntervalMs } from '@/utils/marketTime'
 import { useSettings } from '@/composables/useSettings'
+import StockTags from '@/components/stock/StockTags.vue'
 
 /**
  * 用户在设置里指定的刷新间隔。

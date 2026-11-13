@@ -1197,7 +1197,7 @@
                       @click.stop
                     >
                       <span class="cell-name__title">{{ item.name }}</span>
-                      <span class="cell-name__code">{{ item.code }}</span>
+                      <span class="cell-name__code"><StockTags :code="item.code" />{{ item.code }}</span>
                     </router-link>
                   </td>
                   <td class="num">
@@ -1305,7 +1305,7 @@
                       @click.stop
                     >
                       <span class="cell-name__title">{{ position.name }}</span>
-                      <span class="cell-name__code">{{ position.code }}</span>
+                      <span class="cell-name__code"><StockTags :code="position.code" />{{ position.code }}</span>
                     </router-link>
                   </td>
                   <td class="num">
@@ -1425,7 +1425,7 @@
                       @click.stop
                     >
                       <span class="cell-name__title">{{ order.name }}</span>
-                      <span class="cell-name__code">{{ order.code }}</span>
+                      <span class="cell-name__code"><StockTags :code="order.code" />{{ order.code }}</span>
                     </router-link>
                   </td>
                   <td>
@@ -1535,7 +1535,7 @@
                       @click.stop
                     >
                       <span class="cell-name__title">{{ trade.name }}</span>
-                      <span class="cell-name__code">{{ trade.code }}</span>
+                      <span class="cell-name__code"><StockTags :code="trade.code" />{{ trade.code }}</span>
                     </router-link>
                   </td>
                   <td>
@@ -1615,7 +1615,7 @@
                   <td>
                     <div class="cell-name">
                       <span class="cell-name__title">{{ item.name }}</span>
-                      <span class="cell-name__code">{{ item.code }}</span>
+                      <span class="cell-name__code"><StockTags :code="item.code" />{{ item.code }}</span>
                     </div>
                   </td>
                   <td>
@@ -1948,6 +1948,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
+import StockTags from '@/components/stock/StockTags.vue'
 import {
   applyPaperRule,
   cancelPaperOrder,

@@ -34,6 +34,7 @@ import PositionDialog from '@/components/stock/PositionDialog.vue'
 import MaAlertDialog from '@/components/stock/MaAlertDialog.vue'
 import ProfileDialog from '@/components/stock/ProfileDialog.vue'
 import AiPanel from '@/components/stock/AiPanel.vue'
+import StockTags from '@/components/stock/StockTags.vue'
 import { computeT0Signals, summarizeMarkers, type T0Marker } from '@/utils/t0Signals'
 import { recordSignalEvent } from '@/utils/signalHistory'
 import {
@@ -606,6 +607,7 @@ const stats = computed(() => {
     <header class="hero">
       <div class="hero__id">
         <h1 class="hero__name">{{ quote?.name || code }}</h1>
+        <StockTags :code="code" />
         <span class="hero__code">{{ code }}</span>
         <span v-if="isHk" class="hero__badge hero__badge--hk">港股</span>
         <span class="hero__badge">{{ marketLabel }}</span>
