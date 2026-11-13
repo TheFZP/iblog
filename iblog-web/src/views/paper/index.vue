@@ -1419,10 +1419,14 @@
                 <tr v-for="order in orders" :key="order.id">
                   <td class="cell-time">{{ shortTime(order.createTime) }}</td>
                   <td>
-                    <div class="cell-name">
+                    <router-link
+                      class="cell-name cell-name--link"
+                      :to="`/stock/${order.code}`"
+                      @click.stop
+                    >
                       <span class="cell-name__title">{{ order.name }}</span>
                       <span class="cell-name__code">{{ order.code }}</span>
-                    </div>
+                    </router-link>
                   </td>
                   <td>
                     <span :class="order.side === 'BUY' ? 'tone-up' : 'tone-down'">{{ sideLabel(order.side) }}</span>
@@ -1525,10 +1529,14 @@
                 <tr v-for="trade in trades" :key="trade.id">
                   <td class="cell-time">{{ tradeDateTime(trade) }}</td>
                   <td>
-                    <div class="cell-name">
+                    <router-link
+                      class="cell-name cell-name--link"
+                      :to="`/stock/${trade.code}`"
+                      @click.stop
+                    >
                       <span class="cell-name__title">{{ trade.name }}</span>
                       <span class="cell-name__code">{{ trade.code }}</span>
-                    </div>
+                    </router-link>
                   </td>
                   <td>
                     <span :class="trade.side === 'BUY' ? 'tone-up' : 'tone-down'">{{ sideLabel(trade.side) }}</span>
