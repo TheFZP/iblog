@@ -64,6 +64,11 @@ public class WeatherAgentService {
                          List<Trace> traces, String model, long elapsedMs) {
     }
 
+    /** 模型 Key 是否已配置；未配置时不会产生调用费用，调用方可以据此不占用每日额度。 */
+    public boolean available() {
+        return configService.load().available();
+    }
+
     public Result analyze(String city, String question) {
         long started = System.currentTimeMillis();
         AiConfigService.Config config = configService.load();

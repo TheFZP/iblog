@@ -106,6 +106,16 @@ class WeatherAgentServiceTest {
     }
 
     @Test
+    void availableFollowsConfiguredKey() {
+        when(configService.load()).thenReturn(configured());
+        assertTrue(service.available());
+
+        when(configService.load()).thenReturn(new AiConfigService.Config(
+                false, null, "deepseek-v4-flash", true, "high", true));
+        assertFalse(service.available());
+    }
+
+    @Test
     void missingKeyDoesNotCallModel() {
         when(configService.load()).thenReturn(new AiConfigService.Config(
                 false, null, "deepseek-v4-flash", true, "high", true));
