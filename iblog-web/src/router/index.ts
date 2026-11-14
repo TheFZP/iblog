@@ -114,6 +114,13 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'JSON 在线解析' }
   },
   {
+    // 天气工具同样是独立页面：整屏留给天气卡片和 AI 建议
+    path: '/tools/weather',
+    name: 'ToolWeather',
+    component: () => import('@/views/tools/weather.vue'),
+    meta: { title: 'AI 天气' }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/'
   }
