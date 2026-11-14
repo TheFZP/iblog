@@ -1057,6 +1057,84 @@
                     预测分是规则打分的相对强弱，不是真实概率；仓位上限仍按单票 20%、总仓位 80% 的风控执行。
                   </p>
                 </div>
+                <div class="advanced__group">
+                  <h3 class="advanced__title">次日看涨</h3>
+                  <label class="trade-window__check">
+                    <input
+                      v-model="strategyForm.nextDayPredictEnabled"
+                      type="checkbox"
+                      :disabled="!strategy"
+                    />
+                    <span class="trade-window__label">开启次日看涨</span>
+                    <span class="trade-window__hint">
+                      每个交易日 15:30 扫描全市场，结合日 K、量能、市场情绪和新闻生成次日看涨榜；
+                      开启后自动买入只买昨日榜单里概率达标的股票，最多买设定只数。
+                      与「尾盘预测」同时开启时，以本模式为准；卖出规则不变。
+                    </span>
+                  </label>
+                  <div v-if="strategyForm.nextDayPredictEnabled" class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">参考概率下限</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.nextDayMinProbability"
+                          class="field__input"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="5"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">%</span>
+                      </span>
+                      <span class="field__hint">低于该概率不买入</span>
+                    </label>
+                    <label class="field trade-window__field">
+                      <span class="field__label">每日最多买入</span>
+                      <span class="field__control">
+                        <input
+                          v-model.number="strategyForm.nextDayMaxBuys"
+                          class="field__input"
+                          type="number"
+                          min="1"
+                          max="10"
+                          step="1"
+                          :disabled="!strategy"
+                        />
+                        <span class="field__unit">只</span>
+                      </span>
+                      <span class="field__hint">按榜单排名优先</span>
+                    </label>
+                  </div>
+                  <div v-if="strategyForm.nextDayPredictEnabled" class="trade-window__row">
+                    <label class="field trade-window__field">
+                      <span class="field__label">买入时间窗（开始）</span>
+                      <input
+                        v-model="strategyForm.nextDayBuyStartTime"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                    <span class="trade-window__dash" aria-hidden="true">至</span>
+                    <label class="field trade-window__field">
+                      <span class="field__label">买入时间窗（结束）</span>
+                      <input
+                        v-model="strategyForm.nextDayBuyEndTime"
+                        class="field__input"
+                        type="time"
+                        :disabled="!strategy"
+                      />
+                    </label>
+                  </div>
+                  <p v-if="strategyForm.nextDayPredictEnabled && nextDayWindowInvalid" class="trade-window__warn">
+                    开始时间不早于结束时间或格式非法，后端会回退到默认 09:30–09:45。
+                  </p>
+                  <p v-else-if="strategyForm.nextDayPredictEnabled" class="trade-window__hint">
+                    榜单概率前期只有启发式参考值，样本积累约 30 天后才会切换到历史校准；
+                    开盘一字涨停、停牌和 ST 不会买入。
+                  </p>
+                </div>
                 <p class="advanced__sum">
                   因子权重合计 <strong>{{ weightSum }}</strong> 分（仅作参考，不影响入选总分上限）
                 </p>
@@ -1249,6 +1327,9 @@
             </div>
           </div>
         </section>
+
+        <!-- 次日看涨榜：全局预测，不随模拟账户切换 -->
+        <NextDayPredictPanel />
 
         <!-- 净值曲线 -->
         <section class="panel" aria-label="净值曲线">
@@ -1899,7 +1980,14 @@
                   {{ h.scope === 'sector' ? '板块' : '个股' }}
                 </span>
                 <div class="news-list__body">
-                  <span class="news-list__title">{{ h.title }}</span>
+                  <a
+                    v-if="h.url"
+                    class="news-list__title news-list__link"
+                    :href="h.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >{{ h.title }}</a>
+                  <span v-else class="news-list__title">{{ h.title }}</span>
                   <span class="news-list__meta">
                     {{ h.source || '未知来源' }}<template v-if="h.date"> · {{ h.date }}</template>
                   </span>
@@ -1947,6 +2035,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
+import NextDayPredictPanel from '@/components/paper/NextDayPredictPanel.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import StockTags from '@/components/stock/StockTags.vue'
 import {
@@ -2027,6 +2116,9 @@ type NumericParamKey = Exclude<
   | 'sellAtOpen'
   | 'heldScoreSellEnabled'
   | 'predictEnabled'
+  | 'nextDayPredictEnabled'
+  | 'nextDayBuyStartTime'
+  | 'nextDayBuyEndTime'
   | 'buyStartTime'
   | 'buyEndTime'
   | 'strictFilters'
@@ -2049,6 +2141,9 @@ const DEFAULT_SELL_AT_OPEN = false
 /** 自动买入时间窗默认覆盖整个交易时段（含） */
 const DEFAULT_BUY_START_TIME = '09:30'
 const DEFAULT_BUY_END_TIME = '15:00'
+/** 次日看涨买入窗口：开盘后 15 分钟，与后端 PaperStrategyParams 一致 */
+const DEFAULT_NEXT_DAY_BUY_START = '09:30'
+const DEFAULT_NEXT_DAY_BUY_END = '09:45'
 /** 早盘量窗口默认 09:25–09:40（与后端 PaperStrategyParams 一致） */
 const DEFAULT_OPEN_TURNOVER_START = '09:25'
 const DEFAULT_OPEN_TURNOVER_END = '09:40'
@@ -2086,6 +2181,11 @@ const DEFAULT_STRATEGY_PARAMS: StrategyForm = {
   predictEnabled: false,
   predictBuyMinScore: 60,
   predictSellMaxScore: 40,
+  nextDayPredictEnabled: false,
+  nextDayMinProbability: 55,
+  nextDayMaxBuys: 5,
+  nextDayBuyStartTime: DEFAULT_NEXT_DAY_BUY_START,
+  nextDayBuyEndTime: DEFAULT_NEXT_DAY_BUY_END,
   buyStartTime: DEFAULT_BUY_START_TIME,
   buyEndTime: DEFAULT_BUY_END_TIME,
   turnoverScore: 5,
@@ -2154,6 +2254,8 @@ const STRATEGY_RULES: Record<NumericParamKey, NumberRule> = {
   heldScoreSellMin: { min: 0, max: 200, integer: true },
   predictBuyMinScore: { min: 0, max: 200, integer: true },
   predictSellMaxScore: { min: 0, max: 200, integer: true },
+  nextDayMinProbability: { min: 0, max: 100, integer: true },
+  nextDayMaxBuys: { min: 1, max: 10, integer: true },
   universeSize: { min: 1, max: 100, integer: true },
   maxCandidates: { min: 1, max: 20, integer: true },
   selectionRefreshSec: { min: 30, max: 3600, integer: true },
@@ -2369,6 +2471,8 @@ const SENTIMENT_NUMERIC_FIELDS: AdvancedField[] = [
 const TRADE_WINDOW_FIELD_COUNT = 5
 /** 尾盘预测区固定 3 项：总开关 + 买入最低分 + 持仓卖出预测分 */
 const PREDICT_FIELD_COUNT = 3
+/** 次日看涨区固定 5 项：总开关 + 概率阈值 + 最多买入数 + 买入时间窗起止 */
+const NEXT_DAY_FIELD_COUNT = 5
 /** 质量因子区固定 10 项：4 个权重 + 换手率区间 2 + 流通市值区间 2 + 均价线占比 1 + 涨停回看 1 */
 const QUALITY_FIELD_COUNT = 10
 /** 涨停结构区固定 2 项：首板加分 + 连板高度上限 */
@@ -2427,6 +2531,7 @@ const ADVANCED_PANEL_FIELD_COUNT =
   ADVANCED_FIELDS.length +
   TRADE_WINDOW_FIELD_COUNT +
   PREDICT_FIELD_COUNT +
+  NEXT_DAY_FIELD_COUNT +
   QUALITY_FIELD_COUNT +
   BOARD_FIELD_COUNT +
   NEW_HIGH_FIELD_COUNT +
@@ -2640,6 +2745,13 @@ const buyWindowInvalid = computed(() => {
   const start = strategyForm.value.buyStartTime
   const end = strategyForm.value.buyEndTime
   return TIME_PATTERN.test(start) && TIME_PATTERN.test(end) && start >= end
+})
+/** 次日看涨买入窗口非法：后端会回退到默认 09:30-09:45，这里提前提示 */
+const nextDayWindowInvalid = computed(() => {
+  const start = strategyForm.value.nextDayBuyStartTime
+  const end = strategyForm.value.nextDayBuyEndTime
+  if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) return true
+  return start >= end
 })
 /** 早盘量窗口非法（格式错误或 start >= end）时仅提示：后端会当作窗口无效不限制 */
 const openTurnoverInvalid = computed(() => {
@@ -2936,6 +3048,12 @@ function normalizeStrategyParams(text: string | null | undefined): StrategyForm 
     result.sellAtOpen = toBoolean(node.sellAtOpen)
     result.heldScoreSellEnabled = toBoolean(node.heldScoreSellEnabled)
     result.predictEnabled = toBoolean(node.predictEnabled)
+    result.nextDayPredictEnabled = toBoolean(node.nextDayPredictEnabled)
+    result.nextDayBuyStartTime = toTimeText(
+      node.nextDayBuyStartTime,
+      DEFAULT_NEXT_DAY_BUY_START
+    )
+    result.nextDayBuyEndTime = toTimeText(node.nextDayBuyEndTime, DEFAULT_NEXT_DAY_BUY_END)
     result.buyStartTime = toTimeText(node.buyStartTime, DEFAULT_BUY_START_TIME)
     result.buyEndTime = toTimeText(node.buyEndTime, DEFAULT_BUY_END_TIME)
     result.strictFilters = toBoolean(node.strictFilters)
@@ -2990,6 +3108,15 @@ function clampStrategyForm(): StrategyForm {
   result.sellAtOpen = strategyForm.value.sellAtOpen === true
   result.heldScoreSellEnabled = strategyForm.value.heldScoreSellEnabled === true
   result.predictEnabled = strategyForm.value.predictEnabled === true
+  result.nextDayPredictEnabled = strategyForm.value.nextDayPredictEnabled === true
+  result.nextDayBuyStartTime = toTimeText(
+    strategyForm.value.nextDayBuyStartTime,
+    DEFAULT_NEXT_DAY_BUY_START
+  )
+  result.nextDayBuyEndTime = toTimeText(
+    strategyForm.value.nextDayBuyEndTime,
+    DEFAULT_NEXT_DAY_BUY_END
+  )
   result.buyStartTime = toTimeText(strategyForm.value.buyStartTime, DEFAULT_BUY_START_TIME)
   result.buyEndTime = toTimeText(strategyForm.value.buyEndTime, DEFAULT_BUY_END_TIME)
   result.strictFilters = strategyForm.value.strictFilters === true
@@ -5465,6 +5592,15 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   color: var(--c-text);
   word-break: break-word;
+}
+
+.news-list__link {
+  color: var(--c-accent);
+  text-decoration: none;
+}
+
+.news-list__link:hover {
+  text-decoration: underline;
 }
 
 .news-list__meta {

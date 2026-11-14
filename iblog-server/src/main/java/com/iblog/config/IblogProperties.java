@@ -20,6 +20,8 @@ public class IblogProperties {
 
     private Paper paper = new Paper();
 
+    private Predict predict = new Predict();
+
     @Data
     public static class Jwt {
         /** 签名密钥，长度需 >= 32 字符 */
@@ -86,5 +88,53 @@ public class IblogProperties {
         private String holidayDates = "";
         /** 本地调试：非交易时段也允许下单/运行引擎 */
         private boolean forceTradingHours = false;
+    }
+
+    /**
+     * 全市场「次日看涨」预测。交易时段结束后 15:30 扫描，全部参数可在
+     * application.yml 的 iblog.predict.* 覆盖。
+     */
+    @Data
+    public static class Predict {
+        /** 总开关；默认关，先 dry-run 验证数据合理再打开 */
+        private boolean enabled = false;
+        /** 预筛后进入 K 线打分的股票数（按成交额排序） */
+        private int prefilterTopN = 300;
+        /** 最终写入榜单的股票数 */
+        private int outputTopK = 20;
+        /** 进入新闻扫描的股票数（榜单候选中取前 M） */
+        private int newsTopM = 60;
+        /** 每日 K 线补拉请求预算 */
+        private int klineFetchBudget = 300;
+        /** K 线补拉速率（请求/秒） */
+        private double klineFetchRatePerSec = 3;
+        /** 预筛：最小成交额（万元） */
+        private double minAmountWan = 5000;
+        /** 预筛：最低价 */
+        private double minPrice = 2;
+        /** 预筛：最高价 */
+        private double maxPrice = 500;
+        /** 预筛：当日最大涨幅（%） */
+        private double maxChangePct = 9.5;
+        /** 预筛：排除 ST / 退 / N / C */
+        private boolean excludeSt = true;
+        /** 预筛：排除北交所 */
+        private boolean excludeBse = true;
+        /** 预筛：排除收盘涨停（次日难以按开盘价买入） */
+        private boolean excludeLimitUpAtClose = true;
+        /** 打分最少日 K 根数 */
+        private int minBars = 60;
+        /** 新闻原文保留天数 */
+        private int newsKeepDays = 365;
+        /** 概率校准回看交易日数 */
+        private int calibrationLookbackDays = 60;
+        /** 校准最少样本数，低于此值仅用启发式概率 */
+        private int calibrationMinSamples = 30;
+        /** 贝叶斯平滑强度 k */
+        private int calibrationShrinkK = 30;
+        /** 逐只资金流补充的前 N 只；v1 默认 0（不做） */
+        private int flowEnrichTopN = 0;
+        /** 是否允许手工触发 POST /api/stock/predict/refresh */
+        private boolean manualTriggerEnabled = false;
     }
 }

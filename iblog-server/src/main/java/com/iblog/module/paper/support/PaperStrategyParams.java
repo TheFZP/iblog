@@ -136,6 +136,24 @@ public class PaperStrategyParams {
     /** 持仓预测分低于该值时卖出（0~200，默认 40） */
     private int predictSellMaxScore = 40;
 
+    // ---------- 全市场次日看涨 ----------
+
+    /**
+     * 次日看涨模式：只买昨天 15:30 全市场榜单里的股票，默认关。
+     *
+     * <p>开启后自动买入不再看热榜/尾盘预测候选；卖出规则保持不变。
+     * 与 {@link #predictEnabled} 同时开启时以本模式为准。</p>
+     */
+    private boolean nextDayPredictEnabled = false;
+    /** 榜单参考概率下限（%，0~100） */
+    private int nextDayMinProbability = 55;
+    /** 每日最多按榜单买入几只（1~10） */
+    private int nextDayMaxBuys = 5;
+    /** 次日买入时间窗起点（HH:mm，含） */
+    private String nextDayBuyStartTime = "09:30";
+    /** 次日买入时间窗终点（HH:mm，含） */
+    private String nextDayBuyEndTime = "09:45";
+
     /** 自动买入时间窗起点（HH:mm，含） */
     private String buyStartTime = "09:30";
     /** 自动买入时间窗终点（HH:mm，含） */
@@ -292,6 +310,12 @@ public class PaperStrategyParams {
             params.predictEnabled = bool(node, "predictEnabled", params.predictEnabled);
             params.predictBuyMinScore = integer(node, "predictBuyMinScore", params.predictBuyMinScore, 0, 200);
             params.predictSellMaxScore = integer(node, "predictSellMaxScore", params.predictSellMaxScore, 0, 200);
+            params.nextDayPredictEnabled = bool(node, "nextDayPredictEnabled", params.nextDayPredictEnabled);
+            params.nextDayMinProbability = integer(node, "nextDayMinProbability",
+                    params.nextDayMinProbability, 0, 100);
+            params.nextDayMaxBuys = integer(node, "nextDayMaxBuys", params.nextDayMaxBuys, 1, 10);
+            params.nextDayBuyStartTime = timeText(node, "nextDayBuyStartTime", params.nextDayBuyStartTime);
+            params.nextDayBuyEndTime = timeText(node, "nextDayBuyEndTime", params.nextDayBuyEndTime);
             params.buyStartTime = timeText(node, "buyStartTime", params.buyStartTime);
             params.buyEndTime = timeText(node, "buyEndTime", params.buyEndTime);
 
@@ -375,6 +399,34 @@ public class PaperStrategyParams {
             return !now.isBefore(start) && !now.isAfter(end);
         } catch (RuntimeException ex) {
             return true;
+        }
+    }
+
+    /**
+     * 次日看涨买入时间窗（默认 09:30-09:45）。
+     *
+     * <p>非法时间或 start &gt;= end 时回退到默认窗口，而不是「不限」——
+     * 次日模式本来就只该在开盘后一小段时间里买，配置坏了也不该变成全天追高。</p>
+     */
+    public boolean inNextDayBuyWindow(LocalDateTime at) {
+        if (at == null) {
+            return true;
+        }
+        LocalTime start = parseTime(nextDayBuyStartTime, LocalTime.of(9, 30));
+        LocalTime end = parseTime(nextDayBuyEndTime, LocalTime.of(9, 45));
+        if (!start.isBefore(end)) {
+            start = LocalTime.of(9, 30);
+            end = LocalTime.of(9, 45);
+        }
+        LocalTime now = at.toLocalTime();
+        return !now.isBefore(start) && !now.isAfter(end);
+    }
+
+    private static LocalTime parseTime(String text, LocalTime fallback) {
+        try {
+            return LocalTime.parse(text, TIME_FORMAT);
+        } catch (RuntimeException ex) {
+            return fallback;
         }
     }
 

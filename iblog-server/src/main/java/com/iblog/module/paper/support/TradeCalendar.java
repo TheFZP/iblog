@@ -78,6 +78,32 @@ public class TradeCalendar {
         return morning || afternoon;
     }
 
+    /** {@code from} 之后的下一个交易日（不含当天）。 */
+    public LocalDate nextTradingDay(LocalDate from) {
+        LocalDate date = from;
+        for (int i = 0; i < 30; i++) {
+            date = date.plusDays(1);
+            if (isTradingDay(date)) {
+                return date;
+            }
+        }
+        throw new IllegalStateException(
+                "未来 30 天内没有交易日，请检查 iblog.paper.holiday-dates：" + from);
+    }
+
+    /** {@code from} 之前的上一个交易日（不含当天）。 */
+    public LocalDate previousTradingDay(LocalDate from) {
+        LocalDate date = from;
+        for (int i = 0; i < 30; i++) {
+            date = date.minusDays(1);
+            if (isTradingDay(date)) {
+                return date;
+            }
+        }
+        throw new IllegalStateException(
+                "过去 30 天内没有交易日，请检查 iblog.paper.holiday-dates：" + from);
+    }
+
     public boolean isTradingTimeNow() {
         return isTradingTime(now());
     }

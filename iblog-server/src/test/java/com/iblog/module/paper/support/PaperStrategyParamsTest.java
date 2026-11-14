@@ -289,6 +289,50 @@ class PaperStrategyParamsTest {
     }
 
     @Test
+    void nextDayPredictDefaultsOffAndParses() throws Exception {
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper, "{}");
+        assertFalse(p.isNextDayPredictEnabled());
+        assertEquals(55, p.getNextDayMinProbability());
+        assertEquals(5, p.getNextDayMaxBuys());
+        assertEquals("09:30", p.getNextDayBuyStartTime());
+        assertEquals("09:45", p.getNextDayBuyEndTime());
+        assertTrue(p.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 9, 35)));
+        assertFalse(p.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 9, 46)));
+
+        PaperStrategyParams c = PaperStrategyParams.parse(mapper,
+                "{\"nextDayPredictEnabled\":true,\"nextDayMinProbability\":500,"
+                        + "\"nextDayMaxBuys\":99,\"nextDayBuyStartTime\":\"09:31\","
+                        + "\"nextDayBuyEndTime\":\"09:40\"}");
+        assertTrue(c.isNextDayPredictEnabled());
+        assertEquals(100, c.getNextDayMinProbability());
+        assertEquals(10, c.getNextDayMaxBuys());
+        assertEquals("09:31", c.getNextDayBuyStartTime());
+        assertEquals("09:40", c.getNextDayBuyEndTime());
+        assertTrue(c.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 9, 35)));
+        assertFalse(c.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 9, 45)));
+
+        PaperStrategyParams again = PaperStrategyParams.parse(mapper, c.toJson(mapper));
+        assertTrue(again.isNextDayPredictEnabled());
+        assertEquals(100, again.getNextDayMinProbability());
+        assertEquals(10, again.getNextDayMaxBuys());
+    }
+
+    @Test
+    void invalidNextDayWindowFallsBackToDefault() {
+        PaperStrategyParams p = PaperStrategyParams.parse(mapper,
+                "{\"nextDayPredictEnabled\":true,\"nextDayBuyStartTime\":\"25:00\","
+                        + "\"nextDayBuyEndTime\":\"abc\"}");
+        assertEquals("09:30", p.getNextDayBuyStartTime());
+        assertEquals("09:45", p.getNextDayBuyEndTime());
+
+        // start >= end 时回退默认窗口，而不是「全天不限」
+        PaperStrategyParams inverted = PaperStrategyParams.parse(mapper,
+                "{\"nextDayBuyStartTime\":\"10:00\",\"nextDayBuyEndTime\":\"09:30\"}");
+        assertTrue(inverted.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 9, 35)));
+        assertFalse(inverted.inNextDayBuyWindow(LocalDateTime.of(2026, 11, 14, 10, 0)));
+    }
+
+    @Test
     void predictDefaultsOffAndClamps() throws Exception {
         // 默认关闭：不改变原有「开盘选股 + 随时买入」的交易节奏
         PaperStrategyParams p = PaperStrategyParams.parse(mapper, "{}");

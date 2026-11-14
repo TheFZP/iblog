@@ -85,6 +85,23 @@ public class KlineCacheService {
     }
 
     /**
+     * 只读库，不回源。全市场扫描时先批量读缓存，缺数据再由调用方按预算补拉。
+     *
+     * @param minBars 库中不足这么多根时返回空列表，避免调用方拿着半截数据打分
+     */
+    public List<KlineItem> loadCached(String rawCode, int minBars) {
+        String code = StockCode.normalize(rawCode);
+        if (code.isEmpty()) {
+            return List.of();
+        }
+        List<StockKline> cached = select(code);
+        if (cached.size() < Math.max(1, minBars)) {
+            return List.of();
+        }
+        return cached.stream().map(this::toItem).toList();
+    }
+
+    /**
      * 读取两年深历史（约 500 根日 K），用于「近 N 日创两年新高」判断。
      *
      * <p>不落库：stock_kline 只缓存最近 120 根给常规打分/回测用，

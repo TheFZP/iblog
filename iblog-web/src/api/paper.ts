@@ -406,6 +406,16 @@ export interface PaperStrategyParams {
   predictBuyMinScore?: number
   /** 尾盘预测卖出阈值（0~200），持仓预测分低于该值时卖出 */
   predictSellMaxScore?: number
+  /** 次日看涨模式：只买昨日 15:30 全市场榜单，开启后接管自动买入 */
+  nextDayPredictEnabled?: boolean
+  /** 次日看涨·榜单参考概率下限（%） */
+  nextDayMinProbability?: number
+  /** 次日看涨·每日最多买入只数（1~10） */
+  nextDayMaxBuys?: number
+  /** 次日看涨·买入时间窗起点（HH:mm，含） */
+  nextDayBuyStartTime?: string
+  /** 次日看涨·买入时间窗终点（HH:mm，含） */
+  nextDayBuyEndTime?: string
   /** 自动买入时间窗起点（HH:mm，含）；仅约束自动交易买入 */
   buyStartTime?: string
   /** 自动买入时间窗终点（HH:mm，含）；start >= end 或非法时后端视为不限制 */

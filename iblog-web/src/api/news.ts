@@ -20,6 +20,8 @@ export interface StockNewsItem {
 /** 单条新闻标题 */
 export interface StockNewsHeadline {
   title: string
+  /** 原文链接（仅 http/https；旧数据可能为空串） */
+  url?: string
   source: string
   date: string
   /** stock=个股 / sector=板块 */

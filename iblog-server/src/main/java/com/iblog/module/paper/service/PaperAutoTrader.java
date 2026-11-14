@@ -16,10 +16,15 @@ import com.iblog.module.paper.support.LotRule;
 import com.iblog.module.paper.support.PaperConstants;
 import com.iblog.module.paper.support.PaperNumbers;
 import com.iblog.module.paper.support.PaperStrategyParams;
+import com.iblog.module.paper.support.PredictFilters;
 import com.iblog.module.paper.support.TradeCalendar;
+import com.iblog.module.stock.entity.StockPredictDaily;
 import com.iblog.module.stock.model.KlineItem;
 import com.iblog.module.stock.model.MarketSentiment;
+import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.MarketSentimentService;
+import com.iblog.module.stock.service.NextDayPredictService;
+import com.iblog.module.stock.support.StockCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +68,8 @@ public class PaperAutoTrader {
     private final PaperSignalMapper signalMapper;
     private final KlineCacheService klineCacheService;
     private final MarketSentimentService sentimentService;
+    private final NextDayPredictService nextDayPredictService;
+    private final PaperQuoteService quoteService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
     private final ObjectMapper objectMapper;
@@ -260,6 +267,11 @@ public class PaperAutoTrader {
     private void buy(PaperAccount account, PaperStrategy strategy, MarketSentiment sentiment,
                      Set<String> justSold) {
         PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        // 次日看涨模式接管买入：只按昨天的全市场榜单买，不回退到热榜/尾盘候选
+        if (params.isNextDayPredictEnabled()) {
+            buyNextDay(account, strategy, params, sentiment, justSold);
+            return;
+        }
         if (!params.inBuyWindow(calendar.now())) {
             return;
         }
@@ -353,6 +365,171 @@ public class PaperAutoTrader {
                 log.info("自动买入被拒 code={} reason={}", candidate.getCode(), ex.getMessage());
             }
         }
+    }
+
+    /**
+     * 次日看涨买入：昨日 15:30 榜单 → 概率过滤 → 实时行情定价 → 复用常规仓位/风控/下单。
+     *
+     * <p>与常规买入的区别只有「候选来源」：仓位上限、整手、T+1、涨跌停、每日笔数
+     * 全部由 {@link PaperOrderService#place} 兜底，不存在绕过风控的路径。</p>
+     */
+    private void buyNextDay(PaperAccount account, PaperStrategy strategy, PaperStrategyParams params,
+                            MarketSentiment sentiment, Set<String> justSold) {
+        if (!params.inNextDayBuyWindow(calendar.now())) {
+            return;
+        }
+        String blockReason = sentimentBuyBlockReason(params, sentiment);
+        if (blockReason != null) {
+            log.info("模拟盘情绪不足不开新仓（次日看涨） account={} 情绪={}分({}) 门槛={}",
+                    account.getId(),
+                    sentiment == null ? "-" : sentiment.getScore(),
+                    sentiment == null ? "-" : sentiment.getLevel(),
+                    params.getSentimentBuyMinScore());
+            recordBlockedOnce(account, strategy, blockReason);
+            return;
+        }
+        List<StockPredictDaily> board = nextDayPredictService.latestBefore(calendar.today());
+        if (board.isEmpty()) {
+            return;
+        }
+        LocalDate boardDate = board.get(0).getTradeDate();
+        if (boardDate == null || boardDate.isBefore(calendar.today().minusDays(7))) {
+            log.info("模拟盘次日看涨：最近榜单 {} 已过期，跳过 account={}", boardDate, account.getId());
+            return;
+        }
+
+        Set<String> skip = new HashSet<>(justSold);
+        skip.addAll(todaySoldCodes(account.getId()));
+        BuyState state = nextDayBuyState(account.getId());
+        skip.addAll(state.attempted());
+        int maxBuys = Math.max(1, params.getNextDayMaxBuys());
+        int bought = state.bought();
+        double threshold = params.getNextDayMinProbability();
+        double maxPositionPct = properties.getPaper().getMaxPositionPct();
+        double maxTotalPct = properties.getPaper().getMaxTotalPositionPct();
+
+        for (StockPredictDaily row : board) {
+            if (bought >= maxBuys) {
+                break;
+            }
+            if (row.getProbability() == null || row.getProbability().doubleValue() < threshold) {
+                continue;
+            }
+            if (row.getBuyable() != null && row.getBuyable() == 0) {
+                continue;
+            }
+            String code = StockCode.normalize(row.getCode());
+            if (code.isEmpty() || skip.contains(code)) {
+                continue;
+            }
+
+            PaperAccount fresh = accountMapper.selectById(account.getId());
+            if (fresh == null) {
+                return;
+            }
+            account = fresh;
+            List<PaperPosition> positions = positionService.list(account.getId());
+            if (holds(positions, code)) {
+                continue;
+            }
+
+            StockQuote quote;
+            try {
+                quote = quoteService.quote(code);
+            } catch (RuntimeException ex) {
+                log.debug("次日看涨：行情失败 code={} err={}", code, ex.getMessage());
+                continue;
+            }
+            if (quote == null || quote.getPrice() <= 0) {
+                continue;
+            }
+            BigDecimal price = BigDecimal.valueOf(quote.getPrice()).setScale(3, RoundingMode.HALF_UP);
+            double limitPct = PredictFilters.limitUpPct(code, row.getName());
+            double openChangePct = quote.getPrevClose() > 0
+                    ? (quote.getPrice() - quote.getPrevClose()) / quote.getPrevClose() * 100 : 0;
+            if (openChangePct >= limitPct - 0.15) {
+                // 开盘涨停买不进，记一次信号后当天不再重试
+                signalNextDay(account, strategy, row, "次日看涨：涨停无法买入", price);
+                skip.add(code);
+                continue;
+            }
+
+            BigDecimal totalAsset = PaperNumbers.nz(account.getTotalAsset());
+            BigDecimal room = totalAsset.multiply(BigDecimal.valueOf(maxTotalPct))
+                    .subtract(PaperNumbers.nz(account.getMarketValue()))
+                    .min(PaperNumbers.nz(account.getCash()));
+            if (room.signum() <= 0) {
+                signalNextDay(account, strategy, row, "次日看涨：资金或仓位已满", price);
+                return;
+            }
+            BigDecimal budget = totalAsset.multiply(BigDecimal.valueOf(maxPositionPct)).min(room)
+                    .multiply(new BigDecimal("0.98"));
+            int quantity = LotRule.roundDown(code,
+                    budget.divide(price, 0, RoundingMode.DOWN).intValue());
+            if (quantity <= 0) {
+                signalNextDay(account, strategy, row, "次日看涨：资金不足以买入一手", price);
+                skip.add(code);
+                continue;
+            }
+
+            PaperOrderRequest request = new PaperOrderRequest();
+            request.setCode(code);
+            request.setSide(PaperConstants.SIDE_BUY);
+            request.setType(PaperConstants.TYPE_MARKET);
+            request.setQuantity(quantity);
+            try {
+                var filled = orderService.place(account, request, PaperConstants.SOURCE_STRATEGY, strategy.getId());
+                signalNextDay(account, strategy, row, "次日看涨：自动买入", filled.getAvgPrice());
+                skip.add(code);
+                bought++;
+            } catch (BizException ex) {
+                log.info("次日看涨买入被拒 code={} reason={}", code, ex.getMessage());
+                signalNextDay(account, strategy, row, "次日看涨：下单被拒（" + ex.getMessage() + "）", price);
+                skip.add(code);
+            }
+        }
+    }
+
+    /** 次日模式信号：reason 统一以「次日看涨」开头，便于当天去重与前端区分。 */
+    private void signalNextDay(PaperAccount account, PaperStrategy strategy, StockPredictDaily row,
+                               String prefix, BigDecimal price) {
+        double probability = row.getProbability() == null ? 0 : row.getProbability().doubleValue();
+        String text = prefix + "（第" + (row.getRankNo() == null ? 0 : row.getRankNo())
+                + "名，概率" + String.format("%.1f", probability) + "%）";
+        recordSignal(account, strategy, row.getCode(), row.getName(), PaperConstants.ACTION_BUY,
+                truncateSignal(text, 255), price);
+    }
+
+    /** 当天已尝试（所有「次日看涨」信号）与已成功买入的数量。 */
+    private BuyState nextDayBuyState(Long accountId) {
+        Set<String> attempted = new HashSet<>();
+        int bought = 0;
+        try {
+            List<PaperSignal> signals = signalMapper.selectList(Wrappers.<PaperSignal>lambdaQuery()
+                    .eq(PaperSignal::getAccountId, accountId)
+                    .eq(PaperSignal::getAction, PaperConstants.ACTION_BUY)
+                    .eq(PaperSignal::getTradeDate, calendar.todayText())
+                    .likeRight(PaperSignal::getReason, "次日看涨"));
+            for (PaperSignal signal : signals) {
+                if (signal.getCode() == null || signal.getCode().isEmpty()) {
+                    continue;
+                }
+                attempted.add(StockCode.normalize(signal.getCode()));
+                if (signal.getReason() != null && signal.getReason().startsWith("次日看涨：自动买入")) {
+                    bought++;
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("查询次日看涨信号失败 account={} err={}", accountId, ex.toString());
+        }
+        return new BuyState(attempted, bought);
+    }
+
+    private record BuyState(Set<String> attempted, int bought) {
+    }
+
+    private static String truncateSignal(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max);
     }
 
     private boolean holds(List<PaperPosition> positions, String code) {

@@ -85,8 +85,10 @@ public class StockNewsController {
             }
             List<Headline> list = new ArrayList<>();
             for (JsonNode node : root) {
+                String url = node.path("url").asText("");
                 list.add(new Headline(
                         node.path("title").asText(""),
+                        url.startsWith("http://") || url.startsWith("https://") ? url : "",
                         node.path("source").asText(""),
                         node.path("date").asText(""),
                         node.path("scope").asText("stock")));
@@ -101,7 +103,7 @@ public class StockNewsController {
                            String label, String summary, String model, String updatedAt) {
     }
 
-    public record Headline(String title, String source, String date, String scope) {
+    public record Headline(String title, String url, String source, String date, String scope) {
     }
 
     public record NewsDetail(String code, String name, int score, double confidence,

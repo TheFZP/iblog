@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iblog.module.paper.support.TradeCalendar;
+import com.iblog.module.stock.entity.StockNewsArticle;
 import com.iblog.module.stock.entity.StockNewsScore;
+import com.iblog.module.stock.mapper.StockNewsArticleMapper;
 import com.iblog.module.stock.mapper.StockNewsScoreMapper;
 import com.iblog.module.stock.model.HotStockItem;
 import com.iblog.module.stock.service.HotListService;
@@ -15,13 +17,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -75,12 +81,15 @@ public class AiNewsScoreService {
     private static final int MAX_TOKENS = 8192;
     /** 单次 LLM 精判的股票数：拆小批，避免一只票的异常输出把整批结果截断。 */
     private static final int LLM_CHUNK_SIZE = 12;
+    /** 次日预测单轮最多扫描的股票数（与 outputTopK / newsTopM 对齐）。 */
+    private static final int MAX_PREDICT_STOCKS = 60;
 
     private final AiWebSearchService webSearchService;
     private final AiConfigService configService;
     private final AiLlmClient llmClient;
     private final HotListService hotListService;
     private final StockNewsScoreMapper scoreMapper;
+    private final StockNewsArticleMapper articleMapper;
     private final TradeCalendar calendar;
     private final NewsKeywordScorer keywordScorer;
 
@@ -201,6 +210,66 @@ public class AiNewsScoreService {
         }
     }
 
+    /**
+     * 次日预测专用扫描：接受显式股票列表，绕过「09:00-15:05」时间门禁和 30 秒节流。
+     *
+     * <p>15:30 的预测任务需要当天的新闻结论，而常规扫描在 15:05 就停了；
+     * 这个入口只在预测任务里调用，返回的分数已经落库并进内存缓存。</p>
+     *
+     * @return 每个目标的新闻分（没有搜到新闻的目标不返回）
+     */
+    public List<StockNewsScore> scanForPrediction(List<Target> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return List.of();
+        }
+        if (!calendar.isTradingDay(calendar.today())) {
+            return List.of();
+        }
+        Map<String, ScanTarget> universe = new LinkedHashMap<>();
+        for (Target target : targets) {
+            if (target == null) {
+                continue;
+            }
+            String code = StockCode.normalize(target.code());
+            if (code.isEmpty() || StockCode.isHk(code) || universe.containsKey(code)) {
+                continue;
+            }
+            universe.put(code, new ScanTarget(code,
+                    target.name() == null ? "" : target.name(),
+                    target.tags() == null ? List.of() : target.tags()));
+            if (universe.size() >= MAX_PREDICT_STOCKS) {
+                break;
+            }
+        }
+        if (universe.isEmpty()) {
+            return List.of();
+        }
+        long start = System.currentTimeMillis();
+        try {
+            // 预测候选来自全市场打分，没有热榜概念标签；先只搜个股新闻，避免把板块情绪加到单票上
+            List<StockNewsScore> results = scanParallel(universe.values(), Map.of());
+            if (results.size() >= MIN_LLM_STOCKS) {
+                refineWithLlm(results);
+            }
+            persistAndCache(results);
+            persistArticles(results);
+            log.info("预测新闻扫描完成 分析={} / {} 只", results.size(), universe.size());
+            return results;
+        } catch (RuntimeException ex) {
+            log.warn("预测新闻扫描失败 err={}", ex.toString());
+            return List.of();
+        } finally {
+            log.info("预测新闻扫描耗时={}ms", System.currentTimeMillis() - start);
+        }
+    }
+
+    /** 预测扫描的目标：代码 + 名称（+ 可选概念标签）。 */
+    public record Target(String code, String name, List<String> tags) {
+        public Target(String code, String name) {
+            this(code, name, List.of());
+        }
+    }
+
     private void doScan(Map<String, String> extraStocks) {
         if (!calendar.isTradingDay(calendar.today())) {
             return;
@@ -253,11 +322,27 @@ public class AiNewsScoreService {
             return;
         }
 
+        List<StockNewsScore> results = scanParallel(universe.values(), sectorNews);
+
+        // 批量 LLM 精判（有 Key 且结果够多）；否则保留关键词兜底结果
+        if (results.size() >= MIN_LLM_STOCKS) {
+            refineWithLlm(results);
+        }
+        persistAndCache(results);
+        log.info("新闻扫描完成 分析={} 只", results.size());
+    }
+
+    /** 并发搜索 + 关键词打分，整轮有硬超时；单只失败只跳过。 */
+    private List<StockNewsScore> scanParallel(Collection<ScanTarget> targets,
+                                              Map<String, List<AiWebSearchService.SearchHit>> sectorNews) {
+        if (targets == null || targets.isEmpty()) {
+            return new ArrayList<>();
+        }
         ExecutorService pool = Executors.newFixedThreadPool(
-                Math.max(1, Math.min(CONCURRENCY, universe.size())));
-        CountDownLatch latch = new CountDownLatch(universe.size());
+                Math.max(1, Math.min(CONCURRENCY, targets.size())));
+        CountDownLatch latch = new CountDownLatch(targets.size());
         List<StockNewsScore> results = new CopyOnWriteArrayList<>();
-        for (ScanTarget target : universe.values()) {
+        for (ScanTarget target : targets) {
             pool.submit(() -> {
                 try {
                     StockNewsScore s = scanOne(target, sectorNews);
@@ -274,19 +359,13 @@ public class AiNewsScoreService {
         pool.shutdown();
         try {
             if (!latch.await(SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                log.warn("新闻扫描超时，只处理 {} / {} 只", results.size(), universe.size());
+                log.warn("新闻扫描超时，只处理 {} / {} 只", results.size(), targets.size());
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
         pool.shutdownNow();
-
-        // 批量 LLM 精判（有 Key 且结果够多）；否则保留关键词兜底结果
-        if (results.size() >= MIN_LLM_STOCKS) {
-            refineWithLlm(results);
-        }
-        persistAndCache(results);
-        log.info("新闻扫描完成 分析={} 只", results.size());
+        return new ArrayList<>(results);
     }
 
     /** 扫描目标：热榜股票带概念标签，持仓股票没有标签。 */
@@ -500,6 +579,102 @@ public class AiNewsScoreService {
         }
     }
 
+    /**
+     * 把本轮命中的新闻原文落库（标题/链接/来源/发布时间）。
+     *
+     * <p>预测每天重跑时先删同一「交易日 + 代码」的旧行再插，避免重跑产生重复；
+     * 没有有效 http(s) 链接的条目不存档（原文地址是后续回测的关键，标题本身不够）。</p>
+     */
+    void persistArticles(List<StockNewsScore> results) {
+        for (StockNewsScore s : results) {
+            if (s.getTradeDate() == null || s.getHeadlines() == null || s.getHeadlines().isBlank()) {
+                continue;
+            }
+            List<StockNewsArticle> articles = parseArticles(s);
+            try {
+                articleMapper.delete(new LambdaQueryWrapper<StockNewsArticle>()
+                        .eq(StockNewsArticle::getTradeDate, s.getTradeDate())
+                        .eq(StockNewsArticle::getCode, s.getCode()));
+                for (StockNewsArticle article : articles) {
+                    articleMapper.insert(article);
+                }
+            } catch (RuntimeException ex) {
+                log.debug("新闻原文落库失败 code={} err={}", s.getCode(), ex.getMessage());
+            }
+        }
+    }
+
+    private List<StockNewsArticle> parseArticles(StockNewsScore score) {
+        List<StockNewsArticle> articles = new ArrayList<>();
+        Set<String> seenHash = new LinkedHashSet<>();
+        JsonNode root;
+        try {
+            root = AiJson.MAPPER.readTree(score.getHeadlines());
+        } catch (Exception ex) {
+            return articles;
+        }
+        if (root == null || !root.isArray()) {
+            return articles;
+        }
+        for (JsonNode node : root) {
+            String url = node.path("url").asText("").trim();
+            if (!isHttpUrl(url)) {
+                continue;
+            }
+            String hash = md5(url);
+            if (!seenHash.add(hash)) {
+                continue;
+            }
+            StockNewsArticle article = new StockNewsArticle();
+            article.setTradeDate(score.getTradeDate());
+            article.setCode(score.getCode());
+            article.setName(truncate(score.getName(), 50));
+            article.setTitle(truncate(node.path("title").asText(""), 300));
+            article.setUrl(truncate(url, 1000));
+            article.setUrlHash(hash);
+            article.setSource(truncate(node.path("source").asText(""), 64));
+            article.setPublishedAt(parsePublishTime(node.path("date").asText("")));
+            article.setSnippet(truncate(node.path("snippet").asText(""), 1000));
+            article.setScope(truncate(node.path("scope").asText("stock"), 16));
+            article.setBatch("predict");
+            articles.add(article);
+        }
+        return articles;
+    }
+
+    /** 清理超过保留天数的新闻原文。 */
+    public void cleanupArticles(int keepDays) {
+        if (keepDays <= 0) {
+            return;
+        }
+        try {
+            articleMapper.delete(new LambdaQueryWrapper<StockNewsArticle>()
+                    .lt(StockNewsArticle::getTradeDate, calendar.today().minusDays(keepDays)));
+        } catch (RuntimeException ex) {
+            log.debug("清理旧新闻原文失败 err={}", ex.getMessage());
+        }
+    }
+
+    static boolean isHttpUrl(String url) {
+        return url != null && (url.startsWith("http://") || url.startsWith("https://"));
+    }
+
+    static String md5(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("MD5");
+            return HexFormat.of().formatHex(digest.digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("MD5 不可用", ex);
+        }
+    }
+
+    private static String truncate(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= max ? text : text.substring(0, max);
+    }
+
     private double keywordConfidence(List<AiWebSearchService.SearchHit> hits) {
         // 关键词只是粗方向，不给高置信度：即使命中官媒来源，置信度上限也压到 0.6，
         // 这样兜底分对总分的实际影响最多约为加分上限的 60%，不会盖过 AI 精判。
@@ -606,8 +781,10 @@ public class AiNewsScoreService {
     private static void addHeadline(ArrayNode arr, AiWebSearchService.SearchHit hit, String scope) {
         ObjectNode node = arr.addObject();
         node.put("title", hit.title());
+        node.put("url", isHttpUrl(hit.url()) ? hit.url() : "");
         node.put("source", hit.source());
         node.put("date", hit.date());
+        node.put("snippet", hit.snippet() == null ? "" : hit.snippet());
         node.put("scope", scope);
     }
 

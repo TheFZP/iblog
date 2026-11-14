@@ -56,4 +56,24 @@ class TradeCalendarTest {
         assertEquals(240, TradeCalendar.SESSION_MINUTES);
         assertEquals(TradeCalendar.SESSION_MINUTES, calendar.elapsedMinutes(at(15, 30)));
     }
+
+    @Test
+    void nextAndPreviousTradingDaySkipWeekend() {
+        // 2026-10-23 是周五
+        assertEquals(LocalDate.of(2026, 10, 26),
+                calendar.nextTradingDay(LocalDate.of(2026, 10, 23)));
+        assertEquals(LocalDate.of(2026, 10, 23),
+                calendar.previousTradingDay(LocalDate.of(2026, 10, 26)));
+    }
+
+    @Test
+    void nextAndPreviousTradingDaySkipConfiguredHoliday() {
+        IblogProperties props = new IblogProperties();
+        props.getPaper().setHolidayDates("2026-10-26");
+        TradeCalendar withHoliday = new TradeCalendar(props);
+        assertEquals(LocalDate.of(2026, 10, 27),
+                withHoliday.nextTradingDay(LocalDate.of(2026, 10, 23)));
+        assertEquals(LocalDate.of(2026, 10, 23),
+                withHoliday.previousTradingDay(LocalDate.of(2026, 10, 27)));
+    }
 }
