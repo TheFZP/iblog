@@ -92,6 +92,15 @@
             改名
           </button>
           <button
+            class="mini-btn"
+            type="button"
+            :disabled="!currentAccount"
+            title="查看当前模拟盘的净值曲线"
+            @click="openNavDialog"
+          >
+            净值曲线
+          </button>
+          <button
             class="mini-btn mini-btn--danger"
             type="button"
             :disabled="!canDeleteAccount"
@@ -1331,27 +1340,6 @@
         <!-- 次日看涨榜：全局预测，不随模拟账户切换 -->
         <NextDayPredictPanel />
 
-        <!-- 净值曲线 -->
-        <section class="panel" aria-label="净值曲线">
-          <div class="panel__head">
-            <h2 class="panel__title">净值曲线</h2>
-            <div class="seg" role="group" aria-label="时间范围">
-              <button
-                v-for="days in NAV_DAYS"
-                :key="days"
-                type="button"
-                class="seg__btn"
-                :class="{ 'is-active': navDays === days }"
-                :aria-pressed="navDays === days"
-                @click="setNavDays(days)"
-              >
-                {{ days }} 天
-              </button>
-            </div>
-          </div>
-          <NavChart :items="nav" :loading="navLoading" />
-        </section>
-
         <!-- 持仓 -->
         <section class="panel" aria-label="持仓">
           <div class="panel__head">
@@ -1842,6 +1830,49 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- 净值曲线（默认不在页面展示，点「净值曲线」按钮打开） -->
+    <div v-if="navOpen" class="stock-modal" @click.self="closeNavDialog">
+      <div
+        class="stock-modal__box nav-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="nav-dialog-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="nav-dialog-title" class="stock-modal__title">净值曲线</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="closeNavDialog"
+          >
+            ×
+          </button>
+        </div>
+        <div class="nav-dialog">
+          <div class="nav-dialog__bar">
+            <span class="nav-dialog__hint">
+              {{ currentAccount ? `${currentAccount.name} · 每日收盘结算后记录` : '' }}
+            </span>
+            <div class="seg" role="group" aria-label="时间范围">
+              <button
+                v-for="days in NAV_DAYS"
+                :key="days"
+                type="button"
+                class="seg__btn"
+                :class="{ 'is-active': navDays === days }"
+                :aria-pressed="navDays === days"
+                @click="setNavDays(days)"
+              >
+                {{ days }} 天
+              </button>
+            </div>
+          </div>
+          <NavChart :items="nav" :loading="navLoading" />
+        </div>
       </div>
     </div>
 
@@ -2624,6 +2655,8 @@ let newsLoadedAt = 0
 let newsLoadedKey = ''
 const navDays = ref(90)
 const navLoading = ref(false)
+/** 净值曲线弹窗：默认不展示，点顶部「净值曲线」才打开并加载数据 */
+const navOpen = ref(false)
 
 const orders = ref<PaperOrder[]>([])
 const ordersTotal = ref(0)
@@ -2964,7 +2997,8 @@ async function refreshAll(silent = false, force = false) {
       loadAccounts(),
       loadAccount(silent),
       loadPositions(silent),
-      loadNav(silent),
+      // 曲线弹窗没打开就不必拉净值数据，省一次请求
+      navOpen.value ? loadNav(silent) : Promise.resolve(),
       loadOrders(silent),
       loadTrades(silent)
     ])
@@ -3862,6 +3896,16 @@ function goTradePage(page: number) {
   if (page < 1 || page > tradePageCount.value || page === tradePage.value) return
   tradePage.value = page
   void loadTrades()
+}
+
+function openNavDialog() {
+  if (!currentAccount.value) return
+  navOpen.value = true
+  void loadNav()
+}
+
+function closeNavDialog() {
+  navOpen.value = false
 }
 
 function setNavDays(days: number) {
@@ -4944,6 +4988,30 @@ onBeforeUnmount(() => {
 
 .account-modal__box {
   width: min(460px, 100%);
+}
+
+/* 净值曲线弹窗：宽度贴近图表 viewBox，避免曲线被压得过窄 */
+.nav-modal__box {
+  width: min(780px, 100%);
+}
+
+.nav-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.nav-dialog__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.nav-dialog__hint {
+  font-size: var(--t-xs);
+  color: var(--c-text-3);
 }
 
 .account-form {
