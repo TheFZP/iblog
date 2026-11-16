@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
   <section class="panel ndp" aria-label="次日看涨榜">
     <div class="ndp__head">
       <h2 class="ndp__title">
-        次日看涨
+        预测榜单
         <span class="ndp__count">{{ items.length }}</span>
       </h2>
       <div class="ndp__controls">

@@ -263,11 +263,12 @@ const ALL_NAVS: NavItem[] = [
   { path: '/stock', label: '行情', authOnly: true },
   { path: '/stock/iwencai', label: '问财选股', authOnly: true },
   { path: '/paper', label: '模拟盘', authOnly: true },
+  { path: '/predict', label: '次日看涨', authOnly: true },
   { path: '/tools', label: '工具箱' },
   { path: '/about', label: '关于' }
 ]
 
-/** 「行情」「问财选股」「模拟盘」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
+/** 「行情」「问财选股」「模拟盘」「次日看涨」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
 const navs = computed(() =>
   authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => !item.authOnly)
 )

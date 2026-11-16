@@ -93,6 +93,23 @@ const routes: RouteRecordRaw[] = [
         ]
       },
       {
+        // 次日看涨同样复用 Gate：榜单接口在 /api/stock/** 下，未登录会 401
+        path: 'predict',
+        component: () => import('@/views/stock/Gate.vue'),
+        meta: {
+          gateTitle: '次日看涨仅对已登录用户开放',
+          gateDesc: '请先登录管理后台，再通过后台顶部的「次日看涨」入口进入。同一浏览器登录过后台后会自动解锁。'
+        },
+        children: [
+          {
+            path: '',
+            name: 'NextDayPredict',
+            component: () => import('@/views/predict/index.vue'),
+            meta: { title: '次日看涨' }
+          }
+        ]
+      },
+      {
         path: 'about',
         name: 'About',
         component: () => import('@/views/about/index.vue'),
@@ -142,9 +159,9 @@ const SITE_TITLE = 'iblog'
  * <p>1. 地址栏带 ticket 时先消费：成功后后端会 Set-Cookie，紧接着把 ticket 从 query 摘掉
  * （replace 替换历史记录），既避免票据留在地址栏被刷新/分享，也避免守卫反复消费造成循环。</p>
  * <p>2. 其余情况确认一次登录态即可（已缓存时无网络请求，网络异常也按未登录继续）。</p>
- * <p>未登录不在这里重定向：「行情」「模拟盘」由 Gate 显示锁定卡片，其他页面不受影响。</p>
+ * <p>未登录不在这里重定向：「行情」「模拟盘」「次日看涨」由 Gate 显示锁定卡片，其他页面不受影响。</p>
  */
-const GATED_PATHS = ['/stock', '/paper']
+const GATED_PATHS = ['/stock', '/paper', '/predict']
 
 function isGatedPath(path: string) {
   return GATED_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))

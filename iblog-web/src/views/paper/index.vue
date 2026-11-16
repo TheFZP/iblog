@@ -1337,9 +1337,6 @@
           </div>
         </section>
 
-        <!-- 次日看涨榜：全局预测，不随模拟账户切换 -->
-        <NextDayPredictPanel />
-
         <!-- 持仓 -->
         <section class="panel" aria-label="持仓">
           <div class="panel__head">
@@ -2066,7 +2063,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
-import NextDayPredictPanel from '@/components/paper/NextDayPredictPanel.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import StockTags from '@/components/stock/StockTags.vue'
 import {

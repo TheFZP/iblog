@@ -44,6 +44,7 @@
         <div class="header-right">
           <el-button link type="primary" @click="openStock">行情</el-button>
           <el-button link type="primary" @click="openPaper">模拟盘</el-button>
+          <el-button link type="primary" @click="openPredict">次日看涨</el-button>
           <el-button link type="primary" @click="openWeb">查看官网</el-button>
           <el-dropdown @command="onCommand">
             <span class="user">
@@ -105,7 +106,7 @@ function openWeb() {
 }
 
 /**
- * 从后台直接打开官网页面（行情 / 模拟盘）。
+ * 从后台直接打开官网页面（行情 / 模拟盘 / 次日看涨）。
  *
  * 官网与后台同主机（不同端口）时，登录 Cookie 天然共享，这里走一次性票据也无害；
  * 两者是不同网址时，票据就是免二次登录的关键。
@@ -139,6 +140,10 @@ function openStock() {
 
 function openPaper() {
   void openPortal('/paper', '模拟盘')
+}
+
+function openPredict() {
+  void openPortal('/predict', '次日看涨')
 }
 
 async function onCommand(command: string) {
