@@ -261,14 +261,13 @@ const ALL_NAVS: NavItem[] = [
   { path: '/archive', label: '归档' },
   { path: '/food', label: '美食' },
   { path: '/stock', label: '行情', authOnly: true },
-  { path: '/stock/iwencai', label: '问财选股', authOnly: true },
   { path: '/paper', label: '模拟盘', authOnly: true },
   { path: '/predict', label: '次日看涨', authOnly: true },
   { path: '/tools', label: '工具箱' },
   { path: '/about', label: '关于' }
 ]
 
-/** 「行情」「问财选股」「模拟盘」「次日看涨」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
+/** 「行情」「模拟盘」「次日看涨」只对登录过后台的用户可见：桌面导航、移动导航、页脚共用这一份 */
 const navs = computed(() =>
   authenticated.value ? ALL_NAVS : ALL_NAVS.filter((item) => !item.authOnly)
 )
@@ -276,9 +275,9 @@ const navs = computed(() =>
 /**
  * 当前路由是否落在该导航项下。
  *
- * <p>不再是简单的 startsWith：`/stock/iwencai` 本身也落在 `/stock` 前缀下，
- * 那样「行情」和「问财选股」会同时高亮。改为「命中项里取最长的那条」，
- * 即子路径优先——这也让以后再加 `/stock/xxx` 子页时不用改这里。</p>
+ * <p>不再是简单的 startsWith：若同时存在「行情 /stock」和它的子页导航项，
+ * startsWith 会让两者一起高亮。改为「命中项里取最长的那条」，即子路径优先，
+ * 以后再加 `/stock/xxx` 子页时不用改这里。</p>
  */
 function isActive(path: string) {
   if (path === '/') {

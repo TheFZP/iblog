@@ -19,6 +19,14 @@
           <button
             class="btn btn--ghost head-btn"
             type="button"
+            title="用一句话描述条件，从同花顺问财选股"
+            @click="iwencaiOpen = true"
+          >
+            问财选股
+          </button>
+          <button
+            class="btn btn--ghost head-btn"
+            type="button"
             :disabled="refreshing"
             @click="manualRefresh"
           >
@@ -1873,6 +1881,29 @@
       </div>
     </div>
 
+    <!-- 问财选股：用 v-show 保留上次查询结果，避免每次重开都重新消耗问财请求次数 -->
+    <div v-show="iwencaiOpen" class="stock-modal" @click.self="iwencaiOpen = false">
+      <div
+        class="stock-modal__box iw-modal__box"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="iw-modal-title"
+      >
+        <div class="stock-modal__head">
+          <h2 id="iw-modal-title" class="stock-modal__title">问财选股</h2>
+          <button
+            class="stock-modal__close"
+            type="button"
+            aria-label="关闭"
+            @click="iwencaiOpen = false"
+          >
+            ×
+          </button>
+        </div>
+        <IwencaiPanel />
+      </div>
+    </div>
+
     <!-- 删除模拟盘（二次确认） -->
     <div v-if="deleteOpen" class="stock-modal" @click.self="closeDeleteAccount">
       <div
@@ -2064,6 +2095,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
+import IwencaiPanel from '@/components/stock/IwencaiPanel.vue'
 import StockTags from '@/components/stock/StockTags.vue'
 import {
   applyPaperRule,
@@ -2618,6 +2650,9 @@ const currentAccountId = ref<number | null>(null)
 const accountSwitching = ref(false)
 /** 切换代数：切账户后忽略上一账户在途请求的返回，避免串数据 */
 let accountEpoch = 0
+
+/** 问财选股弹窗：内容组件用 v-show 常驻，关闭后保留上次查询结果 */
+const iwencaiOpen = ref(false)
 
 const createOpen = ref(false)
 const createName = ref('')
@@ -5008,6 +5043,12 @@ onBeforeUnmount(() => {
 .nav-dialog__hint {
   font-size: var(--t-xs);
   color: var(--c-text-3);
+}
+
+/* 问财选股弹窗：结果表格列多，给足横向空间；表格自身限高，避免与弹窗滚动叠加 */
+.iw-modal__box {
+  width: min(1120px, 100%);
+  --iw-table-max: 44vh;
 }
 
 .account-form {

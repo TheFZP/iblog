@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
- * 问财独立选股页：输入一句自然语言问句，拿回一批符合条件的股票。
+ * 问财选股面板（从原 /stock/iwencai 页面抽出，嵌在模拟盘的对话框里）。
  *
  * <p>表格数据来自 `/stock/ai/iwencai`：`columns` 是动态表头，`rows` 是二维数组。
  * 服务端会忽略 `page`，一次只回 `perPage` 行，所以翻页全部在前端切片。</p>
  */
-import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   findColumn,
   optimizeIwencaiQuery,
@@ -18,7 +18,6 @@ import { buildPresetText, clampPage, pageCount, sliceRows } from '@/components/s
 import { openGlobalAi } from '@/composables/useGlobalAi'
 
 const router = useRouter()
-const route = useRoute()
 
 const PAGE_SIZES = [20, 50, 100] as const
 const QUICK_QUESTIONS = [
@@ -177,7 +176,7 @@ function openRow(code: string | null): void {
 /**
  * 把当前结果的前 30 行拼成纯文本表格，交给全局 AI 入口。
  *
- * <p>直接在本页唤起面板，不再跳 {@code /stock}：跳页会把用户从刚选出来的结果上踢走，
+ * <p>直接在当前页唤起面板，不跳路由：跳页会把用户从刚选出来的结果上踢走，
  * 回来还得重新查一遍——而问财凭证有请求次数限制，重查不便宜。
  * 面板挂在布局层，任何页面都能开，所以这里不需要路由。</p>
  *
@@ -189,227 +188,176 @@ function askAi(): void {
   }
   openGlobalAi(buildPresetText(columns.value, rows.value, 30))
 }
-
-function goBack(): void {
-  void router.push('/stock')
-}
-
-onMounted(() => {
-  // 允许 `/stock/iwencai?q=...` 直接带条件进来，详情页给个股加一条「用问财找相似标的」时就不用二次输入。
-  const preset = typeof route.query.q === 'string' ? route.query.q.trim() : ''
-  if (preset) {
-    question.value = preset
-    void run(preset)
-  }
-})
 </script>
 
 <template>
-  <div class="iw-page">
-    <div class="layout layout--mid">
-      <button type="button" class="iw-back" @click="goBack">← 返回行情</button>
+  <div class="iw-panel">
+    <p class="iw-desc">
+      直接用一句话描述选股条件，例如「今日涨停且换手率大于5%」，由同花顺问财解析后返回结果。
+    </p>
 
-      <header class="iw-head">
-        <h1 class="iw-title">问财选股</h1>
-        <p class="iw-desc">
-          直接用一句话描述选股条件，例如「今日涨停且换手率大于5%」，由同花顺问财解析后返回结果。
-        </p>
-      </header>
-
-      <section class="surface iw-search-card">
-        <form class="iw-search" @submit.prevent="submit">
-          <input
-            v-model="question"
-            class="iw-search__input"
-            type="search"
-            enterkeyhint="search"
-            placeholder="例如：今日涨停且换手率大于5%"
-            aria-label="选股条件"
-            :disabled="loading"
-          />
-          <button type="submit" class="btn iw-search__btn" :disabled="loading || !question.trim()">
-            选股
-          </button>
-          <button
-            type="button"
-            class="btn btn--ghost iw-optimize__btn"
-            :disabled="loading || optimizing || !question.trim()"
-            title="让 AI 把口语条件改写成问财更易识别的写法"
-            @click="optimize"
-          >
-            {{ optimizing ? '优化中…' : '✨ AI 优化' }}
-          </button>
-        </form>
-
-        <p v-if="optimizeHint" class="iw-optimize__hint">{{ optimizeHint }}</p>
-
-        <div class="iw-chips">
-          <!-- 快捷问句在请求中也不禁用：用户连点两句很常见，让新问句抢先、旧响应靠 seq 丢弃，
-               比把按钮锁住等上好几秒的体验好。 -->
-          <button
-            v-for="preset in QUICK_QUESTIONS"
-            :key="preset"
-            type="button"
-            class="chip iw-chip"
-            @click="quickSearch(preset)"
-          >
-            {{ preset }}
-          </button>
-        </div>
-
-        <p v-if="loading" class="iw-loading">
-          <span class="iw-spinner" aria-hidden="true" />
-          正在查询问财，首次可能需要几秒…
-        </p>
-      </section>
-
-      <div v-if="error" class="iw-error" role="alert">
-        <span class="iw-error__text">{{ error }}</span>
+    <section class="surface iw-search-card">
+      <form class="iw-search" @submit.prevent="submit">
+        <input
+          v-model="question"
+          class="iw-search__input"
+          type="search"
+          enterkeyhint="search"
+          placeholder="例如：今日涨停且换手率大于5%"
+          aria-label="选股条件"
+          :disabled="loading"
+        />
+        <button type="submit" class="btn iw-search__btn" :disabled="loading || !question.trim()">
+          选股
+        </button>
         <button
           type="button"
-          class="iw-error__retry"
-          :disabled="loading || !lastQuestion"
-          @click="retry"
+          class="btn btn--ghost iw-optimize__btn"
+          :disabled="loading || optimizing || !question.trim()"
+          title="让 AI 把口语条件改写成问财更易识别的写法"
+          @click="optimize"
         >
-          重试
+          {{ optimizing ? '优化中…' : '✨ AI 优化' }}
+        </button>
+      </form>
+
+      <p v-if="optimizeHint" class="iw-optimize__hint">{{ optimizeHint }}</p>
+
+      <div class="iw-chips">
+        <!-- 快捷问句在请求中也不禁用：用户连点两句很常见，让新问句抢先、旧响应靠 seq 丢弃，
+             比把按钮锁住等上好几秒的体验好。 -->
+        <button
+          v-for="preset in QUICK_QUESTIONS"
+          :key="preset"
+          type="button"
+          class="chip iw-chip"
+          @click="quickSearch(preset)"
+        >
+          {{ preset }}
         </button>
       </div>
 
-      <section v-if="result" class="surface iw-result">
-        <div class="iw-result__head">
-          <div class="iw-result__meta">
-            <span v-if="stale" class="iw-stale">上次结果（刷新失败）</span>
-            <p v-if="result.condition" class="iw-result__condition">{{ result.condition }}</p>
-            <p class="iw-result__count">
-              共 {{ total }} 条
-              <span v-if="countMismatch" class="iw-result__mismatch">
-                问财报告 {{ reportedTotal }} 条，以本次返回的 {{ total }} 行为准
-              </span>
-            </p>
-          </div>
-
-          <div class="iw-result__side">
-            <div class="iw-sizes" role="group" aria-label="每页行数">
-              <button
-                v-for="size in PAGE_SIZES"
-                :key="size"
-                type="button"
-                class="iw-size"
-                :class="{ 'is-active': size === pageSize }"
-                :aria-pressed="size === pageSize"
-                @click="changePageSize(size)"
-              >
-                {{ size }}
-              </button>
-            </div>
-            <button type="button" class="btn iw-ai-btn" :disabled="total === 0" @click="askAi">
-              AI 分析这批股票
-            </button>
-          </div>
-        </div>
-
-        <div v-if="total === 0" class="empty-state iw-empty">
-          <p class="iw-empty__title">没有符合条件的股票</p>
-          <p class="iw-empty__hint">试试换个问法，或去掉过于苛刻的条件</p>
-        </div>
-
-        <template v-else>
-          <div class="iw-table-wrap">
-            <table class="iw-table">
-              <thead>
-                <tr>
-                  <th v-for="col in columns" :key="col" scope="col">{{ col }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(item, rowIndex) in visibleRows" :key="`${currentPage}-${rowIndex}`">
-                  <td
-                    v-for="(_, colIndex) in columns"
-                    :key="colIndex"
-                    :title="cellText(item.row, colIndex)"
-                  >
-                    <a
-                      v-if="isLinkColumn(colIndex) && item.code"
-                      class="iw-link"
-                      :href="`/stock/${item.code}`"
-                      @click.prevent="openRow(item.code)"
-                    >
-                      {{ cellText(item.row, colIndex) }}
-                    </a>
-                    <template v-else>{{ cellText(item.row, colIndex) }}</template>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="iw-pager">
-            <button
-              type="button"
-              class="iw-pager__btn"
-              :disabled="currentPage <= 1"
-              @click="goPage(currentPage - 1)"
-            >
-              上一页
-            </button>
-            <span class="iw-pager__label">第 {{ currentPage }} / {{ totalPages }} 页</span>
-            <button
-              type="button"
-              class="iw-pager__btn"
-              :disabled="currentPage >= totalPages"
-              @click="goPage(currentPage + 1)"
-            >
-              下一页
-            </button>
-          </div>
-        </template>
-      </section>
-
-      <p v-if="!result && !loading && !error" class="empty-state iw-intro">
-        输入一句选股条件，或点上面的快捷问句试试
+      <p v-if="loading" class="iw-loading">
+        <span class="iw-spinner" aria-hidden="true" />
+        正在查询问财，首次可能需要几秒…
       </p>
+    </section>
 
-      <p class="iw-note">
-        数据来自同花顺问财，仅供参考。问财服务端忽略分页参数，翻页由本地完成；单次最多取 100 行。
-      </p>
+    <div v-if="error" class="iw-error" role="alert">
+      <span class="iw-error__text">{{ error }}</span>
+      <button
+        type="button"
+        class="iw-error__retry"
+        :disabled="loading || !lastQuestion"
+        @click="retry"
+      >
+        重试
+      </button>
     </div>
+
+    <section v-if="result" class="surface iw-result">
+      <div class="iw-result__head">
+        <div class="iw-result__meta">
+          <span v-if="stale" class="iw-stale">上次结果（刷新失败）</span>
+          <p v-if="result.condition" class="iw-result__condition">{{ result.condition }}</p>
+          <p class="iw-result__count">
+            共 {{ total }} 条
+            <span v-if="countMismatch" class="iw-result__mismatch">
+              问财报告 {{ reportedTotal }} 条，以本次返回的 {{ total }} 行为准
+            </span>
+          </p>
+        </div>
+
+        <div class="iw-result__side">
+          <div class="iw-sizes" role="group" aria-label="每页行数">
+            <button
+              v-for="size in PAGE_SIZES"
+              :key="size"
+              type="button"
+              class="iw-size"
+              :class="{ 'is-active': size === pageSize }"
+              :aria-pressed="size === pageSize"
+              @click="changePageSize(size)"
+            >
+              {{ size }}
+            </button>
+          </div>
+          <button type="button" class="btn iw-ai-btn" :disabled="total === 0" @click="askAi">
+            AI 分析这批股票
+          </button>
+        </div>
+      </div>
+
+      <div v-if="total === 0" class="empty-state iw-empty">
+        <p class="iw-empty__title">没有符合条件的股票</p>
+        <p class="iw-empty__hint">试试换个问法，或去掉过于苛刻的条件</p>
+      </div>
+
+      <template v-else>
+        <div class="iw-table-wrap">
+          <table class="iw-table">
+            <thead>
+              <tr>
+                <th v-for="col in columns" :key="col" scope="col">{{ col }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, rowIndex) in visibleRows" :key="`${currentPage}-${rowIndex}`">
+                <td
+                  v-for="(_, colIndex) in columns"
+                  :key="colIndex"
+                  :title="cellText(item.row, colIndex)"
+                >
+                  <a
+                    v-if="isLinkColumn(colIndex) && item.code"
+                    class="iw-link"
+                    :href="`/stock/${item.code}`"
+                    @click.prevent="openRow(item.code)"
+                  >
+                    {{ cellText(item.row, colIndex) }}
+                  </a>
+                  <template v-else>{{ cellText(item.row, colIndex) }}</template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="iw-pager">
+          <button
+            type="button"
+            class="iw-pager__btn"
+            :disabled="currentPage <= 1"
+            @click="goPage(currentPage - 1)"
+          >
+            上一页
+          </button>
+          <span class="iw-pager__label">第 {{ currentPage }} / {{ totalPages }} 页</span>
+          <button
+            type="button"
+            class="iw-pager__btn"
+            :disabled="currentPage >= totalPages"
+            @click="goPage(currentPage + 1)"
+          >
+            下一页
+          </button>
+        </div>
+      </template>
+    </section>
+
+    <p v-if="!result && !loading && !error" class="empty-state iw-intro">
+      输入一句选股条件，或点上面的快捷问句试试
+    </p>
+
+    <p class="iw-note">
+      数据来自同花顺问财，仅供参考。问财服务端忽略分页参数，翻页由本地完成；单次最多取 100 行。
+    </p>
   </div>
 </template>
 
 <style scoped>
-.iw-page {
-  padding: var(--s-8) 0 var(--s-16);
-}
-
-.iw-back {
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--c-text-muted);
-  font-size: var(--t-sm);
-  cursor: pointer;
-  transition: color 0.15s var(--ease);
-}
-
-.iw-back:hover {
-  color: var(--c-brand);
-}
-
-.iw-head {
-  margin: var(--s-3) 0 var(--s-6);
-}
-
-.iw-title {
-  margin: 0;
-  font-size: var(--t-2xl);
-  font-weight: 640;
-  letter-spacing: -0.02em;
-  color: var(--c-text);
-}
-
 .iw-desc {
-  margin: var(--s-2) 0 0;
-  max-width: 52ch;
+  margin: 0 0 var(--s-3);
   color: var(--c-text-muted);
   font-size: var(--t-sm);
   line-height: 1.6;
@@ -419,7 +367,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  padding: var(--s-5);
+  padding: var(--s-4);
 }
 
 .iw-search {
@@ -518,7 +466,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-3);
-  margin-top: var(--s-4);
+  margin-top: var(--s-3);
   padding: var(--s-3) var(--s-4);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -551,7 +499,7 @@ onMounted(() => {
 .iw-result {
   display: flex;
   flex-direction: column;
-  margin-top: var(--s-4);
+  margin-top: var(--s-3);
   overflow: hidden;
 }
 
@@ -561,7 +509,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-2) var(--s-3);
-  padding: var(--s-4) var(--s-5);
+  padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--c-border);
 }
 
@@ -639,16 +587,8 @@ onMounted(() => {
   font-size: var(--t-xs);
 }
 
-.iw-notice {
-  margin: 0;
-  padding: var(--s-2) var(--s-5);
-  background: var(--c-surface-sunken);
-  color: var(--c-text-muted);
-  font-size: var(--t-xs);
-}
-
 .iw-empty {
-  padding: var(--s-12) var(--s-6);
+  padding: var(--s-10) var(--s-6);
 }
 
 .iw-empty__title {
@@ -663,9 +603,10 @@ onMounted(() => {
   font-size: var(--t-xs);
 }
 
-/* 横向滚动容器同时充当纵向滚动容器，表头 sticky 才有意义；否则表头跟着页面滚走。 */
+/* 横向滚动容器同时充当纵向滚动容器，表头 sticky 才有意义；否则表头跟着页面滚走。
+   嵌在弹窗里时由外层把 --iw-table-max 调小，避免和弹窗自身滚动叠加。 */
 .iw-table-wrap {
-  max-height: 62vh;
+  max-height: var(--iw-table-max, 62vh);
   overflow: auto;
 }
 
@@ -721,7 +662,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--s-4);
-  padding: var(--s-3) var(--s-5);
+  padding: var(--s-3) var(--s-4);
   border-top: 1px solid var(--c-border);
 }
 
@@ -748,21 +689,17 @@ onMounted(() => {
 }
 
 .iw-intro {
-  margin-top: var(--s-6);
+  margin-top: var(--s-5);
 }
 
 .iw-note {
-  margin: var(--s-6) 0 0;
+  margin: var(--s-4) 0 0;
   color: var(--c-text-faint);
   font-size: var(--t-xs);
   line-height: 1.6;
 }
 
 @media (max-width: 720px) {
-  .iw-page {
-    padding: var(--s-6) 0 var(--s-12);
-  }
-
   .iw-search {
     flex-direction: column;
   }
@@ -770,11 +707,6 @@ onMounted(() => {
   .iw-search__btn,
   .iw-optimize__btn {
     width: 100%;
-  }
-
-  .iw-search-card,
-  .iw-result__head {
-    padding: var(--s-4);
   }
 
   .iw-result__side {
