@@ -73,8 +73,9 @@ const tags = computed(() => {
 }
 
 .stock-tag--margin {
-  color: #10b981;
-  background: color-mix(in srgb, #10b981 14%, transparent);
-  border-color: color-mix(in srgb, #10b981 35%, transparent);
+  /* 橙色，但比「创」的琥珀色更偏红，避免创业板的票两个标签看起来一样 */
+  color: #f97316;
+  background: color-mix(in srgb, #f97316 14%, transparent);
+  border-color: color-mix(in srgb, #f97316 35%, transparent);
 }
 </style>
