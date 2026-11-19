@@ -81,8 +81,14 @@ public class AiNewsScoreService {
     private static final int NEWS_WINDOW_HOURS = 48;
     /** 公告时效窗口（小时）：公告日期只精确到天，且要覆盖周末/长假，放宽到 7 天。 */
     private static final int NOTICE_WINDOW_HOURS = 7 * 24;
-    /** 落库保留天数。 */
-    private static final int KEEP_DAYS = 7;
+    /**
+     * 新闻分落库保留天数。
+     *
+     * <p>从 7 天放宽到 90 天：新闻分要能和 {@code stock_predict_daily} 的命中结果按日复盘
+     * （「那天这只票的新闻分是多少」），7 天连一个校准窗口都覆盖不了。体量很小——
+     * 每天热榜扫描加预测候选约 50~70 行，90 天也就几千行。</p>
+     */
+    private static final int KEEP_DAYS = 90;
     /** LLM 输出上限：deepseek 系列即使 thinking=false 也会吐 reasoning_content，必须留足。 */
     private static final int MAX_TOKENS = 8192;
     /** 单次 LLM 精判的股票数：拆小批，避免一只票的异常输出把整批结果截断。 */
