@@ -11,6 +11,7 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,6 +52,10 @@ public class AiWebSearchService {
     public record FetchResult(String url, String title, String content) {
     }
 
+    /** 个股搜索结果：资讯 + 公司公告。 */
+    public record StockSearch(List<SearchHit> news, List<SearchHit> notices) {
+    }
+
     /**
      * 搜索财经资讯。
      *
@@ -62,53 +67,178 @@ public class AiWebSearchService {
         String param = buildSearchParam(query, size);
         String url = SEARCH_URL + "?cb=cb&param=" + encode(param);
         String body = http.getText(url, SEARCH_REFERER, StandardCharsets.UTF_8);
-        List<SearchHit> hits = parseSearchBody(body);
-        return hits.size() > size ? hits.subList(0, size) : hits;
+        return parseHits(body, "cmsArticleWebOld", size);
+    }
+
+    /**
+     * 个股资讯 + 公司公告一次搜完。
+     *
+     * <p>为什么要带公告：新闻情绪只搜资讯时，公司自己发的「股票交易异常波动公告」
+     * 不会进入打分，除非媒体恰好写了稿子。东财搜索的 {@code notice} 类型能直接拿公告原文。</p>
+     *
+     * <p>公告是全文检索：搜「宁德时代」会返回睿能科技公告里提到宁德时代的条目，
+     * 所以必须用 {@code securityShortName} 过滤成目标公司自己的公告。</p>
+     *
+     * @param stockName   股票名称（过滤公告归属）
+     * @param stockCode   股票代码（拼公告详情链接）
+     * @param newsSize    资讯条数
+     * @param noticeSize  公告条数（请求上游的条数，调用方再按需截断）
+     */
+    public StockSearch searchStockWithNotices(String stockName, String stockCode,
+                                              int newsSize, int noticeSize) {
+        int news = Math.max(1, Math.min(15, newsSize));
+        int notices = Math.max(1, Math.min(15, noticeSize));
+        String param = buildStockSearchParam(stockName, news, notices);
+        String url = SEARCH_URL + "?cb=cb&param=" + encode(param);
+        String body;
+        try {
+            body = http.getText(url, SEARCH_REFERER, StandardCharsets.UTF_8);
+        } catch (RuntimeException ex) {
+            // 公告类型若被上游临时拒绝，不能让整只票的新闻因子消失：退回纯资讯搜索
+            log.warn("个股资讯+公告搜索失败，回退纯资讯 code={} err={}", stockCode, ex.getMessage());
+            return new StockSearch(search(stockName + " " + stockCode, news), List.of());
+        }
+        return new StockSearch(
+                parseHits(body, "cmsArticleWebOld", news),
+                parseNotices(body, stockName, stockCode, notices));
     }
 
     private static String buildSearchParam(String query, int size) {
         // 手拼 JSON 而不是用 ObjectMapper，是为了保证字段顺序与东财期望的一致（它对顺序敏感）
-        String kw = query.replace("\\", "\\\\").replace("\"", "\\\"");
+        String kw = escape(query);
         return "{\"uid\":\"\",\"keyword\":\"" + kw + "\",\"type\":[\"cmsArticleWebOld\"],"
                 + "\"client\":\"web\",\"clientType\":\"web\",\"clientVersion\":\"curr\","
                 + "\"param\":{\"cmsArticleWebOld\":{\"searchScope\":\"default\",\"sort\":\"default\","
                 + "\"pageIndex\":1,\"pageSize\":" + size + ",\"preTag\":\"<em>\",\"postTag\":\"</em>\"}}}";
     }
 
-    /** 解析 JSONP：去掉 {@code cb(...)} 外壳后按 JSON 读。 */
-    private List<SearchHit> parseSearchBody(String body) {
+    private static String buildStockSearchParam(String query, int newsSize, int noticeSize) {
+        String kw = escape(query);
+        return "{\"uid\":\"\",\"keyword\":\"" + kw + "\",\"type\":[\"cmsArticleWebOld\",\"notice\"],"
+                + "\"client\":\"web\",\"clientType\":\"web\",\"clientVersion\":\"curr\","
+                + "\"param\":{"
+                + "\"cmsArticleWebOld\":{\"searchScope\":\"default\",\"sort\":\"default\","
+                + "\"pageIndex\":1,\"pageSize\":" + newsSize + ",\"preTag\":\"<em>\",\"postTag\":\"</em>\"},"
+                + "\"notice\":{\"searchScope\":\"default\",\"sort\":\"default\","
+                + "\"pageIndex\":1,\"pageSize\":" + noticeSize + ",\"preTag\":\"<em>\",\"postTag\":\"</em>\"}"
+                + "}}";
+    }
+
+    private static String escape(String query) {
+        return query == null ? "" : query.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    /** 解析资讯列表。 */
+    private List<SearchHit> parseHits(String body, String type, int max) {
         List<SearchHit> hits = new ArrayList<>();
-        if (body == null || body.isEmpty()) {
+        JsonNode root = parseJsonp(body);
+        if (root == null) {
             return hits;
+        }
+        JsonNode list = root.path("result").path(type);
+        if (!list.isArray()) {
+            return hits;
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode item : list) {
+            String title = stripTags(item.path("title").asText(""));
+            String link = item.path("url").asText("");
+            if (title.isEmpty() || link.isEmpty() || !seen.add(link)) {
+                continue;
+            }
+            hits.add(new SearchHit(title, link,
+                    stripTags(item.path("content").asText("")),
+                    item.path("date").asText(""),
+                    item.path("mediaName").asText("")));
+            if (hits.size() >= max) {
+                break;
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * 解析公告列表，只保留目标公司自己的公告。
+     *
+     * <p>公告条目没有股票代码，只有 {@code securityShortName}；先做 NFKC + 去空白归一化，
+     * 避免全角字符/空格造成同名误判。标题里的 {@code <em>} 由 {@link #stripTags} 去掉。</p>
+     */
+    private List<SearchHit> parseNotices(String body, String stockName, String stockCode, int max) {
+        JsonNode root = parseJsonp(body);
+        if (root == null) {
+            return new ArrayList<>();
+        }
+        return parseNoticeItems(root.path("result").path("notice"), stockName, stockCode, max);
+    }
+
+    /** 从公告列表里挑出目标公司自己的公告，供单元测试直接调用。 */
+    static List<SearchHit> parseNoticeItems(JsonNode list, String stockName, String stockCode, int max) {
+        List<SearchHit> hits = new ArrayList<>();
+        if (list == null || !list.isArray()) {
+            return hits;
+        }
+        String name = normalizeName(stockName);
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode item : list) {
+            // <em> 高亮标签被 stripTags 换成空格后，会出现「金马 :公告」这种难看的间隔
+            String title = stripTags(item.path("title").asText("")).replaceAll("\\s+([:：])", "$1");
+            String noticeCode = item.path("code").asText("");
+            String security = normalizeName(item.path("securityShortName").asText(""));
+            if (title.isEmpty() || noticeCode.isEmpty() || !belongsTo(title, security, name)) {
+                continue;
+            }
+            if (!seen.add(title.replaceAll("[\\s\\u3000]", ""))) {
+                continue;
+            }
+            String link = "https://data.eastmoney.com/notices/detail/"
+                    + stockCode + "/" + noticeCode + ".html";
+            hits.add(new SearchHit(title, link,
+                    stripTags(item.path("content").asText("")),
+                    item.path("date").asText(""),
+                    "交易所公告"));
+            if (hits.size() >= max) {
+                break;
+            }
+        }
+        return hits;
+    }
+
+    /** 公告归属判断：优先比对 securityShortName，缺失时退回标题前缀。 */
+    private static boolean belongsTo(String title, String security, String name) {
+        if (name.isEmpty()) {
+            return false;
+        }
+        if (!security.isEmpty()) {
+            return security.equals(name);
+        }
+        return normalizeName(title).startsWith(name + ":");
+    }
+
+    /** NFKC（全角转半角）+ 去掉所有空白，用于公司名比较。 */
+    private static String normalizeName(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return Normalizer.normalize(raw, Normalizer.Form.NFKC).replaceAll("[\\s\\u3000]+", "");
+    }
+
+    /** 去掉 JSONP 外壳后按 JSON 读；格式异常返回 null。 */
+    private JsonNode parseJsonp(String body) {
+        if (body == null || body.isEmpty()) {
+            return null;
         }
         int start = body.indexOf('(');
         int end = body.lastIndexOf(')');
         if (start < 0 || end <= start) {
             log.warn("搜索结果不是 JSONP 格式，前 200 字符={}", body.substring(0, Math.min(200, body.length())));
-            return hits;
+            return null;
         }
         try {
-            JsonNode root = MAPPER.readTree(body.substring(start + 1, end));
-            JsonNode list = root.path("result").path("cmsArticleWebOld");
-            if (!list.isArray()) {
-                return hits;
-            }
-            Set<String> seen = new LinkedHashSet<>();
-            for (JsonNode item : list) {
-                String title = stripTags(item.path("title").asText(""));
-                String link = item.path("url").asText("");
-                if (title.isEmpty() || link.isEmpty() || !seen.add(link)) {
-                    continue;
-                }
-                hits.add(new SearchHit(title, link,
-                        stripTags(item.path("content").asText("")),
-                        item.path("date").asText(""),
-                        item.path("mediaName").asText("")));
-            }
+            return MAPPER.readTree(body.substring(start + 1, end));
         } catch (Exception e) {
             log.warn("解析搜索结果失败 err={}", e.toString());
+            return null;
         }
-        return hits;
     }
 
     /**
