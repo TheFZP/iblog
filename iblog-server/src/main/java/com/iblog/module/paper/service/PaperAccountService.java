@@ -205,6 +205,11 @@ public class PaperAccountService {
     public PaperAccountVO toVO(PaperAccount account) {
         BigDecimal base = todayBase(account);
         BigDecimal todayProfit = PaperNumbers.money(PaperNumbers.nz(account.getTotalAsset()).subtract(base));
+        BigDecimal todayProfitPct = PaperNumbers.pct(todayProfit, base);
+        // 熔断阈值以正数百分比对外暴露，前端据此解释「为什么没买」，不用自己知道配置项
+        double limitPct = properties.getPaper().getMaxDailyLossPct() * 100;
+        BigDecimal limit = BigDecimal.valueOf(limitPct).setScale(2, java.math.RoundingMode.HALF_UP);
+        boolean brake = limitPct > 0 && todayProfitPct.doubleValue() <= -limitPct;
         long positionCount = positionMapper.selectCount(Wrappers.<PaperPosition>lambdaQuery()
                 .eq(PaperPosition::getAccountId, account.getId())
                 .gt(PaperPosition::getQuantity, 0));
@@ -220,7 +225,9 @@ public class PaperAccountService {
                 .totalProfit(PaperNumbers.money(account.getTotalProfit()))
                 .totalProfitPct(PaperNumbers.nz(account.getTotalProfitPct()))
                 .todayProfit(todayProfit)
-                .todayProfitPct(PaperNumbers.pct(todayProfit, base))
+                .todayProfitPct(todayProfitPct)
+                .dailyLossBrake(brake)
+                .dailyLossLimitPct(limit)
                 .positionCount((int) positionCount)
                 .autoTrade(account.getAutoTrade() == null ? 0 : account.getAutoTrade())
                 .tradeDate(latestNavDate(account.getId()))

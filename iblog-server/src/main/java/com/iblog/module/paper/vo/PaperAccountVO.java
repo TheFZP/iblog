@@ -42,6 +42,12 @@ public class PaperAccountVO {
     /** 今日收益率（%） */
     private BigDecimal todayProfitPct;
 
+    /** 今日是否触发日亏熔断：触发后自动交易只减仓、不加仓 */
+    private Boolean dailyLossBrake;
+
+    /** 日亏熔断阈值（%，正数） */
+    private BigDecimal dailyLossLimitPct;
+
     private Integer positionCount;
 
     /** 0 关 1 开 */

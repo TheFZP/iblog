@@ -43,6 +43,10 @@ export interface PaperAccount {
   todayProfit: number
   /** 今日收益率（%） */
   todayProfitPct: number
+  /** 今日是否触发日亏熔断：触发后自动交易只减仓、不加仓 */
+  dailyLossBrake: boolean
+  /** 日亏熔断阈值（%，正数） */
+  dailyLossLimitPct: number
   positionCount: number
   /** 自动交易总开关，后端为 Integer：0 关闭 / 1 开启 */
   autoTrade: number

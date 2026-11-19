@@ -134,11 +134,16 @@
                 累计 {{ signedMoney(account.totalProfit) }}（{{ pct(account.totalProfitPct) }}）
               </span>
               <div class="asset-card__badges">
+                <span v-if="account.dailyLossBrake" class="chip chip--warn">日亏熔断中 · 暂停买入</span>
                 <span class="chip" :class="{ 'chip--brand': account.autoTrade === 1 }">
                   策略自动交易{{ account.autoTrade === 1 ? '开启' : '关闭' }}
                 </span>
                 <span v-if="account.tradeDate" class="chip">{{ account.tradeDate }}</span>
               </div>
+              <p v-if="account.dailyLossBrake" class="brake-note" role="status">
+                今日 {{ pct(account.todayProfitPct) }} 已跌破 {{ account.dailyLossLimitPct }}%
+                日亏熔断线，自动买入暂停，下一交易日自动恢复；卖出与止损不受影响。
+              </p>
             </div>
             <dl class="asset-card__metrics">
               <div class="metric">
@@ -4228,6 +4233,23 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: var(--s-2);
   margin-top: var(--s-2);
+}
+
+.chip--warn {
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
+}
+
+/* 日亏熔断提示：说明自动买入为什么停了，避免用户以为引擎坏了 */
+.brake-note {
+  margin: var(--s-2) 0 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  color: var(--c-accent);
+  font-size: var(--t-xs);
+  line-height: 1.7;
 }
 
 .asset-card__metrics {

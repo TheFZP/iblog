@@ -87,7 +87,8 @@ public class PaperAutoTrader {
 
         List<PaperPosition> positions = positionService.refreshQuotes(account.getId());
         account = accountService.recompute(account, positions);
-        boolean brake = isDailyLossBrake(account);
+        double todayPct = todayPct(account);
+        boolean brake = isDailyLossBrake(todayPct);
 
         // 情绪只在规则显式开启时去取；关掉的人连一次上游请求都不该多花
         MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
@@ -97,7 +98,14 @@ public class PaperAutoTrader {
         Set<String> justSold = sell(account, positions, strategy, params, sentiment);
 
         if (brake) {
-            log.warn("模拟盘触发日亏熔断 account={} 今日收益={}%，只减仓不加仓", account.getId(), account.getTotalProfitPct());
+            // 这里以前打的是累计收益率，日志看起来像「赚了 11% 还熔断」，排查时误导性很强
+            log.warn("模拟盘触发日亏熔断 account={} 今日收益={}%，只减仓不加仓",
+                    account.getId(), String.format("%.2f", todayPct));
+            // 每天记一次，前端信号历史里能看到「为什么没买」；金额/比例走账户接口的实时字段
+            double limitPct = properties.getPaper().getMaxDailyLossPct() * 100;
+            recordBlockedOnce(account, strategy,
+                    "今日亏损超过 " + BigDecimal.valueOf(limitPct).stripTrailingZeros().toPlainString()
+                            + "%，触发日亏熔断");
             return;
         }
 
@@ -596,17 +604,22 @@ public class PaperAutoTrader {
 
     // ---------- 风控/工具 ----------
 
-    private boolean isDailyLossBrake(PaperAccount account) {
+    private boolean isDailyLossBrake(double todayPct) {
+        return !Double.isNaN(todayPct)
+                && todayPct <= -properties.getPaper().getMaxDailyLossPct() * 100;
+    }
+
+    /** 今日收益率（%，相对上一交易日收盘净值）；总资产或基准不可用时返回 NaN。 */
+    private double todayPct(PaperAccount account) {
         BigDecimal totalAsset = PaperNumbers.nz(account.getTotalAsset());
         if (totalAsset.signum() <= 0) {
-            return false;
+            return Double.NaN;
         }
         BigDecimal base = accountService.todayBase(account);
         if (base.signum() <= 0) {
-            return false;
+            return Double.NaN;
         }
-        double todayPct = totalAsset.subtract(base).doubleValue() / base.doubleValue() * 100;
-        return todayPct <= -properties.getPaper().getMaxDailyLossPct() * 100;
+        return totalAsset.subtract(base).doubleValue() / base.doubleValue() * 100;
     }
 
     private void recordSignal(PaperAccount account, PaperStrategy strategy, String code, String name,
