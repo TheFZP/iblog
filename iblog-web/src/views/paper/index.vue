@@ -1260,6 +1260,13 @@
               <span v-if="selectionsTime" class="panel__meta">选股于 {{ shortTime(selectionsTime) }}</span>
             </h2>
             <div class="panel__actions">
+              <span
+                v-if="strategy"
+                class="panel__meta"
+                title="当前规则下各加分项权重之和，即单只票在这一套规则里能达到的最高分"
+              >
+                分数上限 {{ weightSum }}
+              </span>
               <button
                 class="btn btn--ghost"
                 type="button"
