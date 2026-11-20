@@ -1,14 +1,15 @@
 <template>
   <article class="card" :class="[`card--${variant}`]">
     <router-link :to="`/article/${article.id}`" class="card-link">
-      <!-- 封面：后端没填 cover 时不渲染，避免占位图喧宾夺主 -->
-      <div v-if="article.cover" class="cover">
+      <!-- 封面：后端没填 cover 时不渲染；外链加载失败（如 unsplash 被墙）也退回无图样式 -->
+      <div v-if="article.cover && !coverFailed" class="cover">
         <img
           :src="article.cover"
           :alt="article.title"
           :loading="priority ? 'eager' : 'lazy'"
           :fetchpriority="priority ? 'high' : 'auto'"
           decoding="async"
+          @error="coverFailed = true"
         />
       </div>
 
@@ -46,8 +47,12 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { ArticleItem } from '@/api/portal'
 import { formatDate } from '@/utils/format'
+
+/** 外链封面加载失败后不再渲染图片区域，避免浏览器一直显示破图占位 */
+const coverFailed = ref(false)
 
 withDefaults(
   defineProps<{

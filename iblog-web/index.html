@@ -29,12 +29,11 @@
       })()
     </script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap"
-    />
+    <!--
+      不再外链 Google Fonts：它是渲染阻塞样式表，国内网络访问 fonts.googleapis.com
+      会一直挂到连接被重置（ERR_CONNECTION_CLOSED），首屏白白多等好几秒。
+      字体统一走系统栈，见 styles/index.css 的 --f-serif / --f-mono。
+    -->
     <link rel="icon" href="data:," />
   </head>
   <body>
