@@ -12,7 +12,8 @@ import java.util.Map;
 /**
  * 全市场次日看涨打分（纯函数，无网络/无数据库）。
  *
- * <p>满分 100，新闻情绪额外 +10 / −8，最终按可用满分归一化到 0~100。
+ * <p>满分 100，新闻情绪额外 +10 / −8，外盘 + 宏观再额外 ±6，最终按可用满分归一化到 0~100。
+ * 外盘/宏观是全市场级因子：它调整当天的整体松紧（影响概率与买入阈值），不改变同一天内部的个股排序。
  * 权重选择偏「收盘后的日线形态 + 量能」：15:30 扫描时当日盘口已经结束，
  * 盘中分时/资金流的数据在免费源上既不稳定也没有历史可比性。</p>
  *
@@ -21,14 +22,32 @@ import java.util.Map;
  */
 public final class GlobalPredictScorer {
 
-    public static final String MODEL_VERSION = "rule-v1";
+    public static final String MODEL_VERSION = "rule-v2";
 
     /** 基础因子满分。 */
     public static final int BASE_MAX_SCORE = 100;
     /** 新闻因子的最大加分（正向）。 */
     public static final int NEWS_MAX_BONUS = 10;
+    /** 外盘 + 宏观合成的全市场因子最大正向加分。 */
+    public static final int MARKET_MAX_BONUS = 6;
 
     private GlobalPredictScorer() {
+    }
+
+    /**
+     * 全市场级背景：隔夜外盘涨跌与宏观新闻情绪。
+     *
+     * <p>这两个值对当天所有股票相同，作用是「整体收紧或放宽」，不会改变同一榜单内部的排序；
+     * 真正决定名次的是个股 K 线形态与个股新闻。它的价值体现在概率、买入阈值与事后复盘上。</p>
+     *
+     * @param overseasPct 外盘合成涨跌幅（%）；null 表示没有数据
+     * @param macroScore  宏观新闻情绪 -100~100；null 表示没抓到新闻
+     */
+    public record MarketContext(Double overseasPct, Integer macroScore) {
+
+        public boolean isEmpty() {
+            return overseasPct == null && macroScore == null;
+        }
     }
 
     /**
@@ -39,6 +58,17 @@ public final class GlobalPredictScorer {
      */
     public static Result score(StockQuote quote, List<KlineItem> bars,
                                Integer newsScore, double marketSentiment) {
+        return score(quote, bars, newsScore, marketSentiment, null);
+    }
+
+    /**
+     * 带外盘/宏观背景的打分。
+     *
+     * @param marketContext 全市场背景；null 或两项都为空时与旧版行为完全一致
+     */
+    public static Result score(StockQuote quote, List<KlineItem> bars,
+                               Integer newsScore, double marketSentiment,
+                               MarketContext marketContext) {
         List<String> reasons = new ArrayList<>();
         Map<String, Object> features = new LinkedHashMap<>();
         features.put("modelVersion", MODEL_VERSION);
@@ -163,8 +193,28 @@ public final class GlobalPredictScorer {
             reasons.add("新闻" + newsPoints);
         }
 
-        int maxScore = BASE_MAX_SCORE + (newsScore == null ? 0 : NEWS_MAX_BONUS);
-        double rawScore = base + newsPoints;
+        // 13. 外盘 + 宏观：市场级背景，作用在「整体松紧」而不是个股排序
+        boolean hasMarket = marketContext != null && !marketContext.isEmpty();
+        int overseasPoints = overseasPoints(marketContext == null ? null : marketContext.overseasPct());
+        int macroPoints = macroPoints(marketContext == null ? null : marketContext.macroScore());
+        int marketPoints = marketPoints(marketContext);
+        features.put("overseasPct", marketContext == null || marketContext.overseasPct() == null
+                ? null : round(marketContext.overseasPct()));
+        features.put("overseasPoints", overseasPoints);
+        features.put("macroScore", marketContext == null ? null : marketContext.macroScore());
+        features.put("macroPoints", macroPoints);
+        features.put("marketPoints", marketPoints);
+        if (overseasPoints != 0) {
+            String pct = String.format(java.util.Locale.ROOT, "%+.1f%%", marketContext.overseasPct());
+            reasons.add(overseasPoints > 0 ? "外盘走强(" + pct + ")" : "外盘走弱(" + pct + ")");
+        }
+        if (macroPoints != 0) {
+            reasons.add(macroPoints > 0 ? "宏观偏暖" : "宏观偏冷");
+        }
+
+        int maxScore = BASE_MAX_SCORE + (newsScore == null ? 0 : NEWS_MAX_BONUS)
+                + (hasMarket ? MARKET_MAX_BONUS : 0);
+        double rawScore = base + newsPoints + marketPoints;
         int score = (int) Math.round(rawScore * BASE_MAX_SCORE / maxScore);
         score = Math.max(0, Math.min(100, score));
 
@@ -214,6 +264,65 @@ public final class GlobalPredictScorer {
         }
         if (newsScore < 0) {
             return -4;
+        }
+        return 0;
+    }
+
+    /**
+     * 外盘 + 宏观合成的市场级加分，封顶 ±{@link #MARKET_MAX_BONUS}。
+     *
+     * <p>单独开成公开方法，是为了让模拟盘选股也能用同一套口径（它有自己的打分体系，
+     * 不做归一化，只把这几分的边际影响加到总分上）。</p>
+     */
+    public static int marketPoints(MarketContext context) {
+        if (context == null) {
+            return 0;
+        }
+        int points = overseasPoints(context.overseasPct()) + macroPoints(context.macroScore());
+        return Math.max(-MARKET_MAX_BONUS, Math.min(MARKET_MAX_BONUS, points));
+    }
+
+    /**
+     * 外盘涨跌幅 → 加分。
+     *
+     * <p>阈值刻意宽松：A 股对外盘的映射不是线性的，外盘跌 0.3% 通常只影响开盘情绪，
+     * 半个小时就修复了；只有 1% 以上才值得动分数。</p>
+     */
+    static int overseasPoints(Double weightedPct) {
+        if (weightedPct == null || Double.isNaN(weightedPct)) {
+            return 0;
+        }
+        if (weightedPct >= 1.5) {
+            return 5;
+        }
+        if (weightedPct >= 0.5) {
+            return 3;
+        }
+        if (weightedPct > -0.5) {
+            return 0;
+        }
+        if (weightedPct > -1.5) {
+            return -3;
+        }
+        return -5;
+    }
+
+    /** 宏观新闻情绪 → 加分，权重比外盘更低（新闻更嘈杂）。 */
+    static int macroPoints(Integer macroScore) {
+        if (macroScore == null) {
+            return 0;
+        }
+        if (macroScore >= 20) {
+            return 3;
+        }
+        if (macroScore > 0) {
+            return 1;
+        }
+        if (macroScore <= -20) {
+            return -3;
+        }
+        if (macroScore < 0) {
+            return -1;
         }
         return 0;
     }

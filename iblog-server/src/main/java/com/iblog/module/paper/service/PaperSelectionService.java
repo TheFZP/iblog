@@ -8,6 +8,7 @@ import com.iblog.module.paper.entity.PaperSignal;
 import com.iblog.module.paper.entity.PaperStrategy;
 import com.iblog.module.paper.mapper.PaperPositionMapper;
 import com.iblog.module.paper.mapper.PaperSignalMapper;
+import com.iblog.module.paper.support.GlobalPredictScorer;
 import com.iblog.module.paper.support.Indicators;
 import com.iblog.module.paper.support.LotRule;
 import com.iblog.module.paper.support.PaperConstants;
@@ -15,6 +16,7 @@ import com.iblog.module.paper.support.PaperNumbers;
 import com.iblog.module.paper.support.PaperScreenRules;
 import com.iblog.module.paper.support.PaperStrategyParams;
 import com.iblog.module.paper.support.TradeCalendar;
+import com.iblog.module.stock.ai.MacroNewsService;
 import com.iblog.module.stock.model.HotStockItem;
 import com.iblog.module.stock.model.IntradayData;
 import com.iblog.module.stock.model.KlineItem;
@@ -24,6 +26,7 @@ import com.iblog.module.stock.model.StockQuote;
 import com.iblog.module.stock.service.EastmoneyService;
 import com.iblog.module.stock.service.HotListService;
 import com.iblog.module.stock.service.MarketSentimentService;
+import com.iblog.module.stock.service.OverseasMarketService;
 import com.iblog.module.stock.service.StockFundamentalService;
 import com.iblog.module.stock.service.TencentService;
 import com.iblog.module.stock.ai.AiNewsScoreService;
@@ -100,6 +103,8 @@ public class PaperSelectionService {
     private final PaperStrategyService strategyService;
     private final PaperAccountService accountService;
     private final MarketSentimentService sentimentService;
+    private final OverseasMarketService overseasMarketService;
+    private final MacroNewsService macroNewsService;
     private final AiNewsScoreService newsScoreService;
     private final IblogProperties properties;
     private final TradeCalendar calendar;
@@ -108,6 +113,15 @@ public class PaperSelectionService {
     /** 每个账户最近一次选股时间，避免自动交易每 15 秒重扫一遍。 */
     private final Map<Long, Long> lastRefreshAt = new ConcurrentHashMap<>();
     private final PaperPredictStatService predictStatService;
+
+    /**
+     * 外盘/宏观背景：一次选股里所有票共用同一份，60 秒内复用。
+     *
+     * <p>底层两个服务各自有缓存（外盘 10 分钟、宏观新闻 30 分钟），这里再加一层是为了
+     * 避免一次选股给几百只票各问一遍；失败也缓存 60 秒，防止上游抖动时整轮都在重试。</p>
+     */
+    private volatile GlobalPredictScorer.MarketContext marketContextCache;
+    private volatile long marketContextAt;
 
     /** 重新选股并覆盖当日候选（手动刷新/定时刷新都走这里）。 */
     public List<PaperSignal> refresh(Long accountId) {
@@ -482,6 +496,34 @@ public class PaperSelectionService {
      * 给单只持仓打分：与候选同一套因子，但不套用买入侧的硬性剔除与入选门槛。
      * 热度相关项对已持有的票没有意义，传 {@code hot=null、hotRank=0}。
      */
+    /**
+     * 取外盘/宏观背景；任何一环失败都退化成「没有背景」，不影响选股本身。
+     *
+     * <p>口径提醒：盘中拿到的是「昨晚美股 + 日经/KOSPI 实时值」，
+     * 与 15:30 次日预测那次「美日韩全部收盘」略有不同。</p>
+     */
+    private GlobalPredictScorer.MarketContext marketContext() {
+        long now = System.currentTimeMillis();
+        GlobalPredictScorer.MarketContext cached = marketContextCache;
+        if (cached != null && now - marketContextAt < 60_000L) {
+            return cached;
+        }
+        GlobalPredictScorer.MarketContext context;
+        try {
+            OverseasMarketService.Snapshot overseas = overseasMarketService.snapshot();
+            MacroNewsService.MacroNews macro = macroNewsService.scan();
+            context = new GlobalPredictScorer.MarketContext(
+                    overseas.available() ? overseas.weightedPct() : null,
+                    macro.available() ? macro.score() : null);
+        } catch (RuntimeException ex) {
+            log.debug("选股：外盘/宏观背景获取失败 err={}", ex.getMessage());
+            context = new GlobalPredictScorer.MarketContext(null, null);
+        }
+        marketContextCache = context;
+        marketContextAt = now;
+        return context;
+    }
+
     private Candidate scoreCandidate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
                                      PaperAccount account, MarketSentiment sentiment, boolean preMarket) {
         return evaluate(strategy, params, code, name, null, 0, sentiment, account,
@@ -672,6 +714,13 @@ public class PaperSelectionService {
                     return null;
                 }
             }
+        }
+        // 外盘 + 宏观：全市场级边际调整。同一天每只票加同样的分，不改变票与票之间的相对排序，
+        // 但会让整轮选股的门槛更松或更紧——外盘大跌的日子，弱票更难够到 minScore。
+        int marketPoints = GlobalPredictScorer.marketPoints(marketContext());
+        if (marketPoints != 0) {
+            score += marketPoints;
+            reasons.add((marketPoints > 0 ? "外盘/宏观偏暖+" : "外盘/宏观偏冷") + marketPoints);
         }
         // 换手率：活跃但不过热（盘前换手率只有竞价那一点，不可比）
         if (!preMarket && quote != null && PaperScreenRules.inRange(quote.getTurnoverRate(),

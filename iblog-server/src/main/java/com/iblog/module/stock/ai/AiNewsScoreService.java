@@ -99,6 +99,7 @@ public class AiNewsScoreService {
     private final AiWebSearchService webSearchService;
     private final AiConfigService configService;
     private final AiLlmClient llmClient;
+    private final MacroNewsService macroNewsService;
     private final HotListService hotListService;
     private final StockNewsScoreMapper scoreMapper;
     private final StockNewsArticleMapper articleMapper;
@@ -231,6 +232,19 @@ public class AiNewsScoreService {
      * @return 每个目标的新闻分（没有搜到新闻的目标不返回）
      */
     public List<StockNewsScore> scanForPrediction(List<Target> targets) {
+        return scanForPrediction(targets, List.of());
+    }
+
+    /**
+     * 预测扫描，可附带宏观/外盘新闻。
+     *
+     * <p>宏观标题对每只票都一样，单独作为顶层 {@code _macro} 传给模型，
+     * 让模型只在「确实影响该股所在行业或产业链」时才调整分数，
+     * 而不是对每只票机械加减（那样等于换了个方式做全市场平移）。</p>
+     *
+     * @param macroLines 形如 {@code [宏观] [来源] 标题} 的行；空列表表示没有
+     */
+    public List<StockNewsScore> scanForPrediction(List<Target> targets, List<String> macroLines) {
         if (targets == null || targets.isEmpty()) {
             return List.of();
         }
@@ -261,7 +275,7 @@ public class AiNewsScoreService {
             // 预测候选来自全市场打分，没有热榜概念标签；先只搜个股新闻，避免把板块情绪加到单票上
             List<StockNewsScore> results = scanParallel(universe.values(), Map.of());
             if (results.size() >= MIN_LLM_STOCKS) {
-                refineWithLlm(results);
+                refineWithLlm(results, macroLines == null ? List.of() : macroLines);
             }
             persistAndCache(results);
             persistArticles(results);
@@ -336,9 +350,11 @@ public class AiNewsScoreService {
 
         List<StockNewsScore> results = scanParallel(universe.values(), sectorNews);
 
-        // 批量 LLM 精判（有 Key 且结果够多）；否则保留关键词兜底结果
+        // 批量 LLM 精判（有 Key 且结果够多）；否则保留关键词兜底结果。
+        // 顺带带上隔夜外盘/宏观背景：盘中跑的时候美股是昨收、日经/KOSPI 是实时值，
+        // 与 15:30 预测那次的「日韩已收盘」口径不同，但对个股精判只会更及时。
         if (results.size() >= MIN_LLM_STOCKS) {
-            refineWithLlm(results);
+            refineWithLlm(results, macroNewsService.scan().promptLines());
         }
         persistAndCache(results);
         log.info("新闻扫描完成 分析={} 只", results.size());
@@ -516,6 +532,10 @@ public class AiNewsScoreService {
      * 保留关键词兜底分数，保证新闻因子永远不会因为模型不可用而整块消失。</p>
      */
     private void refineWithLlm(List<StockNewsScore> results) {
+        refineWithLlm(results, List.of());
+    }
+
+    private void refineWithLlm(List<StockNewsScore> results, List<String> macroLines) {
         AiConfigService.Config config = configService.load();
         if (!config.available()) {
             return;
@@ -523,11 +543,12 @@ public class AiNewsScoreService {
         // 拆小批：29 只票一次输出容易在 reasoning 之后被截断，且一批失败会拖累所有票。
         for (int from = 0; from < results.size(); from += LLM_CHUNK_SIZE) {
             int to = Math.min(results.size(), from + LLM_CHUNK_SIZE);
-            refineChunk(new ArrayList<>(results.subList(from, to)), config);
+            refineChunk(new ArrayList<>(results.subList(from, to)), config, macroLines);
         }
     }
 
-    private void refineChunk(List<StockNewsScore> results, AiConfigService.Config config) {
+    private void refineChunk(List<StockNewsScore> results, AiConfigService.Config config,
+                             List<String> macroLines) {
         try {
             ObjectNode body = AiJson.MAPPER.createObjectNode();
             for (StockNewsScore s : results) {
@@ -548,6 +569,14 @@ public class AiNewsScoreService {
                         }
                     }
                 } catch (Exception ignored) {
+                }
+            }
+            // 顶层 _macro：全市场级背景，不是股票代码，模型不要为它输出分数
+            if (macroLines != null && !macroLines.isEmpty()) {
+                ObjectNode macro = body.putObject("_macro");
+                ArrayNode macroNews = macro.putArray("news");
+                for (String line : macroLines) {
+                    macroNews.add(line);
                 }
             }
             ArrayNode messages = AiJson.MAPPER.createArrayNode();
@@ -852,6 +881,9 @@ public class AiNewsScoreService {
     private static final String PROMPT_SYSTEM =
             "你是一名 A 股短线情绪分析师。下面是一个 JSON 对象，key 是股票代码，value 是"
                     + " {name, news:[“[来源] 标题”或“[板块] [来源] 标题”...]}。"
+                    + " 另有一个特殊的顶层 key `_macro`，value 是隔夜美股、日韩股市、美联储等宏观新闻的列表；"
+                    + " 它不是股票代码，不要为它输出条目。只有当宏观消息确实影响该股所在行业或产业链时"
+                    + "（例如美股半导体大涨对 A 股芯片股），才纳入该股的判断；不要对每只票机械加减分。"
                     + " 带 [板块] 前缀的是该股票所属概念/行业的板块级新闻，只能作为情绪背景，"
                     + "不能当成公司自身的具体事实。只根据这些标题判断未来 1-3 个交易日对股价的影响，"
                     + "输出严格 JSON：{\"items\":[{\"code\":\"代码\",\"score\":-100~100整数,"

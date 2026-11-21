@@ -106,6 +106,77 @@ class GlobalPredictScorerTest {
     }
 
     @Test
+    void overseasAndMacroShiftWholeMarket() {
+        List<KlineItem> bars = trend(10, 0.1, 80);
+        StockQuote quote = quoteFor(bars, 0.5);
+
+        int neutral = GlobalPredictScorer.score(quote, bars, null, 55).score();
+        int bullish = GlobalPredictScorer.score(quote, bars, null, 55,
+                new GlobalPredictScorer.MarketContext(2.0, 50)).score();
+        int bearish = GlobalPredictScorer.score(quote, bars, null, 55,
+                new GlobalPredictScorer.MarketContext(-2.0, -50)).score();
+
+        assertTrue(bullish > neutral, bullish + " vs " + neutral);
+        assertTrue(bearish < neutral, bearish + " vs " + neutral);
+    }
+
+    @Test
+    void marketContextJoinsTheDenominator() {
+        List<KlineItem> bars = trend(10, 0.1, 80);
+        StockQuote quote = quoteFor(bars, 0.5);
+
+        GlobalPredictScorer.Result withContext = GlobalPredictScorer.score(quote, bars, null, 55,
+                new GlobalPredictScorer.MarketContext(1.0, 10));
+        assertEquals(GlobalPredictScorer.BASE_MAX_SCORE + GlobalPredictScorer.MARKET_MAX_BONUS,
+                withContext.maxScore());
+        assertTrue(withContext.score() >= 0 && withContext.score() <= 100);
+
+        // 空 context 与旧版完全一致，避免调用方传了个空对象就把分数分布改了
+        GlobalPredictScorer.Result emptyContext = GlobalPredictScorer.score(quote, bars, null, 55,
+                new GlobalPredictScorer.MarketContext(null, null));
+        assertEquals(GlobalPredictScorer.BASE_MAX_SCORE, emptyContext.maxScore());
+        assertEquals(GlobalPredictScorer.score(quote, bars, null, 55).score(), emptyContext.score());
+    }
+
+    @Test
+    void overseasPointsFollowBands() {
+        assertEquals(5, GlobalPredictScorer.overseasPoints(1.5));
+        assertEquals(3, GlobalPredictScorer.overseasPoints(1.49));
+        assertEquals(3, GlobalPredictScorer.overseasPoints(0.5));
+        assertEquals(0, GlobalPredictScorer.overseasPoints(0.49));
+        assertEquals(0, GlobalPredictScorer.overseasPoints(-0.49));
+        assertEquals(-3, GlobalPredictScorer.overseasPoints(-0.5));
+        assertEquals(-5, GlobalPredictScorer.overseasPoints(-1.5));
+        assertEquals(0, GlobalPredictScorer.overseasPoints(null));
+    }
+
+    @Test
+    void macroPointsFollowBands() {
+        assertEquals(3, GlobalPredictScorer.macroPoints(20));
+        assertEquals(1, GlobalPredictScorer.macroPoints(19));
+        assertEquals(0, GlobalPredictScorer.macroPoints(0));
+        assertEquals(-1, GlobalPredictScorer.macroPoints(-1));
+        assertEquals(-3, GlobalPredictScorer.macroPoints(-20));
+        assertEquals(0, GlobalPredictScorer.macroPoints(null));
+    }
+
+    @Test
+    void marketPointsCombineBothInputsAndCap() {
+        assertEquals(0, GlobalPredictScorer.marketPoints(null));
+        assertEquals(0, GlobalPredictScorer.marketPoints(
+                new GlobalPredictScorer.MarketContext(null, null)));
+        assertEquals(3, GlobalPredictScorer.marketPoints(
+                new GlobalPredictScorer.MarketContext(0.6, null)));
+        assertEquals(4, GlobalPredictScorer.marketPoints(
+                new GlobalPredictScorer.MarketContext(0.6, 10)));
+        // 5 + 3 超出封顶，截到 +6
+        assertEquals(6, GlobalPredictScorer.marketPoints(
+                new GlobalPredictScorer.MarketContext(2.0, 50)));
+        assertEquals(-6, GlobalPredictScorer.marketPoints(
+                new GlobalPredictScorer.MarketContext(-2.0, -50)));
+    }
+
+    @Test
     void detectsRecentLimitUp() {
         List<KlineItem> bars = new ArrayList<>(trend(10, 0.01, 19));
         KlineItem last = new KlineItem();

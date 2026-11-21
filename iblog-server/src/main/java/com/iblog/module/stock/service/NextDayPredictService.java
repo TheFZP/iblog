@@ -9,6 +9,8 @@ import com.iblog.module.paper.support.PredictEvaluation;
 import com.iblog.module.paper.support.PredictFilters;
 import com.iblog.module.paper.support.TradeCalendar;
 import com.iblog.module.stock.ai.AiNewsScoreService;
+import com.iblog.module.stock.ai.AiWebSearchService;
+import com.iblog.module.stock.ai.MacroNewsService;
 import com.iblog.module.stock.entity.StockNewsScore;
 import com.iblog.module.stock.entity.StockPredictDaily;
 import com.iblog.module.stock.model.KlineItem;
@@ -37,6 +39,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>数据流：全市场列表 → 批量行情预筛 → 读 120 根日 K（带补拉预算）→ 规则打分 →
  * 前 M 只搜新闻并重算 → 概率校准 → 取前 K 写入榜单。次日收盘后再回填收益。</p>
  *
+ * <p>其中叠加两类全市场背景：外盘（纳指/标普/道指/日经/KOSPI 的最近收盘涨跌）与
+ * 宏观新闻（东财快讯里筛出的美股、日韩、美联储等条目）。两者都记在每行的 {@code features} 里，
+ * 方便事后回测「那天外盘怎么样、模型有没有据此收紧」。</p>
+ *
  * <p>所有上游都是 best-effort：列表失败有兜底池，行情/K 线失败只丢个别股票，
  * 新闻失败保留规则分。任务本身跑在独立单线程调度器上，不影响模拟盘 15 秒 tick。</p>
  */
@@ -54,6 +60,8 @@ public class NextDayPredictService {
     private final MarketUniverseService universeService;
     private final TencentService tencentService;
     private final MarketSentimentService sentimentService;
+    private final OverseasMarketService overseasMarketService;
+    private final MacroNewsService macroNewsService;
     private final KlineCacheService klineCacheService;
     private final AiNewsScoreService newsScoreService;
     private final PredictProbabilityService probabilityService;
@@ -133,6 +141,12 @@ public class NextDayPredictService {
         double sentimentScore = sentiment != null && sentiment.isAvailable()
                 ? sentiment.getScore() : Double.NaN;
 
+        // 外盘快照很便宜（一次请求、10 分钟缓存），先拿到手；宏观新闻要搜一次 + 调一次模型，
+        // 放到确定有候选之后再抓，避免全市场列表失败时白花一次模型调用。
+        OverseasMarketService.Snapshot overseas = overseasMarketService.snapshot();
+        GlobalPredictScorer.MarketContext marketContext = new GlobalPredictScorer.MarketContext(
+                overseas.available() ? overseas.weightedPct() : null, null);
+
         List<String> universe = universeService.codes();
         if (universe.isEmpty()) {
             log.warn("次日预测：全市场列表为空，本轮跳过");
@@ -187,7 +201,7 @@ public class NextDayPredictService {
                 continue;
             }
             GlobalPredictScorer.Result result = GlobalPredictScorer.score(
-                    quote, assembled.bars(), null, sentimentScore);
+                    quote, assembled.bars(), null, sentimentScore, marketContext);
             scored.add(new Scored(quote, assembled.bars(), result));
             if ((i + 1) % 50 == 0) {
                 log.info("次日预测：已处理 {}/{}，已打分 {}，K线预算剩余 {}",
@@ -204,28 +218,38 @@ public class NextDayPredictService {
             StockQuote quote = scored.get(i).quote;
             targets.add(new AiNewsScoreService.Target(quote.getCode(), quote.getName()));
         }
+        // 宏观新闻只抓一次，既作为个股精判的背景，也作为全市场级加分
+        MacroNewsService.MacroNews macro = targets.isEmpty()
+                ? MacroNewsService.MacroNews.empty()
+                : macroNewsService.scan();
         Map<String, StockNewsScore> newsByCode = new LinkedHashMap<>();
         if (!targets.isEmpty()) {
-            for (StockNewsScore news : newsScoreService.scanForPrediction(targets)) {
+            for (StockNewsScore news : newsScoreService.scanForPrediction(targets, macro.promptLines())) {
                 newsByCode.put(StockCode.normalize(news.getCode()), news);
             }
         }
+        marketContext = new GlobalPredictScorer.MarketContext(
+                overseas.available() ? overseas.weightedPct() : null,
+                macro.available() ? macro.score() : null);
+
         int newsCovered = 0;
         for (Scored item : scored) {
             StockNewsScore news = newsByCode.get(StockCode.normalize(item.quote.getCode()));
             if (news != null) {
                 item.news = news;
-                item.result = GlobalPredictScorer.score(
-                        item.quote, item.bars, news.getScore(), sentimentScore);
                 newsCovered++;
             }
+            // 无论有没有个股新闻都要重算：宏观/外盘对每只票都生效
+            item.result = GlobalPredictScorer.score(
+                    item.quote, item.bars, news == null ? null : news.getScore(),
+                    sentimentScore, marketContext);
         }
         scored.sort(SCORE_ORDER);
 
         int outputK = Math.max(1, Math.min(config.getOutputTopK(), scored.size()));
         List<StockPredictDaily> items = new ArrayList<>();
         for (int i = 0; i < outputK; i++) {
-            items.add(toEntity(scored.get(i), i + 1, tradeDate, sentimentScore));
+            items.add(toEntity(scored.get(i), i + 1, tradeDate, sentimentScore, overseas, macro));
         }
 
         if (!dryRun && !items.isEmpty()) {
@@ -266,7 +290,9 @@ public class NextDayPredictService {
     }
 
     private StockPredictDaily toEntity(Scored scored, int rank, LocalDate tradeDate,
-                                       double sentimentScore) {
+                                       double sentimentScore,
+                                       OverseasMarketService.Snapshot overseas,
+                                       MacroNewsService.MacroNews macro) {
         StockQuote quote = scored.quote;
         GlobalPredictScorer.Result result = scored.result;
         PredictProbabilityService.Estimate estimate =
@@ -294,7 +320,18 @@ public class NextDayPredictService {
                 : news.getConfidence().min(BigDecimal.ONE).max(BigDecimal.ZERO));
         row.setNewsSources(news == null || news.getHeadlines() == null
                 || news.getHeadlines().isBlank() ? "[]" : news.getHeadlines());
-        row.setFeatures(writeJson(result.features()));
+        Map<String, Object> features = new LinkedHashMap<>(result.features());
+        if (macro != null && macro.available()) {
+            features.put("macroSummary", macro.summary());
+            features.put("macroAiScored", macro.aiScored());
+            features.put("macroHeadlines", macro.headlines().stream()
+                    .map(AiWebSearchService.SearchHit::title).toList());
+        }
+        if (overseas != null && overseas.available()) {
+            features.put("overseasMoves", overseas.moves());
+            features.put("overseasSource", overseas.source());
+        }
+        row.setFeatures(writeJson(features));
 
         row.setMarketSentiment(Double.isNaN(sentimentScore)
                 ? null
