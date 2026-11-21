@@ -35,6 +35,10 @@ npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# 本地 Redis 快照：跑本地开发环境时 redis-server 会把 dump.rdb 落在仓库根目录，
+# 里面是本地测试产生的会话/缓存，没有任何要保留的内容。
+dump.rdb
+
 # ========= Java / Gradle =========
 .gradle/
 # build-local.sh 在默认 GRADLE_USER_HOME 不可用时的兜底缓存目录
