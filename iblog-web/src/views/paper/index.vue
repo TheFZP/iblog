@@ -1283,7 +1283,14 @@
             </div>
           </div>
 
-          <div class="table-wrap">
+          <!-- 限高滚动容器：键盘用户无法用鼠标滚轮，
+               有内容时给出 tab 停靠点，否则溢出内容永远够不到（WCAG 2.1.1）。 -->
+          <div
+            class="table-wrap"
+            role="region"
+            aria-label="今日选股列表"
+            :tabindex="selections.length ? 0 : undefined"
+          >
             <table v-if="selections.length" class="table">
               <thead>
                 <tr>
@@ -1297,7 +1304,7 @@
               </thead>
               <tbody>
                 <tr v-for="item in selections" :key="item.id" class="row-link" @click="goStockDetail(item.code, $event)">
-                  <td>
+                  <td data-label="股票">
                     <router-link
                       class="cell-name cell-name--link"
                       :to="`/stock/${item.code}`"
@@ -1307,7 +1314,7 @@
                       <span class="cell-name__code"><StockTags :code="item.code" />{{ item.code }}</span>
                     </router-link>
                   </td>
-                  <td class="num">
+                  <td class="num" data-label="分数">
                     <span
                       class="score-badge"
                       :class="{
@@ -1318,9 +1325,9 @@
                       {{ item.score }}
                     </span>
                   </td>
-                  <td class="num">{{ priceText(item.price) }}</td>
-                  <td class="cell-reason">{{ item.reason || '--' }}</td>
-                  <td class="num" @click.stop>
+                  <td class="num" data-label="现价">{{ priceText(item.price) }}</td>
+                  <td class="cell-reason" data-label="入选理由">{{ item.reason || '--' }}</td>
+                  <td class="num" data-label="新闻" @click.stop>
                     <button
                       v-if="newsOf(item.code)"
                       type="button"
@@ -1333,7 +1340,7 @@
                     </button>
                     <span v-else class="cell-sub">--</span>
                   </td>
-                  <td class="num" @click.stop>
+                  <td class="num" data-label="操作" @click.stop>
                     <button class="mini-btn" type="button" @click="buySelection(item)">下单</button>
                   </td>
                 </tr>
@@ -1367,7 +1374,12 @@
             <span class="panel__meta">市值合计 {{ money(positionMarketValue) }}</span>
           </div>
 
-          <div class="table-wrap">
+          <div
+            class="table-wrap"
+            role="region"
+            aria-label="持仓列表"
+            :tabindex="positions.length ? 0 : undefined"
+          >
             <table v-if="positions.length" class="table">
               <thead>
                 <tr>
@@ -1384,7 +1396,7 @@
               </thead>
               <tbody>
                 <tr v-for="position in positions" :key="position.code" class="row-link" @click="goStockDetail(position.code, $event)">
-                  <td>
+                  <td data-label="股票">
                     <router-link
                       class="cell-name cell-name--link"
                       :to="`/stock/${position.code}`"
@@ -1394,19 +1406,19 @@
                       <span class="cell-name__code"><StockTags :code="position.code" />{{ position.code }}</span>
                     </router-link>
                   </td>
-                  <td class="num">
+                  <td class="num" data-label="持仓 / 可用">
                     {{ integer(position.quantity) }}<span class="cell-sub"> / {{ integer(position.availableQuantity) }}</span>
                   </td>
-                  <td class="num">{{ priceText(position.costPrice) }}</td>
-                  <td class="num">{{ priceText(position.lastPrice) }}</td>
-                  <td class="num">{{ money(position.marketValue, position.currency) }}</td>
-                  <td class="num">
+                  <td class="num" data-label="成本价">{{ priceText(position.costPrice) }}</td>
+                  <td class="num" data-label="现价">{{ priceText(position.lastPrice) }}</td>
+                  <td class="num" data-label="市值">{{ money(position.marketValue, position.currency) }}</td>
+                  <td class="num" data-label="浮动盈亏">
                     <div class="cell-pnl" :class="toneClass(position.profit)">
                       <span>{{ signedMoney(position.profit, position.currency) }}</span>
                       <span class="cell-sub">{{ pct(position.profitPct) }}</span>
                     </div>
                   </td>
-                  <td class="num" @click.stop>
+                  <td class="num" data-label="评分" @click.stop>
                     <span
                       v-if="position.score != null"
                       class="score-badge"
@@ -1420,7 +1432,7 @@
                     </span>
                     <span v-else class="cell-sub" title="下次重新选股后生成">--</span>
                   </td>
-                  <td class="num" @click.stop>
+                  <td class="num" data-label="新闻" @click.stop>
                     <button
                       v-if="newsOf(position.code)"
                       type="button"
@@ -1433,7 +1445,7 @@
                     </button>
                     <span v-else class="cell-sub">--</span>
                   </td>
-                  <td class="num" @click.stop>
+                  <td class="num" data-label="操作" @click.stop>
                     <button
                       class="mini-btn"
                       type="button"
@@ -1485,7 +1497,12 @@
             </div>
           </div>
 
-          <div class="table-wrap">
+          <div
+            class="table-wrap"
+            role="region"
+            aria-label="委托列表"
+            :tabindex="orders.length ? 0 : undefined"
+          >
             <table v-if="orders.length" class="table table--orders">
               <thead>
                 <tr>
@@ -1503,8 +1520,8 @@
               </thead>
               <tbody>
                 <tr v-for="order in orders" :key="order.id">
-                  <td class="cell-time">{{ shortTime(order.createTime) }}</td>
-                  <td>
+                  <td class="cell-time" data-label="委托时间">{{ shortTime(order.createTime) }}</td>
+                  <td data-label="股票">
                     <router-link
                       class="cell-name cell-name--link"
                       :to="`/stock/${order.code}`"
@@ -1514,15 +1531,15 @@
                       <span class="cell-name__code"><StockTags :code="order.code" />{{ order.code }}</span>
                     </router-link>
                   </td>
-                  <td>
+                  <td data-label="方向">
                     <span :class="order.side === 'BUY' ? 'tone-up' : 'tone-down'">{{ sideLabel(order.side) }}</span>
                   </td>
-                  <td>{{ typeLabel(order.type) }}</td>
-                  <td class="num">{{ order.price != null ? priceText(order.price) : '市价' }}</td>
-                  <td class="num">{{ integer(order.quantity) }}</td>
-                  <td class="num">{{ integer(order.filledQuantity) }}</td>
-                  <td class="num">{{ order.avgPrice != null ? priceText(order.avgPrice) : '--' }}</td>
-                  <td>
+                  <td data-label="类型">{{ typeLabel(order.type) }}</td>
+                  <td class="num" data-label="委托价">{{ order.price != null ? priceText(order.price) : '市价' }}</td>
+                  <td class="num" data-label="数量">{{ integer(order.quantity) }}</td>
+                  <td class="num" data-label="已成交">{{ integer(order.filledQuantity) }}</td>
+                  <td class="num" data-label="成交均价">{{ order.avgPrice != null ? priceText(order.avgPrice) : '--' }}</td>
+                  <td data-label="状态">
                     <span class="status" :class="`status--${order.status.toLowerCase()}`">
                       {{ orderStatusLabel(order.status) }}
                     </span>
@@ -1530,7 +1547,7 @@
                       {{ order.rejectReason }}
                     </span>
                   </td>
-                  <td class="num">
+                  <td class="num" data-label="操作">
                     <template v-if="order.status === 'PENDING'">
                       <template v-if="confirmCancelId === order.id">
                         <button class="mini-btn mini-btn--danger" type="button" @click="cancelOrder(order)">
@@ -1598,7 +1615,12 @@
             <span class="panel__meta">含佣金、印花税、过户费</span>
           </div>
 
-          <div class="table-wrap">
+          <div
+            class="table-wrap"
+            role="region"
+            aria-label="成交列表"
+            :tabindex="trades.length ? 0 : undefined"
+          >
             <table v-if="trades.length" class="table table--trades">
               <thead>
                 <tr>
@@ -1613,8 +1635,8 @@
               </thead>
               <tbody>
                 <tr v-for="trade in trades" :key="trade.id">
-                  <td class="cell-time">{{ tradeDateTime(trade) }}</td>
-                  <td>
+                  <td class="cell-time" data-label="成交时间">{{ tradeDateTime(trade) }}</td>
+                  <td data-label="股票">
                     <router-link
                       class="cell-name cell-name--link"
                       :to="`/stock/${trade.code}`"
@@ -1624,13 +1646,13 @@
                       <span class="cell-name__code"><StockTags :code="trade.code" />{{ trade.code }}</span>
                     </router-link>
                   </td>
-                  <td>
+                  <td data-label="方向">
                     <span :class="trade.side === 'BUY' ? 'tone-up' : 'tone-down'">{{ sideLabel(trade.side) }}</span>
                   </td>
-                  <td class="num">{{ priceText(trade.price) }}</td>
-                  <td class="num">{{ integer(trade.quantity) }}</td>
-                  <td class="num">{{ money(trade.amount) }}</td>
-                  <td class="num">
+                  <td class="num" data-label="成交价">{{ priceText(trade.price) }}</td>
+                  <td class="num" data-label="数量">{{ integer(trade.quantity) }}</td>
+                  <td class="num" data-label="成交额">{{ money(trade.amount) }}</td>
+                  <td class="num" data-label="费用">
                     {{ money(trade.totalFee) }}
                     <span class="fee-detail" :title="feeDetail(trade)">
                       <span class="sr-only">费用明细</span>
@@ -1683,7 +1705,12 @@
             <span class="panel__meta">候选与自动买卖信号 · 最近 {{ SIGNALS_LIMIT }} 条</span>
           </div>
 
-          <div class="table-wrap">
+          <div
+            class="table-wrap"
+            role="region"
+            aria-label="信号历史列表"
+            :tabindex="signals.length ? 0 : undefined"
+          >
             <table v-if="signals.length" class="table">
               <thead>
                 <tr>
@@ -1697,21 +1724,21 @@
               </thead>
               <tbody>
                 <tr v-for="item in signals" :key="item.id">
-                  <td class="cell-time">{{ shortTime(item.createTime) }}</td>
-                  <td>
+                  <td class="cell-time" data-label="时间">{{ shortTime(item.createTime) }}</td>
+                  <td data-label="股票">
                     <div class="cell-name">
                       <span class="cell-name__title">{{ item.name }}</span>
                       <span class="cell-name__code"><StockTags :code="item.code" />{{ item.code }}</span>
                     </div>
                   </td>
-                  <td>
+                  <td data-label="信号">
                     <span class="signal-badge" :class="`signal-badge--${item.action.toLowerCase()}`">
                       {{ signalActionLabel(item.action) }}
                     </span>
                   </td>
-                  <td class="num">{{ item.score }}</td>
-                  <td class="num">{{ priceText(item.price) }}</td>
-                  <td class="cell-reason">{{ item.reason || '--' }}</td>
+                  <td class="num" data-label="分数">{{ item.score }}</td>
+                  <td class="num" data-label="价格">{{ priceText(item.price) }}</td>
+                  <td class="cell-reason" data-label="理由">{{ item.reason || '--' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -4402,6 +4429,23 @@ onBeforeUnmount(() => {
   overflow-x: auto;
 }
 
+/* 长列表限高滚动：委托/成交/信号三个累计原本把页面撑到 8900px，
+   限高后表格内部滚动、表头吸顶，页面总长降一个数量级。
+   只对有表格的容器生效，空态/加载态保持原有自然高度。 */
+.table-wrap:has(> table) {
+  max-height: 460px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 滚动容器可 tab 聚焦（见模板里的 role/tabindex），
+   聚焦时必须看得见——否则键盘用户不知道焦点在哪。 */
+.table-wrap:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
 .table {
   width: 100%;
   min-width: 720px;
@@ -4420,8 +4464,16 @@ onBeforeUnmount(() => {
 .table thead th {
   padding: 10px var(--s-4);
   border-bottom: 1px solid var(--c-border);
-  background: color-mix(in srgb, var(--c-surface-sunken) 60%, transparent);
-  color: var(--c-text-faint);
+  /* 表头吸顶：滚动容器内必须用不透明底，半透明会透出下方滚过的行 */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--c-surface-sunken);
+  /* 表头改为常驻吸顶后，--c-text-faint 实测对比度不达标：
+     浅色 2.31:1、深色 3.40:1（AA 正文需 4.5:1）。
+     muted 仍差一点（浅色 4.15），故取 secondary（浅色 8.6:1、深色 6.5:1）；
+     层级靠更小字号与底色区分，而不是靠压低对比度。 */
+  color: var(--c-text-secondary);
   font-size: var(--t-xs);
   font-weight: 560;
   text-align: left;
@@ -5588,6 +5640,120 @@ onBeforeUnmount(() => {
   .cell-reason {
     max-width: none;
     white-space: normal;
+  }
+
+  /* ---------- 窄屏表格 → 卡片 ----------
+     委托表 10 列 940px、成交 780px、信号 720px，在 390px 屏上只能横向拖动，
+     横向滚动会同时吞掉竖向滚动、且看不到表头。改成每条记录一张卡片：
+     表头整体隐藏，每个单元格用 data-label 生成左侧标题、右侧数值。 */
+  /* 卡片模式下横向不再溢出，但纵向仍需限高：
+     信号历史 50 条 × 每卡 ~250px 会把页面撑到 2 万像素。
+     用 vh 而非定值，手机矮屏也能留出上下文。 */
+  .table-wrap:has(> table) {
+    max-height: 68vh;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+
+  .table {
+    min-width: 0;
+  }
+
+  .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: auto;
+  }
+
+  .table tbody tr {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table tbody tr:hover {
+    background: transparent;
+  }
+
+  /* 用 flex 而非 grid：单元格里常有「文本 + 文本」或「文本 + span」两三个节点，
+     grid 会把每个匿名节点当成独立网格项各占一行（「1,500 / 1,500」被拆两行）。
+     flex 让它们排在同一行，换行交给文字自身。 */
+  .table tbody td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--s-3);
+    padding: 3px 0;
+    border-bottom: 0;
+    text-align: left;
+  }
+
+  /* 卡片左侧标签：faint 在白底只有 2.5:1、深色 3.27:1，读不清；
+     muted 浅色 4.49、深色 5.52，达到 AA。 */
+  .table tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 78px;
+    color: var(--c-text-muted);
+    font-size: var(--t-xs);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* 无 data-label 的单元格（如未改造的表）不显示空标题列 */
+  .table tbody td:not([data-label]) {
+    display: block;
+    padding: 3px 0;
+  }
+
+  .table td.num {
+    text-align: left;
+  }
+
+  /* 卡片里股票名当标题：去掉标签列，让名称独占一行 */
+  .table tbody td:first-child {
+    padding-bottom: var(--s-2);
+  }
+
+  .table tbody td:first-child::before {
+    display: none;
+  }
+
+  .table tbody td:first-child .cell-name__title {
+    font-size: var(--t-base);
+    font-weight: 620;
+    color: var(--c-text);
+  }
+
+  .cell-pnl {
+    align-items: baseline;
+  }
+
+  .mini-btn {
+    min-height: 32px;
+    padding: 0 14px;
+  }
+
+  .table thead th,
+  .table tbody td {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .toast {
