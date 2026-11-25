@@ -163,6 +163,19 @@ public class PaperTradingController {
         return R.ok(strategyService.list(requireAccount(accountId).getId()));
     }
 
+    /** 按当前账户规则给任意一只股票打分（手动评分，不写候选、不下单）。 */
+    @GetMapping("/score")
+    public R<PaperSelectionService.StockScore> score(@RequestParam(required = false) Long accountId,
+                                                     @RequestParam String code,
+                                                     @RequestParam(required = false) String name) {
+        PaperSelectionService.StockScore result =
+                selectionService.scoreStock(requireAccount(accountId).getId(), code, name);
+        if (result == null) {
+            return R.fail(400, "该股票代码不受支持，或日 K 数据不足（少于 30 根），暂时无法评分");
+        }
+        return R.ok(result);
+    }
+
     @PutMapping("/strategies/{id}")
     public R<PaperStrategy> updateStrategy(@PathVariable Long id,
                                            @RequestParam(required = false) Long accountId,

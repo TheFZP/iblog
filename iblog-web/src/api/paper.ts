@@ -593,6 +593,30 @@ export function refreshPaperSelections(accountId?: number) {
   ) as unknown as Promise<PaperSignal[]>
 }
 
+/** 手动评分结果：按当前账户规则给单只股票打分 */
+export interface PaperStockScore {
+  code: string
+  name: string
+  score: number
+  /** 命中理由（顿号分隔），可能为空串 */
+  reason: string
+  /** 当前规则的入选门槛，用来判断这只票够不够分 */
+  minScore: number
+}
+
+/**
+ * 按当前账户规则给任意一只股票打分。
+ *
+ * <p>只打分、不写候选也不下单；现场要拉日 K/行情/资金流，上游慢时可能超过通用 15s，
+ * 所以单独放宽到 60s（nginx 侧对应 location 也是 90s）。</p>
+ */
+export function fetchPaperStockScore(code: string, name?: string, accountId?: number) {
+  return service.get('/stock/paper/score', {
+    params: withAccountId({ code, name: name ?? '' }, accountId),
+    timeout: 60000
+  }) as unknown as Promise<PaperStockScore>
+}
+
 /** 最近信号（含自动买卖记录，按时间倒序） */
 export function fetchPaperSignals(limit = 50, accountId?: number) {
   return get<PaperSignal[]>(

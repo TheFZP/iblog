@@ -1272,6 +1272,9 @@
               >
                 分数上限 {{ weightSum }}
               </span>
+              <button class="btn btn--ghost" type="button" @click="scoreOpen = true">
+                选股评分
+              </button>
               <button
                 class="btn btn--ghost"
                 type="button"
@@ -2120,6 +2123,14 @@
       @submitted="onTradeSubmitted"
     />
 
+    <!-- 选股评分弹窗：临时输入一只票，按当前规则打分 -->
+    <ScoreDialog
+      :show="scoreOpen"
+      :account-id="currentAccountId"
+      :account-name="currentAccount?.name"
+      @close="scoreOpen = false"
+    />
+
     <!-- 轻提示 -->
     <Transition name="toast">
       <p v-if="notice" class="toast" :class="`is-${notice.tone}`" role="status">
@@ -2133,6 +2144,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import NavChart from '@/components/paper/NavChart.vue'
+import ScoreDialog from '@/components/paper/ScoreDialog.vue'
 import TradeDialog from '@/components/paper/TradeDialog.vue'
 import IwencaiPanel from '@/components/stock/IwencaiPanel.vue'
 import StockTags from '@/components/stock/StockTags.vue'
@@ -2754,6 +2766,8 @@ interface TradePreset {
 
 const tradeOpen = ref(false)
 const tradePreset = ref<TradePreset | null>(null)
+/** 选股评分弹窗：不在候选里，临时输入一只票按当前规则打分 */
+const scoreOpen = ref(false)
 const resetArmed = ref(false)
 const resetting = ref(false)
 const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)

@@ -531,6 +531,52 @@ public class PaperSelectionService {
                 new int[]{fundamentalService.upstreamRequests()}, preMarket, true);
     }
 
+    /** 手动评分结果：分数、命中理由，以及当前规则的入选门槛。 */
+    public record StockScore(String code, String name, int score, String reason, double minScore) {
+    }
+
+    /**
+     * 按账户当前规则给任意一只股票打分。
+     *
+     * <p>口径与持仓评分一致（{@code forHeld=true}）：只回答「这套规则会给它多少分」，
+     * 不套用买入侧的硬性剔除和入选门槛——被规则过滤掉的票也应该能看到分数，
+     * 否则用户只知道「没选上」却不知道为什么。结果里的 {@code minScore} 供前端判断能否入选。</p>
+     *
+     * @return 日 K 不足（少于 30 根，多为新股）或代码非法时返回 null
+     */
+    public StockScore scoreStock(Long accountId, String rawCode, String name) {
+        String code = StockCode.normalize(rawCode);
+        if (code.isEmpty() || StockCode.isHk(code)) {
+            return null;
+        }
+        PaperStrategy strategy = strategyService.ensureDefault(accountId);
+        PaperStrategyParams params = PaperStrategyParams.parse(objectMapper, strategy.getParams());
+        String stockName = name == null ? "" : name.trim();
+        if (stockName.isEmpty()) {
+            try {
+                StockQuote quote = quoteService.quote(code);
+                stockName = quote != null && quote.getName() != null ? quote.getName() : code;
+            } catch (RuntimeException ex) {
+                stockName = code;
+            }
+        }
+        PaperAccount account = null;
+        try {
+            account = accountService.getById(accountId);
+        } catch (RuntimeException ex) {
+            log.debug("手动评分：账户读取失败 account={} msg={}", accountId, ex.getMessage());
+        }
+        MarketSentiment sentiment = params.isSentimentEnabled() ? sentimentService.current() : null;
+        Candidate candidate = scoreCandidate(strategy, params, code, stockName, account, sentiment, false);
+        if (candidate == null) {
+            return null;
+        }
+        PaperSignal signal = candidate.signal();
+        return new StockScore(code, stockName,
+                signal.getScore() == null ? 0 : signal.getScore(),
+                signal.getReason(), params.getMinScore());
+    }
+
     private Candidate evaluate(PaperStrategy strategy, PaperStrategyParams params, String code, String name,
                                HotStockItem hot, int hotRank, MarketSentiment sentiment, PaperAccount account,
                                int[] vwapBudget, int[] deepBudget, int[] fundamentalBudget, boolean preMarket,
